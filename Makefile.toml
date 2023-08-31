@@ -3,7 +3,7 @@ CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
 RUST_BACKTRACE=1
 
 [tasks.fmt]
-description = "ソースコードをフォーマットします"
+description = "Format code"
 workspace = false
 install_script = ['''
 #!/usr/bin/env bash

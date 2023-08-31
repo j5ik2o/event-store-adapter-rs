@@ -1,6 +1,7 @@
 mod event_store;
 mod key_resolver;
 mod types;
+mod serializer;
 
 pub fn add(left: usize, right: usize) -> usize {
   left + right
