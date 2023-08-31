@@ -1,12 +1,14 @@
-use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
-use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
+use std::fmt::Debug;
+use std::sync::Arc;
+
 use anyhow::Result;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
 use aws_sdk_dynamodb::Client;
+use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
 use serde::{Deserialize, Serialize};
-use std::fmt::{Debug, Formatter};
-use std::sync::Arc;
+
+use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
+use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
 
 #[derive(Debug, Clone)]
 pub struct EventStore {
