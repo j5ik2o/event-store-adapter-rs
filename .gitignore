@@ -12,3 +12,18 @@ Cargo.lock
 
 # MSVC Windows builds of rustc generate these, which store debugging information
 *.pdb
+
+.DS_Store
+.AppleDouble
+.LSOverride
+
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+
+.vscode/*
+!.vscode/settings.json
+
+.idea/
+*.iml

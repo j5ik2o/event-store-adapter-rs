@@ -1,0 +1,18 @@
+[env]
+CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
+RUST_BACKTRACE=1
+
+[tasks.fmt]
+description = "ソースコードをフォーマットします"
+workspace = false
+install_script = ['''
+#!/usr/bin/env bash
+rustup which rustfmt --toolchain nightly
+if [ $? -ne 0 ]; then
+  rustup install nightly
+fi
+''']
+script = '''
+#!/usr/bin/env bash
+cargo +nightly fmt
+'''
