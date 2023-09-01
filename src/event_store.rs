@@ -3,12 +3,12 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
 use aws_sdk_dynamodb::Client;
+use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
 use serde::{Deserialize, Serialize};
 
 use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
-use crate::serializer::{EventSerializer, JsonEventSerializer};
+use crate::serializer::EventSerializer;
 use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
 
 #[derive(Debug, Clone)]
@@ -259,30 +259,31 @@ impl EventStore {
 
 #[cfg(test)]
 mod tests {
+    use std::env;
+    use std::fmt::{Display, Formatter};
+    use std::thread::sleep;
+    use std::time::Duration;
+
+    use anyhow::Result;
+    use aws_sdk_dynamodb::Client;
     use aws_sdk_dynamodb::config::{Credentials, Region};
     use aws_sdk_dynamodb::operation::create_table::CreateTableOutput;
     use aws_sdk_dynamodb::types::{
         AttributeDefinition, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType,
         ProvisionedThroughput, ScalarAttributeType,
     };
-    use aws_sdk_dynamodb::Client;
-    use std::env;
-    use std::fmt::{Display, Formatter};
-    use std::thread::sleep;
-    use std::time::Duration;
-
-    use crate::event_store::EventStore;
-    use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
-    use anyhow::Result;
     use chrono::{DateTime, Utc};
     use once_cell::sync::Lazy;
     use serde::{Deserialize, Serialize};
     use testcontainers::clients::Cli;
+    use testcontainers::Container;
     use testcontainers::core::WaitFor;
     use testcontainers::images::generic::GenericImage;
-    use testcontainers::Container;
     use tokio::sync::Mutex;
     use ulid_generator_rs::{ULID, ULIDGenerator};
+
+    use crate::event_store::EventStore;
+    use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
 
     static DOCKER: Lazy<Mutex<Cli>> = Lazy::new(|| Mutex::new(Cli::default()));
 

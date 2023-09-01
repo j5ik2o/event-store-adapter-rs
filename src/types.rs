@@ -5,7 +5,7 @@ use serde::{de, Serialize};
 use std::fmt::Debug;
 
 /// 集約のIDを表すトレイト。
-pub trait AggregateId: std::fmt::Display + Debug + Send + Sync {
+pub trait AggregateId: std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
   /// 集約の種別名を返す。
   fn type_name(&self) -> String;
   /// 集約のIDを文字列として返す
@@ -13,7 +13,7 @@ pub trait AggregateId: std::fmt::Display + Debug + Send + Sync {
 }
 
 /// イベントを表すトレイト。
-pub trait Event: Debug + Send + Sync {
+pub trait Event: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
   type ID: std::fmt::Display;
   type AggregateID: AggregateId;
   fn id(&self) -> &Self::ID;
@@ -24,7 +24,7 @@ pub trait Event: Debug + Send + Sync {
 }
 
 /// 集約を表すトレイト。
-pub trait Aggregate: Debug + Send + Sync {
+pub trait Aggregate: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
   type ID: AggregateId;
   /// IDを返す。
   fn id(&self) -> &Self::ID;
