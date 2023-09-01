@@ -29,7 +29,7 @@ jobs:
       - run: pip install semver
       - id: defines
         run: |
-          LATEST_TAG=$(git tag -l --sort=-taggerdate | grep $TARGET_DIR | head -n 1)
+          LATEST_TAG=$(git describe --abbrev=0 --tags)
           echo "LATEST_TAG=$LATEST_TAG"
           echo "::set-output name=target_dir::$TARGET_DIR"
           echo "::set-output name=package_id::$PACKAGE_ID"
