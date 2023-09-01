@@ -1,4 +1,4 @@
-name: crond-release
+name: lib-release
 on:
   push:
     tags:
