@@ -17,7 +17,7 @@ serde_json = "1.0"
 log = "0.4.19"
 
 [dev-dependencies]
-ulid-generator-rs = { version = "0.0.88", features = ["serde", "uuid"] }
+ulid-generator-rs = { version = "0.0.89", features = ["serde", "uuid"] }
 env_logger = "0.10.0"
 testcontainers = "0.14.0"
 serial_test = "*"
