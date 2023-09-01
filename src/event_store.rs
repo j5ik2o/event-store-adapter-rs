@@ -12,7 +12,7 @@ use crate::serializer::EventSerializer;
 use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
 
 #[derive(Debug, Clone)]
-pub struct EventStore {
+pub struct EventStore<AG: Aggregate, EV: Event> {
     client: Client,
     journal_table_name: String,
     journal_aid_index_name: String,
@@ -20,17 +20,20 @@ pub struct EventStore {
     snapshot_aid_index_name: String,
     shard_count: u64,
     key_resolver: Arc<dyn KeyResolver>,
+    event_serializer: Arc<dyn EventSerializer<EV>>,
+    _p: std::marker::PhantomData<(AG, EV)>,
 }
 
-unsafe impl Sync for EventStore {}
+unsafe impl<AG: Aggregate, EV: Event> Sync for EventStore<AG, EV> {}
 
-unsafe impl Send for EventStore {}
+unsafe impl<AG: Aggregate, EV: Event> Send for EventStore<AG, EV> {}
 
 #[async_trait]
-impl EventPersistenceGateway for EventStore {
-    async fn get_snapshot_by_id<T, AID: AggregateId>(&self, aid: &AID) -> Result<(T, usize, usize)>
-        where
-            T: ?Sized + Serialize + Aggregate + for<'de> Deserialize<'de>,
+impl<AG: Aggregate, EV: Event> EventPersistenceGateway for EventStore<AG, EV> {
+    type EV = EV;
+    type AG = AG;
+    type AID = AG::ID;
+    async fn get_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)>
     {
         let response = self
             .client
@@ -50,7 +53,7 @@ impl EventPersistenceGateway for EventStore {
             if items.len() == 1 {
                 let item = items[0].clone();
                 let payload = item.get("payload").unwrap().as_s().unwrap();
-                let aggregate = serde_json::from_str::<T>(payload).unwrap();
+                let aggregate = serde_json::from_str::<Self::AG>(payload).unwrap();
                 let seq_nr = item.get("seq_nr").unwrap().as_n().unwrap().parse::<usize>().unwrap();
                 let version = item.get("version").unwrap().as_n().unwrap().parse::<usize>().unwrap();
                 Ok((aggregate, seq_nr, version))
@@ -62,9 +65,7 @@ impl EventPersistenceGateway for EventStore {
         }
     }
 
-    async fn get_events_by_id_and_seq_nr<T, AID: AggregateId>(&self, aid: &AID, seq_nr: usize) -> anyhow::Result<Vec<T>>
-        where
-            T: Debug + for<'de> Deserialize<'de>,
+    async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> anyhow::Result<Vec<Self::EV>>
     {
         let response = self
             .client
@@ -83,22 +84,19 @@ impl EventPersistenceGateway for EventStore {
             for item in items {
                 let payload = item.get("payload").unwrap();
                 let str = payload.as_s().unwrap();
-                let event = serde_json::from_str::<T>(str).unwrap();
+                let event = serde_json::from_str::<Self::EV>(str).unwrap();
                 events.push(event);
             }
         }
         Ok(events)
     }
 
-    async fn store_event_with_snapshot_opt<A, E>(
+    async fn store_event_with_snapshot_opt(
         &mut self,
-        event: &E,
+        event: &EV,
         version: usize,
-        aggregate: Option<&A>,
+        aggregate: Option<&AG>,
     ) -> anyhow::Result<()>
-        where
-            A: ?Sized + Serialize + Aggregate,
-            E: ?Sized + Serialize + Event,
     {
         match (event.is_created(), aggregate) {
             (true, Some(ar)) => {
@@ -131,7 +129,7 @@ impl EventPersistenceGateway for EventStore {
     }
 }
 
-impl EventStore {
+impl<AG: Aggregate, EV: Event> EventStore<AG, EV> {
     pub fn new(
         client: Client,
         journal_table_name: String,
@@ -168,13 +166,12 @@ impl EventStore {
             snapshot_aid_index_name,
             shard_count,
             key_resolver,
+            event_serializer: Arc::new(crate::serializer::JsonEventSerializer::default()),
+            _p: std::marker::PhantomData,
         }
     }
 
-    fn put_snapshot<E, A>(&mut self, event: &E, ar: &A) -> Result<Put>
-        where
-            A: ?Sized + Serialize + Aggregate,
-            E: ?Sized + Serialize + Event,
+    fn put_snapshot(&mut self, event: &EV, ar: &AG) -> Result<Put>
     {
         let put_snapshot = Put::builder()
             .table_name(self.snapshot_table_name.clone())
@@ -193,10 +190,7 @@ impl EventStore {
         Ok(put_snapshot)
     }
 
-    fn update_snapshot<E, A>(&mut self, event: &E, version: usize, ar_opt: Option<&A>) -> Result<Update>
-        where
-            A: ?Sized + Serialize + Aggregate,
-            E: ?Sized + Serialize + Event,
+    fn update_snapshot(&mut self, event: &EV, version: usize, ar_opt: Option<&AG>) -> Result<Update>
     {
         let mut update_snapshot = Update::builder()
             .table_name(self.snapshot_table_name.clone())
@@ -232,9 +226,7 @@ impl EventStore {
         self.key_resolver.resolve_skey(&id.type_name(), &id.value(), seq_nr)
     }
 
-    fn put_journal<E>(&mut self, event: &E) -> Result<Put>
-        where
-            E: ?Sized + Serialize + Event,
+    fn put_journal(&mut self, event: &EV) -> Result<Put>
     {
         let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
         let skey = self.resolve_skey(event.aggregate_id(), event.seq_nr());
@@ -655,11 +647,11 @@ mod tests {
     }
 
     pub struct UserAccountRepository {
-        event_store: EventStore,
+        event_store: EventStore<UserAccount, UserAccountEvent>,
     }
 
     impl UserAccountRepository {
-        fn new(event_store: EventStore) -> Self {
+        fn new(event_store: EventStore<UserAccount, UserAccountEvent>) -> Self {
             Self {
                 event_store,
             }

@@ -38,21 +38,18 @@ pub trait Aggregate: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> +
 
 #[async_trait]
 pub trait EventPersistenceGateway: Debug + Clone + Sync + Send + 'static {
-  async fn get_snapshot_by_id<T, AID: AggregateId>(&self, aid: &AID) -> Result<(T, usize, usize)>
-  where
-    T: ?Sized + Serialize + Aggregate + for<'de> de::Deserialize<'de>;
+    type EV: Event;
+    type AG: Aggregate;
+    type AID: AggregateId;
 
-  async fn get_events_by_id_and_seq_nr<T, AID: AggregateId>(&self, aid: &AID, seq_nr: usize) -> Result<Vec<T>>
-  where
-    T: Debug + for<'de> de::Deserialize<'de>;
+    async fn get_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)>;
 
-  async fn store_event_with_snapshot_opt<A, E>(
+    async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
+
+    async fn store_event_with_snapshot_opt(
     &mut self,
-    event: &E,
+    event: &Self::EV,
     version: usize,
-    aggregate: Option<&A>,
-  ) -> Result<()>
-  where
-    A: ?Sized + Serialize + Aggregate,
-    E: ?Sized + Serialize + Event;
+    aggregate: Option<&Self::AG>,
+    ) -> Result<()>;
 }
