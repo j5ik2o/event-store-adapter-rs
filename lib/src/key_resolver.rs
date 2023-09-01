@@ -3,23 +3,23 @@ use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
 pub trait KeyResolver: Debug + Send + 'static {
-    fn resolve_pkey(&self, id_type_name: &str, value: &str, shard_count: u64) -> String;
-    fn resolve_skey(&self, id_type_name: &str, value: &str, seq_nr: usize) -> String;
+  fn resolve_pkey(&self, id_type_name: &str, value: &str, shard_count: u64) -> String;
+  fn resolve_skey(&self, id_type_name: &str, value: &str, seq_nr: usize) -> String;
 }
 
 #[derive(Debug, Clone)]
 pub struct DefaultPartitionKeyResolver;
 
 impl KeyResolver for DefaultPartitionKeyResolver {
-    fn resolve_pkey(&self, id_type_name: &str, value: &str, shard_count: u64) -> String {
-        let mut hasher = DefaultHasher::new();
-        value.hash(&mut hasher);
-        let hash_value = hasher.finish();
-        let remainder = hash_value % shard_count;
-        format!("{}-{}", id_type_name, remainder)
-    }
+  fn resolve_pkey(&self, id_type_name: &str, value: &str, shard_count: u64) -> String {
+    let mut hasher = DefaultHasher::new();
+    value.hash(&mut hasher);
+    let hash_value = hasher.finish();
+    let remainder = hash_value % shard_count;
+    format!("{}-{}", id_type_name, remainder)
+  }
 
-    fn resolve_skey(&self, id_type_name: &str, value: &str, seq_nr: usize) -> String {
-        format!("{}-{}-{}", id_type_name, value, seq_nr)
-    }
+  fn resolve_skey(&self, id_type_name: &str, value: &str, seq_nr: usize) -> String {
+    format!("{}-{}-{}", id_type_name, value, seq_nr)
+  }
 }

@@ -1,35 +1,35 @@
 use once_cell::sync::Lazy;
-use ulid_generator_rs::{ULID, ULIDGenerator};
+use ulid_generator_rs::{ULIDGenerator, ULID};
 
 struct ULIDGeneratorState {
-    generator: ULIDGenerator,
-    last_id: Option<ULID>,
+  generator: ULIDGenerator,
+  last_id: Option<ULID>,
 }
 
 impl ULIDGeneratorState {
-    fn new() -> Self {
-        Self {
-            generator: ULIDGenerator::new(),
-            last_id: None,
-        }
+  fn new() -> Self {
+    Self {
+      generator: ULIDGenerator::new(),
+      last_id: None,
     }
+  }
 }
 
 static ID_GENERATOR_STATE: Lazy<std::sync::Mutex<ULIDGeneratorState>> =
-    Lazy::new(|| std::sync::Mutex::new(ULIDGeneratorState::new()));
+  Lazy::new(|| std::sync::Mutex::new(ULIDGeneratorState::new()));
 
 pub fn id_generate() -> ULID {
-    let mut state = ID_GENERATOR_STATE.lock().unwrap();
-    match state.last_id {
-        None => {
-            let id = state.generator.generate().unwrap();
-            state.last_id = Some(id);
-            id
-        }
-        Some(last_id) => {
-            let id = state.generator.generate_monotonic(&last_id).unwrap();
-            state.last_id = Some(id);
-            id
-        }
+  let mut state = ID_GENERATOR_STATE.lock().unwrap();
+  match state.last_id {
+    None => {
+      let id = state.generator.generate().unwrap();
+      state.last_id = Some(id);
+      id
     }
+    Some(last_id) => {
+      let id = state.generator.generate_monotonic(&last_id).unwrap();
+      state.last_id = Some(id);
+      id
+    }
+  }
 }
