@@ -1,4 +1,4 @@
-name: crond-bump-version
+name: lib-bump-version
 on:
   workflow_dispatch:
   workflow_run:
