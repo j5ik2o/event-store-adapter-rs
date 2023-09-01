@@ -1,5 +1,5 @@
 [package]
-name = "event-store-adapter-core-rs"
+name = "event-store-adapter-rs"
 version = "0.1.0"
 edition = "2021"
 

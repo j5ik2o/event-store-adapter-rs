@@ -1,5 +1,6 @@
 use anyhow::Result;
 use aws_sdk_dynamodb::Client;
+use aws_sdk_dynamodb::config::{Credentials, Region};
 use aws_sdk_dynamodb::operation::create_table::CreateTableOutput;
 use aws_sdk_dynamodb::types::{AttributeDefinition, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType, ProvisionedThroughput, ScalarAttributeType};
 
@@ -143,4 +144,14 @@ pub async fn create_snapshot_table(client: &Client, table_name: &str, gsi_name: 
         .await?;
 
     Ok(result)
+}
+
+pub fn create_client(dynamodb_port: u16) -> Client {
+    let region = Region::new("us-west-1");
+    let config = aws_sdk_dynamodb::Config::builder()
+        .region(Some(region))
+        .endpoint_url(format!("http://localhost:{}", dynamodb_port))
+        .credentials_provider(Credentials::new("x", "x", None, None, "default"))
+        .build();
+    Client::from_conf(config)
 }

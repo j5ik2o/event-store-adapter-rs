@@ -2,9 +2,9 @@ use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use chrono::{DateTime, Utc};
 use ulid_generator_rs::ULID;
-use event_store_adapter_core_rs::event_store::EventStore;
-use event_store_adapter_core_rs::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
 use anyhow::Result;
+use event_store_adapter_rs::event_store::EventStore;
+use event_store_adapter_rs::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

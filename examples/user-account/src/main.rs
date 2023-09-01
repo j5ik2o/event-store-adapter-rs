@@ -1,31 +1,20 @@
 use std::env;
 use std::thread::sleep;
 use std::time::Duration;
+
 use anyhow::Result;
-use aws_sdk_dynamodb::Client;
-use aws_sdk_dynamodb::config::{Credentials, Region};
 use testcontainers::clients::Cli;
-use testcontainers::Container;
-use testcontainers::core::WaitFor;
-use testcontainers::images::generic::GenericImage;
-use event_store_adapter_core_rs::event_store::EventStore;
-use event_store_adapter_core_rs::types::Aggregate;
+
+use event_store_adapter_rs::event_store::EventStore;
+use event_store_adapter_rs::types::Aggregate;
 use event_store_adapter_test_utils_rs::docker::dynamodb_local;
-use event_store_adapter_test_utils_rs::dynamodb::{create_journal_table, create_snapshot_table};
+use event_store_adapter_test_utils_rs::dynamodb::{create_client, create_journal_table, create_snapshot_table};
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
+
 use crate::user_account::{UserAccount, UserAccountId, UserAccountRepository};
 
 mod user_account;
 
-fn create_client(dynamodb_port: u16) -> Client {
-    let region = Region::new("us-west-1");
-    let config = aws_sdk_dynamodb::Config::builder()
-        .region(Some(region))
-        .endpoint_url(format!("http://localhost:{}", dynamodb_port))
-        .credentials_provider(Credentials::new("x", "x", None, None, "default"))
-        .build();
-    Client::from_conf(config)
-}
 
 #[tokio::main]
 async fn main() {
