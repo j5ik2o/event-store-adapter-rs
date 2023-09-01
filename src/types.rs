@@ -5,7 +5,8 @@ use serde::{de, Serialize};
 use std::fmt::Debug;
 
 /// 集約のIDを表すトレイト。
-pub trait AggregateId: std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
+pub trait AggregateId:
+  std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
   /// 集約の種別名を返す。
   fn type_name(&self) -> String;
   /// 集約のIDを文字列として返す
@@ -38,18 +39,18 @@ pub trait Aggregate: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> +
 
 #[async_trait]
 pub trait EventPersistenceGateway: Debug + Clone + Sync + Send + 'static {
-    type EV: Event;
-    type AG: Aggregate;
-    type AID: AggregateId;
+  type EV: Event;
+  type AG: Aggregate;
+  type AID: AggregateId;
 
-    async fn get_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)>;
+  async fn get_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)>;
 
-    async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
+  async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
 
-    async fn store_event_with_snapshot_opt(
+  async fn store_event_with_snapshot_opt(
     &mut self,
     event: &Self::EV,
     version: usize,
     aggregate: Option<&Self::AG>,
-    ) -> Result<()>;
+  ) -> Result<()>;
 }
