@@ -7,7 +7,6 @@ jobs:
   bump-version:
     runs-on: ubuntu-latest
     env:
-      TARGET_DIR: lib
       PACKAGE_ID: event-store-adapter-rs
     steps:
       - uses: actions/checkout@v3
@@ -26,7 +25,6 @@ jobs:
         run: |
           LATEST_TAG=$(git describe --abbrev=0 --tags)
           echo "LATEST_TAG=$LATEST_TAG"
-          echo "::set-output name=target_dir::$TARGET_DIR"
           echo "::set-output name=package_id::$PACKAGE_ID"
           echo "::set-output name=prev_tag::$LATEST_TAG"
       - name: Calculate changes from the latest tag to HEAD
