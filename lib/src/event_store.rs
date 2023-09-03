@@ -268,13 +268,10 @@ mod tests {
   use std::time::Duration;
 
   use anyhow::Result;
-  use aws_sdk_dynamodb::config::{Credentials, Region};
-  use aws_sdk_dynamodb::operation::create_table::CreateTableOutput;
-  use aws_sdk_dynamodb::types::{
-    AttributeDefinition, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType,
-    ProvisionedThroughput, ScalarAttributeType,
-  };
-  use aws_sdk_dynamodb::Client;
+  
+  
+  
+  
   use chrono::{DateTime, Utc};
   use event_store_adapter_test_utils_rs::docker::dynamodb_local;
   use event_store_adapter_test_utils_rs::dynamodb::{
@@ -283,9 +280,9 @@ mod tests {
   use event_store_adapter_test_utils_rs::id_generator::id_generate;
   use serde::{Deserialize, Serialize};
   use testcontainers::clients::Cli;
-  use testcontainers::core::WaitFor;
-  use testcontainers::images::generic::GenericImage;
-  use testcontainers::Container;
+  
+  
+  
   use ulid_generator_rs::ULID;
 
   use crate::event_store::EventStore;
