@@ -29,10 +29,10 @@ unsafe impl<AG: Aggregate, EV: Event> Sync for EventStore<AG, EV> {}
 unsafe impl<AG: Aggregate, EV: Event> Send for EventStore<AG, EV> {}
 
 #[async_trait]
-impl<AG: Aggregate, EV: Event> EventPersistenceGateway for EventStore<AG, EV> {
-  type AG = AG;
-  type AID = AG::ID;
-  type EV = EV;
+impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
+  type AG = A;
+  type AID = A::ID;
+  type EV = E;
 
   async fn get_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)> {
     let response = self
@@ -77,7 +77,7 @@ impl<AG: Aggregate, EV: Event> EventPersistenceGateway for EventStore<AG, EV> {
     }
   }
 
-  async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> anyhow::Result<Vec<Self::EV>> {
+  async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>> {
     let response = self
       .client
       .query()
@@ -102,37 +102,34 @@ impl<AG: Aggregate, EV: Event> EventPersistenceGateway for EventStore<AG, EV> {
     Ok(events)
   }
 
-  async fn store_event_with_snapshot_opt(
-    &mut self,
-    event: &EV,
-    version: usize,
-    aggregate: Option<&AG>,
-  ) -> anyhow::Result<()> {
+  async fn store_event_with_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
     match (event.is_created(), aggregate) {
       (true, Some(ar)) => {
-        let _ = self
+        let builder = self
           .client
           .transact_write_items()
-          .transact_items(TransactWriteItem::builder().put(self.put_snapshot(event, ar)?).build())
-          .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build())
-          .send()
-          .await?;
+          .transact_items(
+            TransactWriteItem::builder()
+              .put(self.put_snapshot(event, 0, ar)?)
+              .build(),
+          )
+          .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
+        builder.send().await?;
       }
       (true, None) => {
         panic!("Aggregate is not found");
       }
       (false, ar) => {
-        let _ = self
+        let builder = self
           .client
           .transact_write_items()
           .transact_items(
             TransactWriteItem::builder()
-              .update(self.update_snapshot(event, version, ar)?)
+              .update(self.update_snapshot(event, 0, version, ar)?)
               .build(),
           )
-          .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build())
-          .send()
-          .await?;
+          .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
+        builder.send().await?;
       }
     }
     Ok(())
@@ -176,9 +173,9 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
     self
   }
 
-  fn put_snapshot(&mut self, event: &E, ar: &A) -> Result<Put> {
+  fn put_snapshot(&mut self, event: &E, seq_nr: usize, ar: &A) -> Result<Put> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
-    let skey = self.resolve_skey(event.aggregate_id(), 0);
+    let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
     let payload = self.snapshot_serializer.serialize(ar)?;
     let put_snapshot = Put::builder()
       .table_name(self.snapshot_table_name.clone())
@@ -192,14 +189,13 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
         "last_updated_at",
         AttributeValue::N(event.occurred_at().timestamp_millis().to_string()),
       )
-      .condition_expression("attribute_not_exists(pkey) AND attribute_not_exists(skey)")
-      .build();
-    Ok(put_snapshot)
+      .condition_expression("attribute_not_exists(pkey) AND attribute_not_exists(skey)");
+    Ok(put_snapshot.build())
   }
 
-  fn update_snapshot(&mut self, event: &E, version: usize, ar_opt: Option<&A>) -> Result<Update> {
+  fn update_snapshot(&mut self, event: &E, seq_nr: usize, version: usize, ar_opt: Option<&A>) -> Result<Update> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
-    let skey = self.resolve_skey(event.aggregate_id(), 0);
+    let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
     let mut update_snapshot = Update::builder()
       .table_name(self.snapshot_table_name.clone())
       .update_expression("SET #version=:after_version, #last_updated_at=:last_updated_at")
@@ -268,10 +264,7 @@ mod tests {
   use std::time::Duration;
 
   use anyhow::Result;
-  
-  
-  
-  
+
   use chrono::{DateTime, Utc};
   use event_store_adapter_test_utils_rs::docker::dynamodb_local;
   use event_store_adapter_test_utils_rs::dynamodb::{
@@ -280,9 +273,7 @@ mod tests {
   use event_store_adapter_test_utils_rs::id_generator::id_generate;
   use serde::{Deserialize, Serialize};
   use testcontainers::clients::Cli;
-  
-  
-  
+
   use ulid_generator_rs::ULID;
 
   use crate::event_store::EventStore;
