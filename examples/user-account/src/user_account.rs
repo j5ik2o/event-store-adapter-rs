@@ -98,6 +98,7 @@ pub struct UserAccount {
   name: String,
   seq_nr: usize,
   version: usize,
+  last_updated_at: DateTime<Utc>,
 }
 
 impl UserAccount {
@@ -107,6 +108,7 @@ impl UserAccount {
       name,
       seq_nr: 0,
       version: 1,
+      last_updated_at: chrono::Utc::now(),
     };
     my_self.seq_nr += 1;
     let event = UserAccountEvent::Created {
@@ -178,6 +180,10 @@ impl Aggregate for UserAccount {
 
   fn set_version(&mut self, version: usize) {
     self.version = version
+  }
+
+  fn last_updated_at(&self) -> &DateTime<Utc> {
+    &self.last_updated_at
   }
 }
 

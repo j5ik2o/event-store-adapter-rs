@@ -51,12 +51,23 @@ impl<AG: Aggregate, EV: Event> EventPersistenceGateway for EventStore<AG, EV> {
       .await?;
     if let Some(items) = response.items {
       if items.len() == 1 {
-        let item = items[0].clone();
-        let payload = item.get("payload").unwrap();
+        let payload = items[0].get("payload").unwrap();
         let bytes = payload.as_b().unwrap().clone().into_inner();
         let aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
-        let seq_nr = item.get("seq_nr").unwrap().as_n().unwrap().parse::<usize>().unwrap();
-        let version = item.get("version").unwrap().as_n().unwrap().parse::<usize>().unwrap();
+        let seq_nr = items[0]
+          .get("seq_nr")
+          .unwrap()
+          .as_n()
+          .unwrap()
+          .parse::<usize>()
+          .unwrap();
+        let version = items[0]
+          .get("version")
+          .unwrap()
+          .as_n()
+          .unwrap()
+          .parse::<usize>()
+          .unwrap();
         Ok((aggregate, seq_nr, version))
       } else {
         Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
@@ -128,7 +139,7 @@ impl<AG: Aggregate, EV: Event> EventPersistenceGateway for EventStore<AG, EV> {
   }
 }
 
-impl<AG: Aggregate, EV: Event> EventStore<AG, EV> {
+impl<A: Aggregate, E: Event> EventStore<A, E> {
   pub fn new(
     client: Client,
     journal_table_name: String,
@@ -155,53 +166,60 @@ impl<AG: Aggregate, EV: Event> EventStore<AG, EV> {
     self
   }
 
-  pub fn with_event_serializer(mut self, event_serializer: Arc<dyn EventSerializer<EV>>) -> Self {
+  pub fn with_event_serializer(mut self, event_serializer: Arc<dyn EventSerializer<E>>) -> Self {
     self.event_serializer = event_serializer;
     self
   }
 
-  pub fn with_snapshot_serializer(mut self, snapshot_serializer: Arc<dyn SnapshotSerializer<AG>>) -> Self {
+  pub fn with_snapshot_serializer(mut self, snapshot_serializer: Arc<dyn SnapshotSerializer<A>>) -> Self {
     self.snapshot_serializer = snapshot_serializer;
     self
   }
 
-  fn put_snapshot(&mut self, event: &EV, ar: &AG) -> Result<Put> {
+  fn put_snapshot(&mut self, event: &E, ar: &A) -> Result<Put> {
+    let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
+    let skey = self.resolve_skey(event.aggregate_id(), 0);
     let payload = self.snapshot_serializer.serialize(ar)?;
     let put_snapshot = Put::builder()
       .table_name(self.snapshot_table_name.clone())
-      .item(
-        "pkey",
-        AttributeValue::S(self.resolve_pkey(event.aggregate_id(), self.shard_count)),
-      )
-      // ロックを取る場合は常にskey=resolve_skey(aid, 0)で行う
-      .item("skey", AttributeValue::S(self.resolve_skey(event.aggregate_id(), 0)))
+      .item("pkey", AttributeValue::S(pkey))
+      .item("skey", AttributeValue::S(skey))
       .item("payload", AttributeValue::B(Blob::new(payload)))
       .item("aid", AttributeValue::S(event.aggregate_id().to_string()))
       .item("seq_nr", AttributeValue::N(ar.seq_nr().to_string()))
       .item("version", AttributeValue::N("1".to_string()))
+      .item(
+        "last_updated_at",
+        AttributeValue::N(event.occurred_at().timestamp_millis().to_string()),
+      )
       .condition_expression("attribute_not_exists(pkey) AND attribute_not_exists(skey)")
       .build();
     Ok(put_snapshot)
   }
 
-  fn update_snapshot(&mut self, event: &EV, version: usize, ar_opt: Option<&AG>) -> Result<Update> {
+  fn update_snapshot(&mut self, event: &E, version: usize, ar_opt: Option<&A>) -> Result<Update> {
+    let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
+    let skey = self.resolve_skey(event.aggregate_id(), 0);
     let mut update_snapshot = Update::builder()
       .table_name(self.snapshot_table_name.clone())
-      .update_expression("SET #version=:after_version")
-      .key(
-        "pkey",
-        AttributeValue::S(self.resolve_pkey(event.aggregate_id(), self.shard_count)),
-      )
-      // ロックを取る場合は常にskey=resolve_skey(aid, 0)で行う
-      .key("skey", AttributeValue::S(self.resolve_skey(event.aggregate_id(), 0)))
+      .update_expression("SET #version=:after_version, #last_updated_at=:last_updated_at")
+      .key("pkey", AttributeValue::S(pkey))
+      .key("skey", AttributeValue::S(skey))
       .expression_attribute_names("#version", "version")
+      .expression_attribute_names("#last_updated_at", "last_updated_at")
       .expression_attribute_values(":before_version", AttributeValue::N(version.to_string()))
       .expression_attribute_values(":after_version", AttributeValue::N((version + 1).to_string()))
+      .expression_attribute_values(
+        ":last_updated_at",
+        AttributeValue::N(event.occurred_at().timestamp_millis().to_string()),
+      )
       .condition_expression("#version=:before_version");
     if let Some(ar) = ar_opt {
       let payload = self.snapshot_serializer.serialize(ar)?;
       update_snapshot = update_snapshot
-        .update_expression("SET #payload=:payload, #seq_nr=:seq_nr, #version=:after_version")
+        .update_expression(
+          "SET #payload=:payload, #seq_nr=:seq_nr, #version=:after_version, #last_updated_at=:last_updated_at",
+        )
         .expression_attribute_names("#seq_nr", "seq_nr")
         .expression_attribute_names("#payload", "payload")
         .expression_attribute_values(":seq_nr", AttributeValue::N(ar.seq_nr().to_string()))
@@ -220,7 +238,7 @@ impl<AG: Aggregate, EV: Event> EventStore<AG, EV> {
     self.key_resolver.resolve_skey(&id.type_name(), &id.value(), seq_nr)
   }
 
-  fn put_journal(&mut self, event: &EV) -> Result<Put> {
+  fn put_journal(&mut self, event: &E) -> Result<Put> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), event.seq_nr());
     let aid = event.aggregate_id().to_string();
@@ -259,6 +277,9 @@ mod tests {
   use aws_sdk_dynamodb::Client;
   use chrono::{DateTime, Utc};
   use event_store_adapter_test_utils_rs::docker::dynamodb_local;
+  use event_store_adapter_test_utils_rs::dynamodb::{
+    create_client, create_journal_table, create_snapshot_table, wait_table,
+  };
   use event_store_adapter_test_utils_rs::id_generator::id_generate;
   use serde::{Deserialize, Serialize};
   use testcontainers::clients::Cli;
@@ -269,176 +290,6 @@ mod tests {
 
   use crate::event_store::EventStore;
   use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
-
-  pub async fn create_journal_table(client: &Client, table_name: &str, gsi_name: &str) -> Result<CreateTableOutput> {
-    let pkey_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("pkey")
-      .attribute_type(ScalarAttributeType::S)
-      .build();
-
-    let skey_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("skey")
-      .attribute_type(ScalarAttributeType::S)
-      .build();
-
-    let pkey_schema = KeySchemaElement::builder()
-      .attribute_name("pkey")
-      .key_type(KeyType::Hash)
-      .build();
-
-    let skey_schema = KeySchemaElement::builder()
-      .attribute_name("skey")
-      .key_type(KeyType::Range)
-      .build();
-
-    let aid_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("aid")
-      .attribute_type(ScalarAttributeType::S)
-      .build();
-
-    let seq_nr_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("seq_nr")
-      .attribute_type(ScalarAttributeType::N)
-      .build();
-
-    let provisioned_throughput = ProvisionedThroughput::builder()
-      .read_capacity_units(10)
-      .write_capacity_units(5)
-      .build();
-
-    let gsi = GlobalSecondaryIndex::builder()
-      .index_name(gsi_name)
-      .key_schema(
-        KeySchemaElement::builder()
-          .attribute_name("aid")
-          .key_type(KeyType::Hash)
-          .build(),
-      )
-      .key_schema(
-        KeySchemaElement::builder()
-          .attribute_name("seq_nr")
-          .key_type(KeyType::Range)
-          .build(),
-      )
-      .projection(Projection::builder().projection_type(ProjectionType::All).build())
-      .provisioned_throughput(provisioned_throughput.clone())
-      .build();
-
-    let result = client
-      .create_table()
-      .table_name(table_name)
-      .attribute_definitions(pkey_attribute_definition)
-      .attribute_definitions(skey_attribute_definition)
-      .attribute_definitions(aid_attribute_definition)
-      .attribute_definitions(seq_nr_attribute_definition)
-      .key_schema(pkey_schema)
-      .key_schema(skey_schema)
-      .global_secondary_indexes(gsi)
-      .provisioned_throughput(provisioned_throughput)
-      .send()
-      .await?;
-
-    Ok(result)
-  }
-
-  pub async fn create_snapshot_table(client: &Client, table_name: &str, gsi_name: &str) -> Result<CreateTableOutput> {
-    let pkey_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("pkey")
-      .attribute_type(ScalarAttributeType::S)
-      .build();
-
-    let pkey_schema = KeySchemaElement::builder()
-      .attribute_name("pkey")
-      .key_type(KeyType::Hash)
-      .build();
-
-    let skey_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("skey")
-      .attribute_type(ScalarAttributeType::S)
-      .build();
-
-    let skey_schema = KeySchemaElement::builder()
-      .attribute_name("skey")
-      .key_type(KeyType::Range)
-      .build();
-
-    let aid_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("aid")
-      .attribute_type(ScalarAttributeType::S)
-      .build();
-
-    let seq_nr_attribute_definition = AttributeDefinition::builder()
-      .attribute_name("seq_nr")
-      .attribute_type(ScalarAttributeType::N)
-      .build();
-
-    let provisioned_throughput = ProvisionedThroughput::builder()
-      .read_capacity_units(10)
-      .write_capacity_units(5)
-      .build();
-
-    let gsi = GlobalSecondaryIndex::builder()
-      .index_name(gsi_name)
-      .key_schema(
-        KeySchemaElement::builder()
-          .attribute_name("aid")
-          .key_type(KeyType::Hash)
-          .build(),
-      )
-      .key_schema(
-        KeySchemaElement::builder()
-          .attribute_name("seq_nr")
-          .key_type(KeyType::Range)
-          .build(),
-      )
-      .projection(Projection::builder().projection_type(ProjectionType::All).build())
-      .provisioned_throughput(provisioned_throughput.clone())
-      .build();
-
-    let result = client
-      .create_table()
-      .table_name(table_name)
-      .attribute_definitions(pkey_attribute_definition)
-      .attribute_definitions(skey_attribute_definition)
-      .attribute_definitions(aid_attribute_definition)
-      .attribute_definitions(seq_nr_attribute_definition)
-      .key_schema(pkey_schema)
-      .key_schema(skey_schema)
-      .global_secondary_indexes(gsi)
-      .provisioned_throughput(provisioned_throughput)
-      .send()
-      .await?;
-
-    Ok(result)
-  }
-
-  pub fn create_client(dynamodb_port: u16) -> Client {
-    let region = Region::new("us-west-1");
-    let config = aws_sdk_dynamodb::Config::builder()
-      .region(Some(region))
-      .endpoint_url(format!("http://localhost:{}", dynamodb_port))
-      .credentials_provider(Credentials::new("x", "x", None, None, "default"))
-      .build();
-
-    Client::from_conf(config)
-  }
-
-  async fn wait_table(client: &Client, target_table_name: &str) -> bool {
-    let lto = client.list_tables().send().await;
-    match lto {
-      Ok(lto) => {
-        log::info!("table_names: {:?}", lto.table_names());
-        match lto.table_names() {
-          Some(table_names) => table_names.iter().any(|tn| tn == target_table_name),
-          None => false,
-        }
-      }
-      Err(e) => {
-        println!("Error: {}", e);
-        false
-      }
-    }
-  }
 
   #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
   pub struct UserAccountId {
@@ -525,6 +376,7 @@ mod tests {
     name: String,
     seq_nr: usize,
     version: usize,
+    last_updated_at: DateTime<Utc>,
   }
 
   impl UserAccount {
@@ -534,6 +386,7 @@ mod tests {
         name,
         seq_nr: 0,
         version: 1,
+        last_updated_at: chrono::Utc::now(),
       };
       my_self.seq_nr += 1;
       let event = UserAccountEvent::Created {
@@ -605,6 +458,10 @@ mod tests {
 
     fn set_version(&mut self, version: usize) {
       self.version = version
+    }
+
+    fn last_updated_at(&self) -> &DateTime<Utc> {
+      todo!()
     }
   }
 

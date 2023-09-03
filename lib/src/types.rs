@@ -6,7 +6,8 @@ use std::fmt::Debug;
 
 /// 集約のIDを表すトレイト。
 pub trait AggregateId:
-  std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
+  std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static
+{
   /// 集約の種別名を返す。
   fn type_name(&self) -> String;
   /// 集約のIDを文字列として返す
@@ -35,6 +36,8 @@ pub trait Aggregate: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> +
   fn version(&self) -> usize;
   /// シーケンス番号を設定する。
   fn set_version(&mut self, version: usize);
+  /// 最終更新日時を返す。
+  fn last_updated_at(&self) -> &DateTime<Utc>;
 }
 
 #[async_trait]
