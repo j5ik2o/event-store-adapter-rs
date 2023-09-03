@@ -18,7 +18,7 @@ mod user_account;
 #[tokio::main]
 async fn main() {
   env::set_var("RUST_LOG", "info");
-  let _ = env_logger::init();
+  env_logger::init();
 
   let docker = Cli::docker();
   let dynamodb_node = dynamodb_local(&docker);
@@ -61,7 +61,7 @@ async fn main() {
   let user_account = repository.find_by_id(&user_account_id).await.unwrap();
   log::info!("1: user_account = {:?}", user_account);
 
-  let _ = rename_user_account(&mut repository, &user_account_id, "test-2")
+  rename_user_account(&mut repository, &user_account_id, "test-2")
     .await
     .unwrap();
   let user_account = repository.find_by_id(&user_account_id).await.unwrap();
@@ -71,7 +71,7 @@ async fn main() {
 async fn create_user_account(repository: &mut UserAccountRepository, id: &str, name: &str) -> Result<UserAccountId> {
   let user_account_id = UserAccountId::new(id.to_string());
   let (user_account, user_account_event) = UserAccount::new(user_account_id.clone(), name.to_string()).unwrap();
-  let _ = repository
+  repository
     .store(&user_account_event, user_account.version(), Some(&user_account))
     .await?;
   Ok(user_account_id)
@@ -82,7 +82,7 @@ async fn rename_user_account(
   user_account_id: &UserAccountId,
   name: &str,
 ) -> Result<()> {
-  let mut user_account = repository.find_by_id(&user_account_id).await.unwrap();
+  let mut user_account = repository.find_by_id(user_account_id).await.unwrap();
   let user_account_event = user_account.rename(name).unwrap();
   repository
     .store(&user_account_event, user_account.version(), None)

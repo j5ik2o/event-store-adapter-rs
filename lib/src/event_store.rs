@@ -466,8 +466,8 @@ mod tests {
     event_store: &mut EventStore<UserAccount, UserAccountEvent>,
     id: &UserAccountId,
   ) -> Result<UserAccount> {
-    let (snapshot, seq_nr, version) = event_store.get_snapshot_by_id(&id).await?;
-    let events = event_store.get_events_by_id_and_seq_nr(&id, seq_nr).await?;
+    let (snapshot, seq_nr, version) = event_store.get_snapshot_by_id(id).await?;
+    let events = event_store.get_events_by_id_and_seq_nr(id, seq_nr).await?;
     let user_account = UserAccount::replay(events, Some(snapshot), version);
     Ok(user_account)
   }
