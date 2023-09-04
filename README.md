@@ -65,10 +65,10 @@ let user_account_event = user_account.rename(name).unwrap();
  
 // Store the new event without a snapshot
 repository
-  .store(&user_account_event, user_account.version(), Some(&user_account))
+  .store(&user_account_event, user_account.version(), None)
   .await
 // Store the new event with a snapshot
 //  repository
-//  .store(&user_account_event, user_account.version(), None)
+//  .store(&user_account_event, user_account.version(), Some(&user_account))
 //  .await
 ```
