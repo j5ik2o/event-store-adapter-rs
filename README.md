@@ -68,7 +68,7 @@ repository
   .store(&user_account_event, user_account.version(), Some(&user_account))
   .await
 // Store the new event with a snapshot
-  repository
-  .store(&user_account_event, user_account.version(), None)
-  .await
+//  repository
+//  .store(&user_account_event, user_account.version(), None)
+//  .await
 ```
