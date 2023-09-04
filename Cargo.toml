@@ -5,7 +5,7 @@ resolver = "2"
 
 [workspace.dependencies]
 chrono = "0.4.28"
-anyhow = "1.0.72"
+anyhow = "1.0.75"
 thiserror = "1.0.44"
 async-trait = "0.1.72"
 aws-config = "0.56.1"
