@@ -6,6 +6,9 @@
   "cargo": {
     "enabled": true
   },
+  "github-actions": {
+    "enabled": true
+  },
   "platformAutomerge": true,
   "packageRules": [
     {
