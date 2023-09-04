@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::primitives::Blob;
-use aws_sdk_dynamodb::types::{AttributeValue, Put, TransactWriteItem, Update};
+use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, Select, TransactWriteItem, Update};
 use aws_sdk_dynamodb::Client;
 
 use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
@@ -19,6 +19,8 @@ pub struct EventStore<AG: Aggregate, EV: Event> {
   snapshot_table_name: String,
   snapshot_aid_index_name: String,
   shard_count: u64,
+  keep_snapshot: bool,
+  keep_snapshot_count: usize,
   key_resolver: Arc<dyn KeyResolver>,
   event_serializer: Arc<dyn EventSerializer<EV>>,
   snapshot_serializer: Arc<dyn SnapshotSerializer<AG>>,
@@ -44,7 +46,7 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
       .expression_attribute_names("#aid", "aid")
       .expression_attribute_names("#seq_nr", "seq_nr")
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
-      .expression_attribute_values(":seq_nr", AttributeValue::N(0.to_string()))
+      .expression_attribute_values(":seq_nr", AttributeValue::N("0".to_string()))
       .scan_index_forward(false)
       .limit(1)
       .send()
@@ -105,7 +107,7 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
   async fn store_event_with_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
     match (event.is_created(), aggregate) {
       (true, Some(ar)) => {
-        let builder = self
+        let mut builder = self
           .client
           .transact_write_items()
           .transact_items(
@@ -114,13 +116,20 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
               .build(),
           )
           .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
+        if self.keep_snapshot {
+          builder = builder.transact_items(
+            TransactWriteItem::builder()
+              .put(self.put_snapshot(event, ar.seq_nr(), ar)?)
+              .build(),
+          );
+        }
         builder.send().await?;
       }
       (true, None) => {
         panic!("Aggregate is not found");
       }
       (false, ar) => {
-        let builder = self
+        let mut builder = self
           .client
           .transact_write_items()
           .transact_items(
@@ -129,6 +138,14 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
               .build(),
           )
           .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
+        if self.keep_snapshot {
+          let snapshot_count = self.get_snapshot_count(event.aggregate_id()).await?;
+          log::debug!("snapshot count: {}", snapshot_count);
+          if snapshot_count > self.keep_snapshot_count + 1 {
+            let delete = self.delete_last_snapshot(event.aggregate_id()).await?;
+            builder = builder.transact_items(TransactWriteItem::builder().delete(delete).build());
+          }
+        }
         builder.send().await?;
       }
     }
@@ -152,10 +169,22 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       snapshot_table_name,
       snapshot_aid_index_name,
       shard_count,
+      keep_snapshot: false,
+      keep_snapshot_count: 1,
       key_resolver: Arc::new(DefaultPartitionKeyResolver),
       event_serializer: Arc::new(crate::serializer::JsonEventSerializer::default()),
       snapshot_serializer: Arc::new(crate::serializer::JsonSnapshotSerializer::default()),
     }
+  }
+
+  pub fn with_keep_snapshot(mut self, keep_snapshot: bool) -> Self {
+    self.keep_snapshot = keep_snapshot;
+    self
+  }
+
+  pub fn with_keep_snapshot_count(mut self, keep_snapshot_count: usize) -> Self {
+    self.keep_snapshot_count = keep_snapshot_count;
+    self
   }
 
   pub fn with_key_resolver(mut self, key_resolver: Arc<dyn KeyResolver>) -> Self {
@@ -171,6 +200,55 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
   pub fn with_snapshot_serializer(mut self, snapshot_serializer: Arc<dyn SnapshotSerializer<A>>) -> Self {
     self.snapshot_serializer = snapshot_serializer;
     self
+  }
+
+  async fn get_snapshot_count<AID: AggregateId>(&mut self, aid: &AID) -> Result<usize> {
+    let response = self
+      .client
+      .query()
+      .table_name(self.snapshot_table_name.clone())
+      .index_name(self.snapshot_aid_index_name.clone())
+      .key_condition_expression("#aid = :aid")
+      .expression_attribute_names("#aid", "aid")
+      .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
+      .select(Select::Count)
+      .send()
+      .await?;
+    Ok(response.count as usize)
+  }
+
+  async fn delete_last_snapshot<AID: AggregateId>(&mut self, aid: &AID) -> Result<Delete> {
+    let pkey = self.resolve_pkey(aid, self.shard_count);
+    let response = self
+      .client
+      .query()
+      .table_name(self.snapshot_table_name.clone())
+      .index_name(self.snapshot_aid_index_name.clone())
+      .key_condition_expression("#aid = :aid AND #seq_nr <= :max_seq_nr")
+      .expression_attribute_names("#aid", "aid")
+      .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
+      .expression_attribute_names("#seq_nr", "seq_nr")
+      .expression_attribute_values(":seq_nr", AttributeValue::N(usize::MAX.to_string()))
+      .scan_index_forward(false)
+      .limit(1)
+      .send()
+      .await?;
+    if let Some(items) = response.items {
+      if items.len() == 1 {
+        let skey = items[0].get("skey").unwrap().as_s().unwrap().clone();
+        let delete = Delete::builder()
+          .table_name(self.snapshot_table_name.clone())
+          .key("pkey", AttributeValue::S(pkey))
+          .key("skey", AttributeValue::S(skey))
+          .condition_expression("attribute_exists(pkey) AND attribute_exists(skey)")
+          .build();
+        Ok(delete)
+      } else {
+        Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
+      }
+    } else {
+      Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
+    }
   }
 
   fn put_snapshot(&mut self, event: &E, seq_nr: usize, ar: &A) -> Result<Put> {
@@ -520,7 +598,7 @@ mod tests {
     let event = user_account.rename("test2").unwrap();
 
     event_store
-      .store_event_with_snapshot_opt(&event, user_account.version(), None)
+      .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
       .await
       .unwrap();
 
