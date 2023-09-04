@@ -35,6 +35,8 @@ pub trait Aggregate: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> +
   fn version(&self) -> usize;
   /// シーケンス番号を設定する。
   fn set_version(&mut self, version: usize);
+  /// 最終更新日時を返す。
+  fn last_updated_at(&self) -> &DateTime<Utc>;
 }
 
 #[async_trait]

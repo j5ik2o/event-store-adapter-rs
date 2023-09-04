@@ -3,7 +3,7 @@ use testcontainers::core::WaitFor;
 use testcontainers::images::generic::GenericImage;
 use testcontainers::Container;
 
-pub fn dynamodb_local<'a>(docker: &'a Cli) -> Container<'a, GenericImage> {
+pub fn dynamodb_local(docker: &Cli) -> Container<'_, GenericImage> {
   let wait_for = WaitFor::message_on_stdout("Ready.");
   let image = GenericImage::new("localstack/localstack", "2.1.0")
     .with_env_var("SERVICES", "dynamodb")
