@@ -4,7 +4,7 @@ members = ["lib", "test-utils", "examples/*"]
 resolver = "2"
 
 [workspace.dependencies]
-chrono = "0.4.28"
+chrono = "0.4.29"
 anyhow = "1.0.75"
 thiserror = "1.0.48"
 async-trait = "0.1.73"
