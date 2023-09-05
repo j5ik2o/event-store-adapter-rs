@@ -40,12 +40,12 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
       .query()
       .table_name(self.snapshot_table_name.clone())
       .index_name(self.snapshot_aid_index_name.clone())
-      .key_condition_expression("#aid = :aid AND #seq_nr > :seq_nr")
+      .key_condition_expression("#aid = :aid AND #seq_nr = :seq_nr")
       .expression_attribute_names("#aid", "aid")
       .expression_attribute_names("#seq_nr", "seq_nr")
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_values(":seq_nr", AttributeValue::N("0".to_string()))
-      .scan_index_forward(false)
+      // .scan_index_forward(false)
       .limit(1)
       .send()
       .await?;
@@ -54,13 +54,6 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
         let payload = items[0].get("payload").unwrap();
         let bytes = payload.as_b().unwrap().clone().into_inner();
         let aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
-        let seq_nr = items[0]
-          .get("seq_nr")
-          .unwrap()
-          .as_n()
-          .unwrap()
-          .parse::<usize>()
-          .unwrap();
         let version = items[0]
           .get("version")
           .unwrap()
@@ -68,6 +61,8 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
           .unwrap()
           .parse::<usize>()
           .unwrap();
+        let seq_nr = aggregate.seq_nr();
+        log::info!("seq_nr: {}", seq_nr);
         Ok((aggregate, seq_nr, version))
       } else {
         Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
@@ -236,7 +231,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       .item("skey", AttributeValue::S(skey))
       .item("payload", AttributeValue::B(Blob::new(payload)))
       .item("aid", AttributeValue::S(event.aggregate_id().to_string()))
-      .item("seq_nr", AttributeValue::N(ar.seq_nr().to_string()))
+      .item("seq_nr", AttributeValue::N(seq_nr.to_string()))
       .item("version", AttributeValue::N("1".to_string()))
       .item(
         "last_updated_at",
@@ -271,7 +266,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
         )
         .expression_attribute_names("#seq_nr", "seq_nr")
         .expression_attribute_names("#payload", "payload")
-        .expression_attribute_values(":seq_nr", AttributeValue::N(ar.seq_nr().to_string()))
+        .expression_attribute_values(":seq_nr", AttributeValue::N(seq_nr.to_string()))
         .expression_attribute_values(":payload", AttributeValue::B(Blob::new(payload)));
     }
     Ok(update_snapshot.build())

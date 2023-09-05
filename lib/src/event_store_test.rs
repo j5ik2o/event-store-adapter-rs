@@ -205,7 +205,7 @@ async fn find_by_id(
 
 #[tokio::test]
 async fn test_event_store() {
-  env::set_var("RUST_LOG", "debug");
+  env::set_var("RUST_LOG", "info");
   let _ = env_logger::builder().is_test(true).try_init();
 
   let docker = Cli::docker();
