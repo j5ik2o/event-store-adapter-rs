@@ -19,8 +19,6 @@ pub struct EventStore<AG: Aggregate, EV: Event> {
   snapshot_table_name: String,
   snapshot_aid_index_name: String,
   shard_count: u64,
-  keep_snapshot: bool,
-  keep_snapshot_count: usize,
   key_resolver: Arc<dyn KeyResolver>,
   event_serializer: Arc<dyn EventSerializer<EV>>,
   snapshot_serializer: Arc<dyn SnapshotSerializer<AG>>,
@@ -116,13 +114,6 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
               .build(),
           )
           .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
-        if self.keep_snapshot {
-          builder = builder.transact_items(
-            TransactWriteItem::builder()
-              .put(self.put_snapshot(event, ar.seq_nr(), ar)?)
-              .build(),
-          );
-        }
         builder.send().await?;
       }
       (true, None) => {
@@ -138,14 +129,6 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
               .build(),
           )
           .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
-        if self.keep_snapshot {
-          let snapshot_count = self.get_snapshot_count(event.aggregate_id()).await?;
-          log::debug!("snapshot count: {}", snapshot_count);
-          if snapshot_count > self.keep_snapshot_count + 1 {
-            let delete = self.delete_last_snapshot(event.aggregate_id()).await?;
-            builder = builder.transact_items(TransactWriteItem::builder().delete(delete).build());
-          }
-        }
         builder.send().await?;
       }
     }
@@ -169,22 +152,10 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       snapshot_table_name,
       snapshot_aid_index_name,
       shard_count,
-      keep_snapshot: false,
-      keep_snapshot_count: 1,
       key_resolver: Arc::new(DefaultPartitionKeyResolver),
       event_serializer: Arc::new(crate::serializer::JsonEventSerializer::default()),
       snapshot_serializer: Arc::new(crate::serializer::JsonSnapshotSerializer::default()),
     }
-  }
-
-  pub fn with_keep_snapshot(mut self, keep_snapshot: bool) -> Self {
-    self.keep_snapshot = keep_snapshot;
-    self
-  }
-
-  pub fn with_keep_snapshot_count(mut self, keep_snapshot_count: usize) -> Self {
-    self.keep_snapshot_count = keep_snapshot_count;
-    self
   }
 
   pub fn with_key_resolver(mut self, key_resolver: Arc<dyn KeyResolver>) -> Self {
