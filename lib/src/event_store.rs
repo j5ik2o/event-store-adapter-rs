@@ -201,15 +201,12 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
           .build(),
       )
       .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
-    match (self.keep_snapshot_count.is_some(), ar) {
-      (true, Some(ar)) => {
-        builder = builder.transact_items(
-          TransactWriteItem::builder()
-            .put(self.put_snapshot(event, ar.seq_nr(), ar)?)
-            .build(),
-        );
-      }
-      _ => {}
+    if let (true, Some(ar)) = (self.keep_snapshot_count.is_some(), ar) {
+      builder = builder.transact_items(
+        TransactWriteItem::builder()
+          .put(self.put_snapshot(event, ar.seq_nr(), ar)?)
+          .build(),
+      );
     }
     builder.send().await?;
     Ok(())
