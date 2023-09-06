@@ -247,14 +247,20 @@ async fn test_event_store() {
     snapshot_table_name.to_string(),
     snapshot_aid_index_name.to_string(),
     64,
-  );
+  )
+  .with_keep_snapshot_count(Some(1));
 
-  let (user_account, event) = UserAccount::new(UserAccountId { value: "1".to_string() }, "test".to_string()).unwrap();
+  let id_value = id_generate();
+  let id = UserAccountId {
+    value: id_value.to_string(),
+  };
+
+  let (user_account, event) = UserAccount::new(id.clone(), "test".to_string()).unwrap();
   event_store
     .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
     .await
     .unwrap();
-  let id = UserAccountId { value: "1".to_string() };
+
   let mut user_account = find_by_id(&mut event_store, &id).await.unwrap();
 
   let event = user_account.rename("test2").unwrap();
@@ -264,7 +270,15 @@ async fn test_event_store() {
     .await
     .unwrap();
 
-  let user_account = find_by_id(&mut event_store, &id).await.unwrap();
+  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap();
 
   assert_eq!(user_account.name, "test2");
+
+  let event = user_account.rename("test3").unwrap();
+
+  event_store
+    .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .await
+    .unwrap();
+  assert_eq!(user_account.name, "test3");
 }

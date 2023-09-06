@@ -163,7 +163,7 @@ pub async fn wait_table(client: &Client, target_table_name: &str) -> bool {
   let lto = client.list_tables().send().await;
   match lto {
     Ok(lto) => {
-      log::info!("table_names: {:?}", lto.table_names());
+      log::debug!("table_names: {:?}", lto.table_names());
       match lto.table_names() {
         Some(table_names) => table_names.iter().any(|tn| tn == target_table_name),
         None => false,
