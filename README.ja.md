@@ -6,13 +6,13 @@
 [![dependency status](https://deps.rs/repo/github/j5ik2o/event-store-adapter-rs/status.svg)](https://deps.rs/repo/github/j5ik2o/event-store-adapter-rs)
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-rs)](https://github.com/XAMPPRocky/tokei)
 
-This library is designed to turn DynamoDB into an Event Store for Event Sourcing.
+このライブラリは、DynamoDBをEvent Sourcing用のEvent Storeにするためのものです。
 
-[日本語](./README.ja.md)
+[English](./README.md)
 
-## Usage
+## 使い方
 
-You can easily implement an Event Sourcing-enabled repository using EventStore.
+EventStoreを使えば、Event Sourcing対応リポジトリを簡単に実装できます。
 
 ```rust
 pub struct UserAccountRepository {
@@ -45,7 +45,7 @@ impl UserAccountRepository {
 }
 ```
 
-The following is an example of the repository usage
+以下はリポジトリの使用例です。
 
 ```rust
 let event_store = EventStore::new(
@@ -75,6 +75,6 @@ repository
 //  .await
 ```
 
-## Table Specifications
+## テーブル仕様
 
-See [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md).
+See [docs/DATABASE_SCHEMA.ja.md](docs/DATABASE_SCHEMA.md).
