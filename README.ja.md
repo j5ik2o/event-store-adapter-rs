@@ -77,4 +77,4 @@ repository
 
 ## テーブル仕様
 
-See [docs/DATABASE_SCHEMA.ja.md](docs/DATABASE_SCHEMA.md).
+See [docs/DATABASE_SCHEMA.ja.md](docs/DATABASE_SCHEMA.ja.md).
