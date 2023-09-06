@@ -1,5 +1,3 @@
-
-
 pub mod event_store;
 #[cfg(test)]
 mod event_store_test;
