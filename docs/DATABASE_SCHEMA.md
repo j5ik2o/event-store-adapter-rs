@@ -37,7 +37,7 @@ This table is used to store aggregate state and to speed up replay of aggregates
 - When the snapshot redundancy feature is disabled, only a snapshot is stored at skey=0. When enabled, two snapshots are stored at skey=aggregate.seq_nr() in addition to skey=0. Each time a snapshot is saved, skey=aggregate.seq_nr() snapshot will be increased, but you can specify an upper limit for the snapshot (default is 1). If the upper limit is exceeded, the older snapshots will be deleted first. By default, the deletion is client-initiated; you can also use TTL to let DynamoDB itself do the deletion.
 - GSI is applied to aid and seq_nr, and this index is used during replay.
 
-### Writing events and snapshots 1.
+### Writing events and snapshots
 
 1. When the command is accepted by aggregate, an event with the latest seq_nr is generated. 
 2. The generated events are written to the journal table. However, this write is always done in the same transaction as the snapshot table and under version matching conditions. Except for the first event, updating the payload of snapshot is optional.
