@@ -224,7 +224,7 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
         log::debug!("excess_count: {}", excess_count);
         let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
         log::debug!("keys = {:?}", keys);
-        if keys.len() > 0 {
+        if !keys.is_empty() {
           let request_items = keys
             .into_iter()
             .map(|(pkey, skey)| {

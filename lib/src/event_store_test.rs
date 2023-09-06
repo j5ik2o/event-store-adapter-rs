@@ -146,11 +146,8 @@ impl UserAccount {
   }
 
   fn apply_event(&mut self, event: UserAccountEvent) {
-    match event {
-      UserAccountEvent::Renamed { name, .. } => {
-        self.name = name;
-      }
-      _ => {}
+    if let UserAccountEvent::Created { name, .. } = event {
+      self.rename(&name).unwrap();
     }
   }
 
