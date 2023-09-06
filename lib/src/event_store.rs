@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::primitives::Blob;
 use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, Put, Select, TransactWriteItem, Update, WriteRequest};
 use aws_sdk_dynamodb::Client;
+use chrono::{Duration, Utc};
 
 use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
@@ -20,6 +21,7 @@ pub struct EventStore<AG: Aggregate, EV: Event> {
   snapshot_aid_index_name: String,
   shard_count: u64,
   keep_snapshot_count: Option<usize>,
+  delete_ttl: Option<Duration>,
   key_resolver: Arc<dyn KeyResolver>,
   event_serializer: Arc<dyn EventSerializer<EV>>,
   snapshot_serializer: Arc<dyn SnapshotSerializer<AG>>,
@@ -107,7 +109,11 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
       (false, ar) => {
         self.update_event_with_snapshot_opt(event, version, ar).await?;
         if self.keep_snapshot_count.is_some() {
-          self.prune_excess_snapshots(event).await?;
+          if self.delete_ttl.is_none() {
+            self.delete_excess_snapshots(event.aggregate_id()).await?;
+          } else {
+            self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
+          }
         }
       }
     }
@@ -132,6 +138,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       snapshot_aid_index_name,
       shard_count,
       keep_snapshot_count: None,
+      delete_ttl: None,
       key_resolver: Arc::new(DefaultPartitionKeyResolver),
       event_serializer: Arc::new(crate::serializer::JsonEventSerializer::default()),
       snapshot_serializer: Arc::new(crate::serializer::JsonSnapshotSerializer::default()),
@@ -140,6 +147,11 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
 
   pub fn with_keep_snapshot_count(mut self, keep_snapshot_count: Option<usize>) -> Self {
     self.keep_snapshot_count = keep_snapshot_count;
+    self
+  }
+
+  pub fn with_delete_ttl(mut self, delete_ttl: Option<Duration>) -> Self {
+    self.delete_ttl = delete_ttl;
     self
   }
 
@@ -203,16 +215,14 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
     Ok(())
   }
 
-  /// Prune excess snapshots
-  async fn prune_excess_snapshots(&mut self, event: &E) -> Result<()> {
+  /// Delete excess snapshots
+  async fn delete_excess_snapshots<AID: AggregateId>(&mut self, aggregate_id: &AID) -> Result<()> {
     if let Some(keep_snapshot_count) = self.keep_snapshot_count {
-      let snapshot_count = self.get_snapshot_count(event.aggregate_id()).await? - 1;
+      let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
       let excess_count = snapshot_count - keep_snapshot_count;
       if excess_count > 0 {
         log::debug!("excess_count: {}", excess_count);
-        let keys = self
-          .get_last_snapshot_keys(event.aggregate_id(), excess_count as i32)
-          .await?;
+        let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
         log::debug!("keys = {:?}", keys);
         if keys.len() > 0 {
           let request_items = keys
@@ -228,17 +238,45 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
                 .build()
             })
             .collect::<Vec<_>>();
-          self
+          let result = self
             .client
             .batch_write_item()
             .request_items(self.snapshot_table_name.clone(), request_items)
             .send()
+            .await;
+          if result.is_err() {
+            log::warn!("Failed to delete excess snapshots: {:?}", result);
+          } else {
+            log::debug!("excess snapshots are deleted");
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// Update ttl of excess snapshots
+  async fn update_ttl_of_excess_snapshots<AID: AggregateId>(&mut self, aggregate_id: &AID) -> Result<()> {
+    if let Some(keep_snapshot_count) = self.keep_snapshot_count {
+      let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
+      let excess_count = snapshot_count - keep_snapshot_count;
+      if excess_count > 0 {
+        log::debug!("excess_count: {}", excess_count);
+        let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
+        log::debug!("keys = {:?}", keys);
+        let ttl = (Utc::now() + self.delete_ttl.unwrap()).timestamp();
+        for (pkey, skey) in keys {
+          self
+            .client
+            .update_item()
+            .table_name(self.snapshot_table_name.clone())
+            .key("pkey", AttributeValue::S(pkey))
+            .key("skey", AttributeValue::S(skey))
+            .update_expression("SET #ttl=:ttl")
+            .expression_attribute_names("#ttl", "ttl")
+            .expression_attribute_values(":ttl", AttributeValue::N(ttl.to_string()))
+            .send()
             .await?;
-          log::debug!("excess snapshots are deleted");
-          // let keys = self
-          //   .get_last_snapshot_keys(event.aggregate_id(), excess_count as i32)
-          //   .await?;
-          // log::info!("keys = {:?}", keys);
         }
       }
     }
@@ -261,7 +299,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
   }
 
   async fn get_last_snapshot_keys<AID: AggregateId>(&mut self, aid: &AID, limit: i32) -> Result<Vec<(String, String)>> {
-    let response = self
+    let mut query_builder = self
       .client
       .query()
       .table_name(self.snapshot_table_name.clone())
@@ -272,9 +310,14 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       .expression_attribute_names("#seq_nr", "seq_nr")
       .expression_attribute_values(":seq_nr", AttributeValue::N(0.to_string()))
       .scan_index_forward(false)
-      .limit(limit)
-      .send()
-      .await?;
+      .limit(limit);
+    if self.delete_ttl.is_some() {
+      query_builder = query_builder
+        .expression_attribute_names("#ttl", "ttl")
+        .expression_attribute_values(":ttl", AttributeValue::N(0.to_string()))
+        .filter_expression("#ttl = :ttl");
+    }
+    let response = query_builder.send().await?;
     if let Some(items) = response.items {
       let mut result = Vec::new();
       for item in items {
@@ -308,6 +351,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       .item("aid", AttributeValue::S(event.aggregate_id().to_string()))
       .item("seq_nr", AttributeValue::N(seq_nr.to_string()))
       .item("version", AttributeValue::N("1".to_string()))
+      .item("ttl", AttributeValue::N("0".to_string()))
       .item(
         "last_updated_at",
         AttributeValue::N(event.occurred_at().timestamp_millis().to_string()),

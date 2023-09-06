@@ -1,7 +1,6 @@
 use std::env;
 use std::fmt::{Display, Formatter};
 use std::thread::sleep;
-use std::time::Duration;
 
 use anyhow::Result;
 
@@ -205,7 +204,7 @@ async fn find_by_id(
 
 #[tokio::test]
 async fn test_event_store() {
-  env::set_var("RUST_LOG", "info");
+  env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
   let _ = env_logger::builder().is_test(true).try_init();
 
   let docker = Cli::docker();
@@ -218,7 +217,7 @@ async fn test_event_store() {
     .parse::<f32>()
     .unwrap();
 
-  sleep(Duration::from_millis((1000f32 * test_time_factor) as u64));
+  sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
 
   let client = create_client(port);
 
@@ -232,12 +231,12 @@ async fn test_event_store() {
 
   while !(wait_table(&client, journal_table_name).await) {
     log::info!("Waiting for journal table to be created");
-    sleep(Duration::from_millis((1000f32 * test_time_factor) as u64));
+    sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
   }
 
   while !(wait_table(&client, snapshot_table_name).await) {
     log::info!("Waiting for snapshot table to be created");
-    sleep(Duration::from_millis((1000f32 * test_time_factor) as u64));
+    sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
   }
 
   let mut event_store = EventStore::new(
@@ -248,7 +247,8 @@ async fn test_event_store() {
     snapshot_aid_index_name.to_string(),
     64,
   )
-  .with_keep_snapshot_count(Some(1));
+  .with_keep_snapshot_count(Some(1))
+  .with_delete_ttl(Some(chrono::Duration::seconds(5)));
 
   let id_value = id_generate();
   let id = UserAccountId {
