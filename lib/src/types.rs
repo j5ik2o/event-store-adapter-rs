@@ -39,20 +39,27 @@ pub trait Aggregate: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> +
   fn last_updated_at(&self) -> &DateTime<Utc>;
 }
 
+/// イベントストアを表すトレイト。
 #[async_trait]
-pub trait EventPersistenceGateway: Debug + Clone + Sync + Send + 'static {
+pub trait EventStore: Debug + Clone + Sync + Send + 'static {
+  /// イベントの型。
   type EV: Event;
+  /// 集約の型。
   type AG: Aggregate;
+  /// 集約のIDの型。
   type AID: AggregateId;
 
-  async fn get_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)>;
-
-  async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
-
-  async fn store_event_with_snapshot_opt(
+  /// イベント及びスナップショット(任意)を保存します。
+  async fn store_event_and_snapshot_opt(
     &mut self,
     event: &Self::EV,
     version: usize,
     aggregate: Option<&Self::AG>,
   ) -> Result<()>;
+
+  /// 最新のスナップショットを取得する。
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)>;
+
+  /// 指定したIDとシーケンス番号以降のイベントを取得する。
+  async fn get_events_by_id_since_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
 }

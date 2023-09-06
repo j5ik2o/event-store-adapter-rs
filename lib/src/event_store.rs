@@ -10,10 +10,11 @@ use chrono::{Duration, Utc};
 
 use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
-use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
+use crate::types::{Aggregate, AggregateId, Event, EventStore};
 
+//
 #[derive(Debug, Clone)]
-pub struct EventStore<AG: Aggregate, EV: Event> {
+pub struct EventStoreForDynamoDB<A: Aggregate, E: Event> {
   client: Client,
   journal_table_name: String,
   journal_aid_index_name: String,
@@ -23,21 +24,20 @@ pub struct EventStore<AG: Aggregate, EV: Event> {
   keep_snapshot_count: Option<usize>,
   delete_ttl: Option<Duration>,
   key_resolver: Arc<dyn KeyResolver>,
-  event_serializer: Arc<dyn EventSerializer<EV>>,
-  snapshot_serializer: Arc<dyn SnapshotSerializer<AG>>,
+  event_serializer: Arc<dyn EventSerializer<E>>,
+  snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
 }
 
-unsafe impl<AG: Aggregate, EV: Event> Sync for EventStore<AG, EV> {}
-
-unsafe impl<AG: Aggregate, EV: Event> Send for EventStore<AG, EV> {}
+unsafe impl<A: Aggregate, E: Event> Sync for EventStoreForDynamoDB<A, E> {}
+unsafe impl<A: Aggregate, E: Event> Send for EventStoreForDynamoDB<A, E> {}
 
 #[async_trait]
-impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
+impl<A: Aggregate, E: Event> EventStore for EventStoreForDynamoDB<A, E> {
   type AG = A;
   type AID = A::ID;
   type EV = E;
 
-  async fn get_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)> {
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)> {
     let response = self
       .client
       .query()
@@ -73,7 +73,7 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
     }
   }
 
-  async fn get_events_by_id_and_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>> {
+  async fn get_events_by_id_since_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>> {
     let response = self
       .client
       .query()
@@ -98,16 +98,16 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
     Ok(events)
   }
 
-  async fn store_event_with_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
+  async fn store_event_and_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
     match (event.is_created(), aggregate) {
       (true, Some(ar)) => {
-        self.create_event_with_snapshot(event, ar).await?;
+        self.create_event_and_snapshot(event, ar).await?;
       }
       (true, None) => {
         panic!("Aggregate is not found");
       }
       (false, ar) => {
-        self.update_event_with_snapshot_opt(event, version, ar).await?;
+        self.update_event_and_snapshot_opt(event, version, ar).await?;
         if self.keep_snapshot_count.is_some() {
           if self.delete_ttl.is_none() {
             self.delete_excess_snapshots(event.aggregate_id()).await?;
@@ -121,7 +121,7 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
   }
 }
 
-impl<A: Aggregate, E: Event> EventStore<A, E> {
+impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
   pub fn new(
     client: Client,
     journal_table_name: String,
@@ -170,7 +170,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
     self
   }
 
-  async fn create_event_with_snapshot(&mut self, event: &E, ar: &A) -> Result<()> {
+  async fn create_event_and_snapshot(&mut self, event: &E, ar: &A) -> Result<()> {
     let mut builder = self
       .client
       .transact_write_items()
@@ -191,7 +191,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
     Ok(())
   }
 
-  async fn update_event_with_snapshot_opt(&mut self, event: &E, version: usize, ar: Option<&A>) -> Result<()> {
+  async fn update_event_and_snapshot_opt(&mut self, event: &E, version: usize, ar: Option<&A>) -> Result<()> {
     let mut builder = self
       .client
       .transact_write_items()
