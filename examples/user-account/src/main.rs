@@ -5,7 +5,7 @@ use std::time::Duration;
 use anyhow::Result;
 use testcontainers::clients::Cli;
 
-use event_store_adapter_rs::event_store::EventStore;
+use event_store_adapter_rs::event_store::EventStoreForDynamoDB;
 use event_store_adapter_rs::types::Aggregate;
 use event_store_adapter_test_utils_rs::docker::dynamodb_local;
 use event_store_adapter_test_utils_rs::dynamodb::{create_client, create_journal_table, create_snapshot_table};
@@ -42,7 +42,7 @@ async fn main() {
   let snapshot_aid_index_name = "snapshot-aid-index";
   let _snapshot_table_output = create_snapshot_table(&client, snapshot_table_name, snapshot_aid_index_name).await;
 
-  let event_store = EventStore::new(
+  let event_store = EventStoreForDynamoDB::new(
     client.clone(),
     journal_table_name.to_string(),
     journal_aid_index_name.to_string(),

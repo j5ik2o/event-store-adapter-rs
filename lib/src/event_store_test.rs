@@ -15,8 +15,8 @@ use testcontainers::clients::Cli;
 
 use ulid_generator_rs::ULID;
 
-use crate::event_store::EventStore;
-use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
+use crate::event_store::EventStoreForDynamoDB;
+use crate::types::{Aggregate, AggregateId, Event, EventStore};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserAccountId {
@@ -146,11 +146,8 @@ impl UserAccount {
   }
 
   fn apply_event(&mut self, event: UserAccountEvent) {
-    match event {
-      UserAccountEvent::Renamed { name, .. } => {
-        self.name = name;
-      }
-      _ => {}
+    if let UserAccountEvent::Created { name, .. } = event {
+      self.rename(&name).unwrap();
     }
   }
 
@@ -193,11 +190,11 @@ impl Aggregate for UserAccount {
 }
 
 async fn find_by_id(
-  event_store: &mut EventStore<UserAccount, UserAccountEvent>,
+  event_store: &mut EventStoreForDynamoDB<UserAccount, UserAccountEvent>,
   id: &UserAccountId,
 ) -> Result<UserAccount> {
-  let (snapshot, seq_nr, version) = event_store.get_snapshot_by_id(id).await?;
-  let events = event_store.get_events_by_id_and_seq_nr(id, seq_nr).await?;
+  let (snapshot, seq_nr, version) = event_store.get_latest_snapshot_by_id(id).await?;
+  let events = event_store.get_events_by_id_since_seq_nr(id, seq_nr).await?;
   let user_account = UserAccount::replay(events, Some(snapshot), version);
   Ok(user_account)
 }
@@ -239,7 +236,7 @@ async fn test_event_store() {
     sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
   }
 
-  let mut event_store = EventStore::new(
+  let mut event_store = EventStoreForDynamoDB::new(
     client.clone(),
     journal_table_name.to_string(),
     journal_aid_index_name.to_string(),
@@ -257,7 +254,7 @@ async fn test_event_store() {
 
   let (user_account, event) = UserAccount::new(id.clone(), "test".to_string()).unwrap();
   event_store
-    .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .store_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
     .await
     .unwrap();
 
@@ -266,7 +263,7 @@ async fn test_event_store() {
   let event = user_account.rename("test2").unwrap();
 
   event_store
-    .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .store_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
     .await
     .unwrap();
 
@@ -277,7 +274,7 @@ async fn test_event_store() {
   let event = user_account.rename("test3").unwrap();
 
   event_store
-    .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .store_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
     .await
     .unwrap();
   assert_eq!(user_account.name, "test3");
