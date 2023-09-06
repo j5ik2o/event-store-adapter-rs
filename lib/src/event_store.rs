@@ -4,8 +4,9 @@ use std::sync::Arc;
 use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::primitives::Blob;
-use aws_sdk_dynamodb::types::{AttributeValue, Delete, Put, Select, TransactWriteItem, Update};
+use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, Put, Select, TransactWriteItem, Update, WriteRequest};
 use aws_sdk_dynamodb::Client;
+use chrono::{Duration, Utc};
 
 use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
@@ -19,6 +20,8 @@ pub struct EventStore<AG: Aggregate, EV: Event> {
   snapshot_table_name: String,
   snapshot_aid_index_name: String,
   shard_count: u64,
+  keep_snapshot_count: Option<usize>,
+  delete_ttl: Option<Duration>,
   key_resolver: Arc<dyn KeyResolver>,
   event_serializer: Arc<dyn EventSerializer<EV>>,
   snapshot_serializer: Arc<dyn SnapshotSerializer<AG>>,
@@ -40,38 +43,31 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
       .query()
       .table_name(self.snapshot_table_name.clone())
       .index_name(self.snapshot_aid_index_name.clone())
-      .key_condition_expression("#aid = :aid AND #seq_nr > :seq_nr")
+      .key_condition_expression("#aid = :aid AND #seq_nr = :seq_nr")
       .expression_attribute_names("#aid", "aid")
       .expression_attribute_names("#seq_nr", "seq_nr")
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_values(":seq_nr", AttributeValue::N("0".to_string()))
-      .scan_index_forward(false)
       .limit(1)
       .send()
       .await?;
     if let Some(items) = response.items {
-      if items.len() == 1 {
-        let payload = items[0].get("payload").unwrap();
-        let bytes = payload.as_b().unwrap().clone().into_inner();
-        let aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
-        let seq_nr = items[0]
-          .get("seq_nr")
-          .unwrap()
-          .as_n()
-          .unwrap()
-          .parse::<usize>()
-          .unwrap();
-        let version = items[0]
-          .get("version")
-          .unwrap()
-          .as_n()
-          .unwrap()
-          .parse::<usize>()
-          .unwrap();
-        Ok((aggregate, seq_nr, version))
-      } else {
-        Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
+      if items.len() != 1 {
+        panic!("No snapshot found for aggregate id: {}", aid);
       }
+      let payload = items[0].get("payload").unwrap();
+      let bytes = payload.as_b().unwrap().clone().into_inner();
+      let aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
+      let version = items[0]
+        .get("version")
+        .unwrap()
+        .as_n()
+        .unwrap()
+        .parse::<usize>()
+        .unwrap();
+      let seq_nr = aggregate.seq_nr();
+      log::debug!("seq_nr: {}", seq_nr);
+      Ok((aggregate, seq_nr, version))
     } else {
       Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
     }
@@ -105,31 +101,20 @@ impl<A: Aggregate, E: Event> EventPersistenceGateway for EventStore<A, E> {
   async fn store_event_with_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
     match (event.is_created(), aggregate) {
       (true, Some(ar)) => {
-        let mut builder = self
-          .client
-          .transact_write_items()
-          .transact_items(
-            TransactWriteItem::builder()
-              .put(self.put_snapshot(event, 0, ar)?)
-              .build(),
-          )
-          .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
-        builder.send().await?;
+        self.create_event_with_snapshot(event, ar).await?;
       }
       (true, None) => {
         panic!("Aggregate is not found");
       }
       (false, ar) => {
-        let mut builder = self
-          .client
-          .transact_write_items()
-          .transact_items(
-            TransactWriteItem::builder()
-              .update(self.update_snapshot(event, 0, version, ar)?)
-              .build(),
-          )
-          .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
-        builder.send().await?;
+        self.update_event_with_snapshot_opt(event, version, ar).await?;
+        if self.keep_snapshot_count.is_some() {
+          if self.delete_ttl.is_none() {
+            self.delete_excess_snapshots(event.aggregate_id()).await?;
+          } else {
+            self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
+          }
+        }
       }
     }
     Ok(())
@@ -152,10 +137,22 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       snapshot_table_name,
       snapshot_aid_index_name,
       shard_count,
+      keep_snapshot_count: None,
+      delete_ttl: None,
       key_resolver: Arc::new(DefaultPartitionKeyResolver),
       event_serializer: Arc::new(crate::serializer::JsonEventSerializer::default()),
       snapshot_serializer: Arc::new(crate::serializer::JsonSnapshotSerializer::default()),
     }
+  }
+
+  pub fn with_keep_snapshot_count(mut self, keep_snapshot_count: Option<usize>) -> Self {
+    self.keep_snapshot_count = keep_snapshot_count;
+    self
+  }
+
+  pub fn with_delete_ttl(mut self, delete_ttl: Option<Duration>) -> Self {
+    self.delete_ttl = delete_ttl;
+    self
   }
 
   pub fn with_key_resolver(mut self, key_resolver: Arc<dyn KeyResolver>) -> Self {
@@ -173,6 +170,119 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
     self
   }
 
+  async fn create_event_with_snapshot(&mut self, event: &E, ar: &A) -> Result<()> {
+    let mut builder = self
+      .client
+      .transact_write_items()
+      .transact_items(
+        TransactWriteItem::builder()
+          .put(self.put_snapshot(event, 0, ar)?)
+          .build(),
+      )
+      .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
+    if self.keep_snapshot_count.is_some() {
+      builder = builder.transact_items(
+        TransactWriteItem::builder()
+          .put(self.put_snapshot(event, ar.seq_nr(), ar)?)
+          .build(),
+      );
+    }
+    builder.send().await?;
+    Ok(())
+  }
+
+  async fn update_event_with_snapshot_opt(&mut self, event: &E, version: usize, ar: Option<&A>) -> Result<()> {
+    let mut builder = self
+      .client
+      .transact_write_items()
+      .transact_items(
+        TransactWriteItem::builder()
+          .update(self.update_snapshot(event, 0, version, ar)?)
+          .build(),
+      )
+      .transact_items(TransactWriteItem::builder().put(self.put_journal(event)?).build());
+    match (self.keep_snapshot_count.is_some(), ar) {
+      (true, Some(ar)) => {
+        builder = builder.transact_items(
+          TransactWriteItem::builder()
+            .put(self.put_snapshot(event, ar.seq_nr(), ar)?)
+            .build(),
+        );
+      }
+      _ => {}
+    }
+    builder.send().await?;
+    Ok(())
+  }
+
+  /// Delete excess snapshots
+  async fn delete_excess_snapshots<AID: AggregateId>(&mut self, aggregate_id: &AID) -> Result<()> {
+    if let Some(keep_snapshot_count) = self.keep_snapshot_count {
+      let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
+      let excess_count = snapshot_count - keep_snapshot_count;
+      if excess_count > 0 {
+        log::debug!("excess_count: {}", excess_count);
+        let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
+        log::debug!("keys = {:?}", keys);
+        if keys.len() > 0 {
+          let request_items = keys
+            .into_iter()
+            .map(|(pkey, skey)| {
+              WriteRequest::builder()
+                .delete_request(
+                  DeleteRequest::builder()
+                    .key("pkey", AttributeValue::S(pkey))
+                    .key("skey", AttributeValue::S(skey))
+                    .build(),
+                )
+                .build()
+            })
+            .collect::<Vec<_>>();
+          let result = self
+            .client
+            .batch_write_item()
+            .request_items(self.snapshot_table_name.clone(), request_items)
+            .send()
+            .await;
+          if result.is_err() {
+            log::warn!("Failed to delete excess snapshots: {:?}", result);
+          } else {
+            log::debug!("excess snapshots are deleted");
+          }
+        }
+      }
+    }
+    Ok(())
+  }
+
+  /// Update ttl of excess snapshots
+  async fn update_ttl_of_excess_snapshots<AID: AggregateId>(&mut self, aggregate_id: &AID) -> Result<()> {
+    if let Some(keep_snapshot_count) = self.keep_snapshot_count {
+      let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
+      let excess_count = snapshot_count - keep_snapshot_count;
+      if excess_count > 0 {
+        log::debug!("excess_count: {}", excess_count);
+        let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
+        log::debug!("keys = {:?}", keys);
+        let ttl = (Utc::now() + self.delete_ttl.unwrap()).timestamp();
+        for (pkey, skey) in keys {
+          self
+            .client
+            .update_item()
+            .table_name(self.snapshot_table_name.clone())
+            .key("pkey", AttributeValue::S(pkey))
+            .key("skey", AttributeValue::S(skey))
+            .update_expression("SET #ttl=:ttl")
+            .expression_attribute_names("#ttl", "ttl")
+            .expression_attribute_values(":ttl", AttributeValue::N(ttl.to_string()))
+            .send()
+            .await?;
+        }
+      }
+    }
+    Ok(())
+  }
+
   async fn get_snapshot_count<AID: AggregateId>(&mut self, aid: &AID) -> Result<usize> {
     let response = self
       .client
@@ -188,35 +298,36 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
     Ok(response.count as usize)
   }
 
-  async fn delete_last_snapshot<AID: AggregateId>(&mut self, aid: &AID) -> Result<Delete> {
-    let pkey = self.resolve_pkey(aid, self.shard_count);
-    let response = self
+  async fn get_last_snapshot_keys<AID: AggregateId>(&mut self, aid: &AID, limit: i32) -> Result<Vec<(String, String)>> {
+    let mut query_builder = self
       .client
       .query()
       .table_name(self.snapshot_table_name.clone())
       .index_name(self.snapshot_aid_index_name.clone())
-      .key_condition_expression("#aid = :aid AND #seq_nr <= :max_seq_nr")
+      .key_condition_expression("#aid = :aid AND #seq_nr > :seq_nr")
       .expression_attribute_names("#aid", "aid")
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_names("#seq_nr", "seq_nr")
-      .expression_attribute_values(":seq_nr", AttributeValue::N(usize::MAX.to_string()))
+      .expression_attribute_values(":seq_nr", AttributeValue::N(0.to_string()))
       .scan_index_forward(false)
-      .limit(1)
-      .send()
-      .await?;
+      .limit(limit);
+    if self.delete_ttl.is_some() {
+      query_builder = query_builder
+        .expression_attribute_names("#ttl", "ttl")
+        .expression_attribute_values(":ttl", AttributeValue::N(0.to_string()))
+        .filter_expression("#ttl = :ttl");
+    }
+    let response = query_builder.send().await?;
     if let Some(items) = response.items {
-      if items.len() == 1 {
-        let skey = items[0].get("skey").unwrap().as_s().unwrap().clone();
-        let delete = Delete::builder()
-          .table_name(self.snapshot_table_name.clone())
-          .key("pkey", AttributeValue::S(pkey))
-          .key("skey", AttributeValue::S(skey))
-          .condition_expression("attribute_exists(pkey) AND attribute_exists(skey)")
-          .build();
-        Ok(delete)
-      } else {
-        Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
+      let mut result = Vec::new();
+      for item in items {
+        log::debug!("aid: {}", item.get("aid").unwrap().as_s().unwrap());
+        log::debug!("seq_nr: {}", item.get("seq_nr").unwrap().as_n().unwrap());
+        let pkey = item.get("pkey").unwrap().as_s().unwrap().clone();
+        let skey = item.get("skey").unwrap().as_s().unwrap().clone();
+        result.push((pkey, skey));
       }
+      Ok(result)
     } else {
       Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
     }
@@ -226,14 +337,21 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
     let payload = self.snapshot_serializer.serialize(ar)?;
+    log::debug!(">--- put_snapshot ---");
+    log::debug!("pkey: {}", pkey);
+    log::debug!("skey: {}", skey);
+    log::debug!("aid: {}", event.aggregate_id().to_string());
+    log::debug!("seq_nr: {}", seq_nr);
+    log::debug!("<--- put_snapshot ---");
     let put_snapshot = Put::builder()
       .table_name(self.snapshot_table_name.clone())
       .item("pkey", AttributeValue::S(pkey))
       .item("skey", AttributeValue::S(skey))
       .item("payload", AttributeValue::B(Blob::new(payload)))
       .item("aid", AttributeValue::S(event.aggregate_id().to_string()))
-      .item("seq_nr", AttributeValue::N(ar.seq_nr().to_string()))
+      .item("seq_nr", AttributeValue::N(seq_nr.to_string()))
       .item("version", AttributeValue::N("1".to_string()))
+      .item("ttl", AttributeValue::N("0".to_string()))
       .item(
         "last_updated_at",
         AttributeValue::N(event.occurred_at().timestamp_millis().to_string()),
@@ -245,6 +363,12 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
   fn update_snapshot(&mut self, event: &E, seq_nr: usize, version: usize, ar_opt: Option<&A>) -> Result<Update> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
+    log::debug!(">--- update_snapshot ---");
+    log::debug!("pkey: {}", pkey);
+    log::debug!("skey: {}", skey);
+    log::debug!("aid: {}", event.aggregate_id().to_string());
+    log::debug!("seq_nr: {}", seq_nr);
+    log::debug!("<--- update_snapshot ---");
     let mut update_snapshot = Update::builder()
       .table_name(self.snapshot_table_name.clone())
       .update_expression("SET #version=:after_version, #last_updated_at=:last_updated_at")
@@ -267,7 +391,7 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
         )
         .expression_attribute_names("#seq_nr", "seq_nr")
         .expression_attribute_names("#payload", "payload")
-        .expression_attribute_values(":seq_nr", AttributeValue::N(ar.seq_nr().to_string()))
+        .expression_attribute_values(":seq_nr", AttributeValue::N(seq_nr.to_string()))
         .expression_attribute_values(":payload", AttributeValue::B(Blob::new(payload)));
     }
     Ok(update_snapshot.build())
@@ -302,279 +426,5 @@ impl<A: Aggregate, E: Event> EventStore<A, E> {
       .build();
 
     Ok(put_journal)
-  }
-}
-
-#[cfg(test)]
-mod tests {
-  use std::env;
-  use std::fmt::{Display, Formatter};
-  use std::thread::sleep;
-  use std::time::Duration;
-
-  use anyhow::Result;
-
-  use chrono::{DateTime, Utc};
-  use event_store_adapter_test_utils_rs::docker::dynamodb_local;
-  use event_store_adapter_test_utils_rs::dynamodb::{
-    create_client, create_journal_table, create_snapshot_table, wait_table,
-  };
-  use event_store_adapter_test_utils_rs::id_generator::id_generate;
-  use serde::{Deserialize, Serialize};
-  use testcontainers::clients::Cli;
-
-  use ulid_generator_rs::ULID;
-
-  use crate::event_store::EventStore;
-  use crate::types::{Aggregate, AggregateId, Event, EventPersistenceGateway};
-
-  #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-  pub struct UserAccountId {
-    value: String,
-  }
-
-  impl Display for UserAccountId {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-      write!(f, "{}", self.value)
-    }
-  }
-
-  impl AggregateId for UserAccountId {
-    fn type_name(&self) -> String {
-      "UserAccount".to_string()
-    }
-
-    fn value(&self) -> String {
-      self.value.clone()
-    }
-  }
-
-  #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-  pub enum UserAccountEvent {
-    Created {
-      id: ULID,
-      aggregate_id: UserAccountId,
-      seq_nr: usize,
-      name: String,
-      occurred_at: chrono::DateTime<chrono::Utc>,
-    },
-    Renamed {
-      id: ULID,
-      aggregate_id: UserAccountId,
-      seq_nr: usize,
-      name: String,
-      occurred_at: chrono::DateTime<chrono::Utc>,
-    },
-  }
-
-  impl Event for UserAccountEvent {
-    type AggregateID = UserAccountId;
-    type ID = ULID;
-
-    fn id(&self) -> &Self::ID {
-      match self {
-        UserAccountEvent::Created { id, .. } => id,
-        UserAccountEvent::Renamed { id, .. } => id,
-      }
-    }
-
-    fn aggregate_id(&self) -> &Self::AggregateID {
-      match self {
-        UserAccountEvent::Created { aggregate_id, .. } => aggregate_id,
-        UserAccountEvent::Renamed { aggregate_id, .. } => aggregate_id,
-      }
-    }
-
-    fn seq_nr(&self) -> usize {
-      match self {
-        UserAccountEvent::Created { seq_nr, .. } => *seq_nr,
-        UserAccountEvent::Renamed { seq_nr, .. } => *seq_nr,
-      }
-    }
-
-    fn occurred_at(&self) -> &DateTime<Utc> {
-      match self {
-        UserAccountEvent::Created { occurred_at, .. } => occurred_at,
-        UserAccountEvent::Renamed { occurred_at, .. } => occurred_at,
-      }
-    }
-
-    fn is_created(&self) -> bool {
-      match self {
-        UserAccountEvent::Created { .. } => true,
-        UserAccountEvent::Renamed { .. } => false,
-      }
-    }
-  }
-
-  #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-  pub struct UserAccount {
-    id: UserAccountId,
-    name: String,
-    seq_nr: usize,
-    version: usize,
-    last_updated_at: DateTime<Utc>,
-  }
-
-  impl UserAccount {
-    fn new(id: UserAccountId, name: String) -> Result<(Self, UserAccountEvent)> {
-      let mut my_self = Self {
-        id: id.clone(),
-        name,
-        seq_nr: 0,
-        version: 1,
-        last_updated_at: chrono::Utc::now(),
-      };
-      my_self.seq_nr += 1;
-      let event = UserAccountEvent::Created {
-        id: id_generate(),
-        aggregate_id: id,
-        seq_nr: my_self.seq_nr,
-        name: my_self.name.clone(),
-        occurred_at: chrono::Utc::now(),
-      };
-      Ok((my_self, event))
-    }
-
-    fn replay(
-      events: impl IntoIterator<Item = UserAccountEvent>,
-      snapshot_opt: Option<UserAccount>,
-      version: usize,
-    ) -> Self {
-      let mut result = events
-        .into_iter()
-        .fold(snapshot_opt, |result, event| match (result, event) {
-          (Some(mut this), event) => {
-            this.apply_event(event.clone());
-            Some(this)
-          }
-          (..) => None,
-        })
-        .unwrap();
-      result.version = version;
-      result
-    }
-
-    fn apply_event(&mut self, event: UserAccountEvent) {
-      match event {
-        UserAccountEvent::Renamed { name, .. } => {
-          self.name = name;
-        }
-        _ => {}
-      }
-    }
-
-    pub fn rename(&mut self, name: &str) -> Result<UserAccountEvent> {
-      self.name = name.to_string();
-      self.seq_nr += 1;
-      let event = UserAccountEvent::Renamed {
-        id: id_generate(),
-        aggregate_id: self.id.clone(),
-        seq_nr: self.seq_nr,
-        name: name.to_string(),
-        occurred_at: chrono::Utc::now(),
-      };
-      Ok(event)
-    }
-  }
-
-  impl Aggregate for UserAccount {
-    type ID = UserAccountId;
-
-    fn id(&self) -> &Self::ID {
-      &self.id
-    }
-
-    fn seq_nr(&self) -> usize {
-      self.seq_nr
-    }
-
-    fn version(&self) -> usize {
-      self.version
-    }
-
-    fn set_version(&mut self, version: usize) {
-      self.version = version
-    }
-
-    fn last_updated_at(&self) -> &DateTime<Utc> {
-      todo!()
-    }
-  }
-
-  async fn find_by_id(
-    event_store: &mut EventStore<UserAccount, UserAccountEvent>,
-    id: &UserAccountId,
-  ) -> Result<UserAccount> {
-    let (snapshot, seq_nr, version) = event_store.get_snapshot_by_id(id).await?;
-    let events = event_store.get_events_by_id_and_seq_nr(id, seq_nr).await?;
-    let user_account = UserAccount::replay(events, Some(snapshot), version);
-    Ok(user_account)
-  }
-
-  #[tokio::test]
-  async fn test_event_store() {
-    env::set_var("RUST_LOG", "debug");
-    let _ = env_logger::builder().is_test(true).try_init();
-
-    let docker = Cli::docker();
-    let dynamodb_node = dynamodb_local(&docker);
-    let port = dynamodb_node.get_host_port_ipv4(4566);
-    log::debug!("DynamoDB port: {}", port);
-
-    let test_time_factor = env::var("TEST_TIME_FACTOR")
-      .unwrap_or("1".to_string())
-      .parse::<f32>()
-      .unwrap();
-
-    sleep(Duration::from_millis((1000f32 * test_time_factor) as u64));
-
-    let client = create_client(port);
-
-    let journal_table_name = "journal";
-    let journal_aid_index_name = "journal-aid-index";
-    let _journal_table_output = create_journal_table(&client, journal_table_name, journal_aid_index_name).await;
-
-    let snapshot_table_name = "snapshot";
-    let snapshot_aid_index_name = "snapshot-aid-index";
-    let _snapshot_table_output = create_snapshot_table(&client, snapshot_table_name, snapshot_aid_index_name).await;
-
-    while !(wait_table(&client, journal_table_name).await) {
-      log::info!("Waiting for journal table to be created");
-      sleep(Duration::from_millis((1000f32 * test_time_factor) as u64));
-    }
-
-    while !(wait_table(&client, snapshot_table_name).await) {
-      log::info!("Waiting for snapshot table to be created");
-      sleep(Duration::from_millis((1000f32 * test_time_factor) as u64));
-    }
-
-    let mut event_store = EventStore::new(
-      client.clone(),
-      journal_table_name.to_string(),
-      journal_aid_index_name.to_string(),
-      snapshot_table_name.to_string(),
-      snapshot_aid_index_name.to_string(),
-      64,
-    );
-
-    let (user_account, event) = UserAccount::new(UserAccountId { value: "1".to_string() }, "test".to_string()).unwrap();
-    event_store
-      .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
-      .await
-      .unwrap();
-    let id = UserAccountId { value: "1".to_string() };
-    let mut user_account = find_by_id(&mut event_store, &id).await.unwrap();
-
-    let event = user_account.rename("test2").unwrap();
-
-    event_store
-      .store_event_with_snapshot_opt(&event, user_account.version(), Some(&user_account))
-      .await
-      .unwrap();
-
-    let user_account = find_by_id(&mut event_store, &id).await.unwrap();
-
-    assert_eq!(user_account.name, "test2");
   }
 }

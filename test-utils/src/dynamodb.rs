@@ -3,7 +3,7 @@ use aws_sdk_dynamodb::config::{Credentials, Region};
 use aws_sdk_dynamodb::operation::create_table::CreateTableOutput;
 use aws_sdk_dynamodb::types::{
   AttributeDefinition, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType,
-  ProvisionedThroughput, ScalarAttributeType,
+  ProvisionedThroughput, ScalarAttributeType, TimeToLiveSpecification,
 };
 use aws_sdk_dynamodb::Client;
 
@@ -134,7 +134,7 @@ pub async fn create_snapshot_table(client: &Client, table_name: &str, gsi_name: 
 
   let result = client
     .create_table()
-    .table_name(table_name)
+    .table_name(table_name.clone())
     .attribute_definitions(pkey_attribute_definition)
     .attribute_definitions(skey_attribute_definition)
     .attribute_definitions(aid_attribute_definition)
@@ -143,6 +143,18 @@ pub async fn create_snapshot_table(client: &Client, table_name: &str, gsi_name: 
     .key_schema(skey_schema)
     .global_secondary_indexes(gsi)
     .provisioned_throughput(provisioned_throughput)
+    .send()
+    .await?;
+
+  client
+    .update_time_to_live()
+    .table_name(table_name)
+    .time_to_live_specification(
+      TimeToLiveSpecification::builder()
+        .enabled(true)
+        .attribute_name("ttl")
+        .build(),
+    )
     .send()
     .await?;
 
@@ -163,7 +175,7 @@ pub async fn wait_table(client: &Client, target_table_name: &str) -> bool {
   let lto = client.list_tables().send().await;
   match lto {
     Ok(lto) => {
-      log::info!("table_names: {:?}", lto.table_names());
+      log::debug!("table_names: {:?}", lto.table_names());
       match lto.table_names() {
         Some(table_names) => table_names.iter().any(|tn| tn == target_table_name),
         None => false,
