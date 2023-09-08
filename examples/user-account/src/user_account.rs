@@ -41,14 +41,14 @@ pub enum UserAccountEvent {
     aggregate_id: UserAccountId,
     seq_nr: usize,
     name: String,
-    occurred_at: chrono::DateTime<chrono::Utc>,
+    occurred_at: DateTime<Utc>,
   },
   Renamed {
     id: ULID,
     aggregate_id: UserAccountId,
     seq_nr: usize,
     name: String,
-    occurred_at: chrono::DateTime<chrono::Utc>,
+    occurred_at: DateTime<Utc>,
   },
 }
 
@@ -185,11 +185,11 @@ impl Aggregate for UserAccount {
 }
 
 pub struct UserAccountRepository {
-  event_store: EventStoreForDynamoDB<UserAccount, UserAccountEvent>,
+  event_store: EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent>,
 }
 
 impl UserAccountRepository {
-  pub fn new(event_store: EventStoreForDynamoDB<UserAccount, UserAccountEvent>) -> Self {
+  pub fn new(event_store: EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent>) -> Self {
     Self { event_store }
   }
 

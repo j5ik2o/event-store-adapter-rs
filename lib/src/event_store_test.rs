@@ -190,7 +190,7 @@ impl Aggregate for UserAccount {
 }
 
 async fn find_by_id(
-  event_store: &mut EventStoreForDynamoDB<UserAccount, UserAccountEvent>,
+  event_store: &mut EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent>,
   id: &UserAccountId,
 ) -> Result<UserAccount> {
   let (snapshot, seq_nr, version) = event_store.get_latest_snapshot_by_id(id).await?;
