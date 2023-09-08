@@ -8,13 +8,13 @@ use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, Put, Select, Transa
 use aws_sdk_dynamodb::Client;
 use chrono::{Duration, Utc};
 
-use crate::key_resolver::{DefaultPartitionKeyResolver, KeyResolver};
+use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
 use crate::types::{Aggregate, AggregateId, Event, EventStore};
 
 //
 #[derive(Debug, Clone)]
-pub struct EventStoreForDynamoDB<A: Aggregate, E: Event> {
+pub struct EventStoreForDynamoDB<AID: AggregateId, A: Aggregate, E: Event> {
   client: Client,
   journal_table_name: String,
   journal_aid_index_name: String,
@@ -23,19 +23,43 @@ pub struct EventStoreForDynamoDB<A: Aggregate, E: Event> {
   shard_count: u64,
   keep_snapshot_count: Option<usize>,
   delete_ttl: Option<Duration>,
-  key_resolver: Arc<dyn KeyResolver>,
+  key_resolver: Arc<dyn KeyResolver<ID = AID>>,
   event_serializer: Arc<dyn EventSerializer<E>>,
   snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
 }
 
-unsafe impl<A: Aggregate, E: Event> Sync for EventStoreForDynamoDB<A, E> {}
-unsafe impl<A: Aggregate, E: Event> Send for EventStoreForDynamoDB<A, E> {}
+unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Sync for EventStoreForDynamoDB<AID, A, E> {}
+unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Send for EventStoreForDynamoDB<AID, A, E> {}
 
 #[async_trait]
-impl<A: Aggregate, E: Event> EventStore for EventStoreForDynamoDB<A, E> {
-  type AG = A;
-  type AID = A::ID;
+impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> EventStore
+  for EventStoreForDynamoDB<AID, A, E>
+{
   type EV = E;
+  type AG = A;
+  type AID = AID;
+
+  async fn store_event_and_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
+    match (event.is_created(), aggregate) {
+      (true, Some(ar)) => {
+        self.create_event_and_snapshot(event, ar).await?;
+      }
+      (true, None) => {
+        panic!("Aggregate is not found");
+      }
+      (false, ar) => {
+        self.update_event_and_snapshot_opt(event, version, ar).await?;
+        if self.keep_snapshot_count.is_some() {
+          if self.delete_ttl.is_none() {
+            self.delete_excess_snapshots(event.aggregate_id()).await?;
+          } else {
+            self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
+          }
+        }
+      }
+    }
+    Ok(())
+  }
 
   async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)> {
     let response = self
@@ -97,31 +121,9 @@ impl<A: Aggregate, E: Event> EventStore for EventStoreForDynamoDB<A, E> {
     }
     Ok(events)
   }
-
-  async fn store_event_and_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
-    match (event.is_created(), aggregate) {
-      (true, Some(ar)) => {
-        self.create_event_and_snapshot(event, ar).await?;
-      }
-      (true, None) => {
-        panic!("Aggregate is not found");
-      }
-      (false, ar) => {
-        self.update_event_and_snapshot_opt(event, version, ar).await?;
-        if self.keep_snapshot_count.is_some() {
-          if self.delete_ttl.is_none() {
-            self.delete_excess_snapshots(event.aggregate_id()).await?;
-          } else {
-            self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
-          }
-        }
-      }
-    }
-    Ok(())
-  }
 }
 
-impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
+impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> EventStoreForDynamoDB<AID, A, E> {
   pub fn new(
     client: Client,
     journal_table_name: String,
@@ -139,7 +141,7 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
       shard_count,
       keep_snapshot_count: None,
       delete_ttl: None,
-      key_resolver: Arc::new(DefaultPartitionKeyResolver),
+      key_resolver: Arc::new(DefaultKeyResolver::default()),
       event_serializer: Arc::new(crate::serializer::JsonEventSerializer::default()),
       snapshot_serializer: Arc::new(crate::serializer::JsonSnapshotSerializer::default()),
     }
@@ -155,7 +157,7 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
     self
   }
 
-  pub fn with_key_resolver(mut self, key_resolver: Arc<dyn KeyResolver>) -> Self {
+  pub fn with_key_resolver(mut self, key_resolver: Arc<dyn KeyResolver<ID = AID>>) -> Self {
     self.key_resolver = key_resolver;
     self
   }
@@ -213,7 +215,7 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
   }
 
   /// Delete excess snapshots
-  async fn delete_excess_snapshots<AID: AggregateId>(&mut self, aggregate_id: &AID) -> Result<()> {
+  async fn delete_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<()> {
     if let Some(keep_snapshot_count) = self.keep_snapshot_count {
       let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
       let excess_count = snapshot_count - keep_snapshot_count;
@@ -253,7 +255,7 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
   }
 
   /// Update ttl of excess snapshots
-  async fn update_ttl_of_excess_snapshots<AID: AggregateId>(&mut self, aggregate_id: &AID) -> Result<()> {
+  async fn update_ttl_of_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<()> {
     if let Some(keep_snapshot_count) = self.keep_snapshot_count {
       let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
       let excess_count = snapshot_count - keep_snapshot_count;
@@ -280,7 +282,7 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
     Ok(())
   }
 
-  async fn get_snapshot_count<AID: AggregateId>(&mut self, aid: &AID) -> Result<usize> {
+  async fn get_snapshot_count(&mut self, aid: &AID) -> Result<usize> {
     let response = self
       .client
       .query()
@@ -295,7 +297,7 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
     Ok(response.count as usize)
   }
 
-  async fn get_last_snapshot_keys<AID: AggregateId>(&mut self, aid: &AID, limit: i32) -> Result<Vec<(String, String)>> {
+  async fn get_last_snapshot_keys(&mut self, aid: &AID, limit: i32) -> Result<Vec<(String, String)>> {
     let mut query_builder = self
       .client
       .query()
@@ -394,14 +396,12 @@ impl<A: Aggregate, E: Event> EventStoreForDynamoDB<A, E> {
     Ok(update_snapshot.build())
   }
 
-  fn resolve_pkey<AID: AggregateId>(&self, id: &AID, shard_count: u64) -> String {
-    self
-      .key_resolver
-      .resolve_pkey(&id.type_name(), &id.value(), shard_count)
+  fn resolve_pkey(&self, id: &AID, shard_count: u64) -> String {
+    self.key_resolver.resolve_partition_key(id, shard_count)
   }
 
-  fn resolve_skey<AID: AggregateId>(&self, id: &AID, seq_nr: usize) -> String {
-    self.key_resolver.resolve_skey(&id.type_name(), &id.value(), seq_nr)
+  fn resolve_skey(&self, id: &AID, seq_nr: usize) -> String {
+    self.key_resolver.resolve_sort_key(id, seq_nr)
   }
 
   fn put_journal(&mut self, event: &E) -> Result<Put> {
