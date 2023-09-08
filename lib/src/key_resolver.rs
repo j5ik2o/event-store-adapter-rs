@@ -25,6 +25,7 @@ impl<AID> Default for DefaultKeyResolver<AID> {
 
 impl<AID: AggregateId> KeyResolver for DefaultKeyResolver<AID> {
   type ID = AID;
+
   fn resolve_partition_key(&self, id: &Self::ID, shard_count: u64) -> String {
     let mut hasher = DefaultHasher::new();
     id.value().hash(&mut hasher);

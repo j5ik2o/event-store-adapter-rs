@@ -35,9 +35,9 @@ unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Send for EventStoreForDyna
 impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> EventStore
   for EventStoreForDynamoDB<AID, A, E>
 {
-  type EV = E;
   type AG = A;
   type AID = AID;
+  type EV = E;
 
   async fn store_event_and_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
     match (event.is_created(), aggregate) {
