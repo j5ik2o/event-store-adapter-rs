@@ -82,7 +82,7 @@ async fn rename_user_account(
   user_account_id: &UserAccountId,
   name: &str,
 ) -> Result<()> {
-  let mut user_account = repository.find_by_id(user_account_id).await.unwrap();
+  let mut user_account = repository.find_by_id(user_account_id).await.unwrap().unwrap();
   let user_account_event = user_account.rename(name).unwrap();
   repository
     .store(&user_account_event, user_account.version(), None)

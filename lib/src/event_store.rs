@@ -39,7 +39,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   type AID = AID;
   type EV = E;
 
-  async fn store_event_and_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
+  async fn persist_event_and_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
     match (event.is_created(), aggregate) {
       (true, Some(ar)) => {
         self.create_event_and_snapshot(event, ar).await?;
@@ -61,7 +61,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Ok(())
   }
 
-  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)> {
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<(Self::AG, usize)>> {
     let response = self
       .client
       .query()
@@ -76,8 +76,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await?;
     if let Some(items) = response.items {
-      if items.len() != 1 {
-        panic!("No snapshot found for aggregate id: {}", aid);
+      if items.len() == 0 {
+        return Ok(None);
       }
       let payload = items[0].get("payload").unwrap();
       let bytes = payload.as_b().unwrap().clone().into_inner();
@@ -91,7 +91,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         .unwrap();
       let seq_nr = aggregate.seq_nr();
       log::debug!("seq_nr: {}", seq_nr);
-      Ok((aggregate, seq_nr, version))
+      Ok(Some((aggregate, version)))
     } else {
       Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
     }

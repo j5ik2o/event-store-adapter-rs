@@ -201,14 +201,22 @@ impl UserAccountRepository {
   ) -> Result<()> {
     self
       .event_store
-      .store_event_and_snapshot_opt(event, version, snapshot_opt)
+      .persist_event_and_snapshot_opt(event, version, snapshot_opt)
       .await
   }
 
-  pub async fn find_by_id(&self, id: &UserAccountId) -> Result<UserAccount> {
-    let (snapshot, seq_nr, version) = self.event_store.get_latest_snapshot_by_id(id).await?;
-    let events = self.event_store.get_events_by_id_since_seq_nr(id, seq_nr).await?;
-    let result = UserAccount::replay(events, Some(snapshot), version);
-    Ok(result)
+  pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<UserAccount>> {
+    let snapshot = self.event_store.get_latest_snapshot_by_id(id).await?;
+    match snapshot {
+      Some((snapshot, version)) => {
+        let events = self
+          .event_store
+          .get_events_by_id_since_seq_nr(id, snapshot.seq_nr)
+          .await?;
+        let result = UserAccount::replay(events, Some(snapshot), version);
+        Ok(Some(result))
+      }
+      None => Ok(None),
+    }
   }
 }

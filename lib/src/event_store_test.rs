@@ -192,11 +192,16 @@ impl Aggregate for UserAccount {
 async fn find_by_id(
   event_store: &mut EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent>,
   id: &UserAccountId,
-) -> Result<UserAccount> {
-  let (snapshot, seq_nr, version) = event_store.get_latest_snapshot_by_id(id).await?;
-  let events = event_store.get_events_by_id_since_seq_nr(id, seq_nr).await?;
-  let user_account = UserAccount::replay(events, Some(snapshot), version);
-  Ok(user_account)
+) -> Result<Option<UserAccount>> {
+  let snapshot = event_store.get_latest_snapshot_by_id(id).await?;
+  match snapshot {
+    Some((snapshot, version)) => {
+      let events = event_store.get_events_by_id_since_seq_nr(id, snapshot.seq_nr).await?;
+      let user_account = UserAccount::replay(events, Some(snapshot), version);
+      Ok(Some(user_account))
+    }
+    None => Ok(None),
+  }
 }
 
 #[tokio::test]
@@ -254,27 +259,27 @@ async fn test_event_store() {
 
   let (user_account, event) = UserAccount::new(id.clone(), "test".to_string()).unwrap();
   event_store
-    .store_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .persist_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
     .await
     .unwrap();
 
-  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap();
+  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
 
   let event = user_account.rename("test2").unwrap();
 
   event_store
-    .store_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .persist_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
     .await
     .unwrap();
 
-  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap();
+  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
 
   assert_eq!(user_account.name, "test2");
 
   let event = user_account.rename("test3").unwrap();
 
   event_store
-    .store_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .persist_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
     .await
     .unwrap();
   assert_eq!(user_account.name, "test3");
