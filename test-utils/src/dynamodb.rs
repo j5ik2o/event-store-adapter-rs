@@ -84,19 +84,9 @@ pub async fn create_snapshot_table(client: &Client, table_name: &str, gsi_name: 
     .attribute_type(ScalarAttributeType::S)
     .build();
 
-  let pkey_schema = KeySchemaElement::builder()
-    .attribute_name("pkey")
-    .key_type(KeyType::Hash)
-    .build();
-
   let skey_attribute_definition = AttributeDefinition::builder()
     .attribute_name("skey")
     .attribute_type(ScalarAttributeType::S)
-    .build();
-
-  let skey_schema = KeySchemaElement::builder()
-    .attribute_name("skey")
-    .key_type(KeyType::Range)
     .build();
 
   let aid_attribute_definition = AttributeDefinition::builder()
@@ -107,6 +97,16 @@ pub async fn create_snapshot_table(client: &Client, table_name: &str, gsi_name: 
   let seq_nr_attribute_definition = AttributeDefinition::builder()
     .attribute_name("seq_nr")
     .attribute_type(ScalarAttributeType::N)
+    .build();
+
+  let pkey_schema = KeySchemaElement::builder()
+    .attribute_name("pkey")
+    .key_type(KeyType::Hash)
+    .build();
+
+  let skey_schema = KeySchemaElement::builder()
+    .attribute_name("skey")
+    .key_type(KeyType::Range)
     .build();
 
   let provisioned_throughput = ProvisionedThroughput::builder()

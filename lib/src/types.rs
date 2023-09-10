@@ -50,7 +50,7 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   type AID: AggregateId;
 
   /// イベント及びスナップショット(任意)を保存します。
-  async fn store_event_and_snapshot_opt(
+  async fn persist_event_and_snapshot_opt(
     &mut self,
     event: &Self::EV,
     version: usize,
@@ -58,7 +58,7 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   ) -> Result<()>;
 
   /// 最新のスナップショットを取得する。
-  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<(Self::AG, usize, usize)>;
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<(Self::AG, usize)>>;
 
   /// 指定したIDとシーケンス番号以降のイベントを取得する。
   async fn get_events_by_id_since_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
