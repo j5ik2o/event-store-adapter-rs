@@ -121,21 +121,11 @@ impl UserAccount {
     Ok((my_self, event))
   }
 
-  pub fn replay(
-    events: impl IntoIterator<Item = UserAccountEvent>,
-    snapshot_opt: Option<UserAccount>,
-    version: usize,
-  ) -> Self {
-    let mut result = events
-      .into_iter()
-      .fold(snapshot_opt, |result, event| match (result, event) {
-        (Some(mut this), event) => {
-          this.apply_event(event.clone());
-          Some(this)
-        }
-        (..) => None,
-      })
-      .unwrap();
+  pub fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount, version: usize) -> Self {
+    let mut result = events.into_iter().fold(snapshot, |mut result, event| {
+      result.apply_event(event.clone());
+      result
+    });
     result.version = version;
     result
   }
@@ -199,10 +189,18 @@ impl UserAccountRepository {
     version: usize,
     snapshot_opt: Option<&UserAccount>,
   ) -> Result<()> {
-    self
-      .event_store
-      .persist_event_and_snapshot_opt(event, version, snapshot_opt)
-      .await
+    match (event.is_created(), snapshot_opt) {
+      (false, None) => {
+        self.event_store.persist_event(event, version).await?;
+      }
+      (true, None) => {
+        panic!("Invalid state")
+      }
+      (_, Some(snapshot)) => {
+        self.event_store.persist_event_and_snapshot(event, snapshot).await?;
+      }
+    }
+    Ok(())
   }
 
   pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<UserAccount>> {
@@ -213,7 +211,7 @@ impl UserAccountRepository {
           .event_store
           .get_events_by_id_since_seq_nr(id, snapshot.seq_nr)
           .await?;
-        let result = UserAccount::replay(events, Some(snapshot), version);
+        let result = UserAccount::replay(events, snapshot, version);
         Ok(Some(result))
       }
       None => Ok(None),

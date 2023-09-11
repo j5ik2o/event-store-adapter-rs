@@ -12,7 +12,7 @@ use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
 use crate::types::{Aggregate, AggregateId, Event, EventStore};
 
-//
+/// Event Store for DynamoDB
 #[derive(Debug, Clone)]
 pub struct EventStoreForDynamoDB<AID: AggregateId, A: Aggregate, E: Event> {
   client: Client,
@@ -38,28 +38,6 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   type AG = A;
   type AID = AID;
   type EV = E;
-
-  async fn persist_event_and_snapshot_opt(&mut self, event: &E, version: usize, aggregate: Option<&A>) -> Result<()> {
-    match (event.is_created(), aggregate) {
-      (true, Some(ar)) => {
-        self.create_event_and_snapshot(event, ar).await?;
-      }
-      (true, None) => {
-        panic!("Aggregate is not found");
-      }
-      (false, ar) => {
-        self.update_event_and_snapshot_opt(event, version, ar).await?;
-        if self.keep_snapshot_count.is_some() {
-          if self.delete_ttl.is_none() {
-            self.delete_excess_snapshots(event.aggregate_id()).await?;
-          } else {
-            self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
-          }
-        }
-      }
-    }
-    Ok(())
-  }
 
   async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<(Self::AG, usize)>> {
     let response = self
@@ -120,6 +98,39 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       }
     }
     Ok(events)
+  }
+
+  async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<()> {
+    if event.is_created() {
+      panic!("Invalid event: {:?}", event);
+    }
+    self.update_event_and_snapshot_opt(event, version, None).await?;
+    if self.keep_snapshot_count.is_some() {
+      if self.delete_ttl.is_none() {
+        self.delete_excess_snapshots(event.aggregate_id()).await?;
+      } else {
+        self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
+      }
+    }
+    Ok(())
+  }
+
+  async fn persist_event_and_snapshot(&mut self, event: &Self::EV, aggregate: &Self::AG) -> Result<()> {
+    if event.is_created() {
+      self.create_event_and_snapshot(event, aggregate).await?;
+    } else {
+      self
+        .update_event_and_snapshot_opt(event, aggregate.version(), Some(aggregate))
+        .await?;
+      if self.keep_snapshot_count.is_some() {
+        if self.delete_ttl.is_none() {
+          self.delete_excess_snapshots(event.aggregate_id()).await?;
+        } else {
+          self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
+        }
+      }
+    }
+    Ok(())
   }
 }
 
