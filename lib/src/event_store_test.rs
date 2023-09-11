@@ -259,7 +259,7 @@ async fn test_event_store() {
 
   let (user_account, event) = UserAccount::new(id.clone(), "test".to_string()).unwrap();
   event_store
-    .persist_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .persist_event_and_snapshot(&event, &user_account)
     .await
     .unwrap();
 
@@ -268,7 +268,7 @@ async fn test_event_store() {
   let event = user_account.rename("test2").unwrap();
 
   event_store
-    .persist_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .persist_event_and_snapshot(&event, &user_account)
     .await
     .unwrap();
 
@@ -279,7 +279,7 @@ async fn test_event_store() {
   let event = user_account.rename("test3").unwrap();
 
   event_store
-    .persist_event_and_snapshot_opt(&event, user_account.version(), Some(&user_account))
+    .persist_event_and_snapshot(&event, &user_account)
     .await
     .unwrap();
   assert_eq!(user_account.name, "test3");

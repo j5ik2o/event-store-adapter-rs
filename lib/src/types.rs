@@ -49,13 +49,27 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   /// 集約のIDの型。
   type AID: AggregateId;
 
-  /// イベント及びスナップショット(任意)を保存します。
-  async fn persist_event_and_snapshot_opt(
-    &mut self,
-    event: &Self::EV,
-    version: usize,
-    aggregate: Option<&Self::AG>,
-  ) -> Result<()>;
+  /// イベントを保存します。
+  ///
+  /// # 引数
+  /// - `event` - 保存するイベント
+  /// - `version` - イベントを保存する集約のバージョン
+  ///
+  /// # 戻り値
+  /// - `Ok(())` - 保存に成功した場合
+  /// - `Err(e)` - 保存に失敗した場合
+  async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<()>;
+
+  /// イベント及びスナップショットを保存します。
+  ///
+  /// # 引数
+  /// - `event` - 保存するイベント
+  /// - `aggregate` - スナップショットを保存する集約
+  ///
+  /// # 戻り値
+  /// - `Ok(())` - 保存に成功した場合
+  /// - `Err(e)` - 保存に失敗した場合
+  async fn persist_event_and_snapshot(&mut self, event: &Self::EV, aggregate: &Self::AG) -> Result<()>;
 
   /// 最新のスナップショットを取得する。
   async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<(Self::AG, usize)>>;
