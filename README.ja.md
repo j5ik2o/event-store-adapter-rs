@@ -30,19 +30,37 @@ impl UserAccountRepository {
     version: usize,
     snapshot_opt: Option<&UserAccount>,
   ) -> Result<()> {
-    self
-      .event_store
-      .store_event_and_snapshot_opt(event, version, snapshot_opt)
-      .await
+    match (event.is_created(), snapshot_opt) {
+      (false, None) => {
+        self.event_store.persist_event(event, version).await?;
+      }
+      (true, None) => {
+        panic!("Invalid state")
+      }
+      (_, Some(snapshot)) => {
+        self.event_store.persist_event_and_snapshot(event, snapshot).await?;
+      }
+    }
+    Ok(())
   }
 
+
   pub async fn find_by_id(&self, id: &UserAccountId) -> Result<UserAccount> {
-    let (snapshot, seq_nr, version) = self.event_store.get_latest_snapshot_by_id(id).await?;
-    let events = self.event_store.get_events_by_id_since_seq_nr(id, seq_nr).await?;
-    let result = UserAccount::replay(events, Some(snapshot), version);
-    Ok(result)
+    let snapshot = self.event_store.get_latest_snapshot_by_id(id).await?;
+    match snapshot {
+      Some((snapshot, version)) => {
+        let events = self.event_store
+          .get_events_by_id_since_seq_nr(id, snapshot.seq_nr)
+          .await?;
+        let result = UserAccount::replay(events, snapshot, version);
+        Ok(Some(result))
+      }
+      None => Ok(None),
+    }
   }
+
 }
+
 ```
 
 以下はリポジトリの使用例です。
