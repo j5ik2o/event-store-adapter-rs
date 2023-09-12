@@ -209,7 +209,7 @@ impl UserAccountRepository {
       Some((snapshot, version)) => {
         let events = self
           .event_store
-          .get_events_by_id_since_seq_nr(id, snapshot.seq_nr)
+          .get_events_by_id_since_seq_nr(id, snapshot.seq_nr + 1)
           .await?;
         let result = UserAccount::replay(events, snapshot, version);
         Ok(Some(result))
