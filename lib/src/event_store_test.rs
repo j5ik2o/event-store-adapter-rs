@@ -196,7 +196,9 @@ async fn find_by_id(
   let snapshot = event_store.get_latest_snapshot_by_id(id).await?;
   match snapshot {
     Some((snapshot, version)) => {
-      let events = event_store.get_events_by_id_since_seq_nr(id, snapshot.seq_nr).await?;
+      let events = event_store
+        .get_events_by_id_since_seq_nr(id, snapshot.seq_nr + 1)
+        .await?;
       let user_account = UserAccount::replay(events, Some(snapshot), version);
       Ok(Some(user_account))
     }
