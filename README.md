@@ -94,3 +94,13 @@ repository
 ## Table Specifications
 
 See [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md).
+
+## License.
+
+MIT License. See [LICENSE](LICENSE) for details.
+
+## Other language implementations
+
+- [for Java](https://github.com/j5ik2o/event-store-adapter-java)
+- [for Scala](https://github.com/j5ik2o/event-store-adapter-scala)
+- [for Go](https://github.com/j5ik2o/event-store-adapter-go)
