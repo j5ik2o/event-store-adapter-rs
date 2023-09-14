@@ -106,10 +106,10 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
     self.update_event_and_snapshot_opt(event, version, None).await?;
     if self.keep_snapshot_count.is_some() {
-      if self.delete_ttl.is_none() {
-        self.delete_excess_snapshots(event.aggregate_id()).await?;
-      } else {
+      if self.delete_ttl.is_some() {
         self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
+      } else {
+        self.delete_excess_snapshots(event.aggregate_id()).await?;
       }
     }
     Ok(())
@@ -123,10 +123,10 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         .update_event_and_snapshot_opt(event, aggregate.version(), Some(aggregate))
         .await?;
       if self.keep_snapshot_count.is_some() {
-        if self.delete_ttl.is_none() {
-          self.delete_excess_snapshots(event.aggregate_id()).await?;
-        } else {
+        if self.delete_ttl.is_some() {
           self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
+        } else {
+          self.delete_excess_snapshots(event.aggregate_id()).await?;
         }
       }
     }
@@ -267,14 +267,14 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
 
   /// Update ttl of excess snapshots
   async fn update_ttl_of_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<()> {
-    if let Some(keep_snapshot_count) = self.keep_snapshot_count {
+    if let (Some(keep_snapshot_count), Some(delete_ttl)) = (self.keep_snapshot_count, self.delete_ttl) {
       let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
       let excess_count = snapshot_count - keep_snapshot_count;
       if excess_count > 0 {
         log::debug!("excess_count: {}", excess_count);
         let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
         log::debug!("keys = {:?}", keys);
-        let ttl = (Utc::now() + self.delete_ttl.unwrap()).timestamp();
+        let ttl = (Utc::now() + delete_ttl).timestamp();
         for (pkey, skey) in keys {
           self
             .client
@@ -316,8 +316,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .index_name(self.snapshot_aid_index_name.clone())
       .key_condition_expression("#aid = :aid AND #seq_nr > :seq_nr")
       .expression_attribute_names("#aid", "aid")
-      .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_names("#seq_nr", "seq_nr")
+      .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_values(":seq_nr", AttributeValue::N(0.to_string()))
       .scan_index_forward(false)
       .limit(limit);

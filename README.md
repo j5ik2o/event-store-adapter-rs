@@ -24,24 +24,12 @@ impl UserAccountRepository {
     Self { event_store }
   }
 
-  pub async fn store(
-    &mut self,
-    event: &UserAccountEvent,
-    version: usize,
-    snapshot_opt: Option<&UserAccount>,
-  ) -> Result<()> {
-    match (event.is_created(), snapshot_opt) {
-      (false, None) => {
-        self.event_store.persist_event(event, version).await?;
-      }
-      (true, None) => {
-        panic!("Invalid state")
-      }
-      (_, Some(snapshot)) => {
-        self.event_store.persist_event_and_snapshot(event, snapshot).await?;
-      }
-    }
-    Ok(())
+  pub async fn store_event(&mut self, event: &UserAccountEvent, version: usize) -> Result<()> {
+    return self.event_store.persist_event(event, version).await;
+  }
+
+  pub async fn store_event_and_snapshot(&mut self, event: &UserAccountEvent, snapshot: &UserAccount) -> Result<()> {
+    return self.event_store.persist_event_and_snapshot(event, snapshot).await;
   }
 
   pub async fn find_by_id(&self, id: &UserAccountId) -> Result<UserAccount> {
@@ -61,7 +49,7 @@ impl UserAccountRepository {
 }
 ```
 
-The following is an example of the repository usage
+The following is an example of the repository usage.
 
 ```rust
 let event_store = EventStore::new(
@@ -83,11 +71,11 @@ let user_account_event = user_account.rename(name).unwrap();
  
 // Store the new event without a snapshot
 repository
-  .store(&user_account_event, user_account.version(), None)
+  .store_event(&user_account_event, user_account.version())
   .await
 // Store the new event with a snapshot
 //  repository
-//  .store(&user_account_event, user_account.version(), Some(&user_account))
+//  .store_event_and_snapshot(&user_account_event, &user_account)
 //  .await
 ```
 
