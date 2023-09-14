@@ -72,7 +72,7 @@ async fn create_user_account(repository: &mut UserAccountRepository, id: &str, n
   let user_account_id = UserAccountId::new(id.to_string());
   let (user_account, user_account_event) = UserAccount::new(user_account_id.clone(), name.to_string()).unwrap();
   repository
-    .store(&user_account_event, user_account.version(), Some(&user_account))
+    .store_event_and_snapshot(&user_account_event, &user_account)
     .await?;
   Ok(user_account_id)
 }
@@ -85,6 +85,6 @@ async fn rename_user_account(
   let mut user_account = repository.find_by_id(user_account_id).await.unwrap().unwrap();
   let user_account_event = user_account.rename(name).unwrap();
   repository
-    .store(&user_account_event, user_account.version(), None)
+    .store_event(&user_account_event, user_account.version())
     .await
 }
