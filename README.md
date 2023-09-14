@@ -61,7 +61,7 @@ impl UserAccountRepository {
 }
 ```
 
-The following is an example of the repository usage
+The following is an example of the repository usage.
 
 ```rust
 let event_store = EventStore::new(
