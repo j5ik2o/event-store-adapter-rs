@@ -6,7 +6,8 @@ use std::fmt::Debug;
 
 /// 集約のIDを表すトレイト。
 pub trait AggregateId:
-  std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
+  std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static
+{
   /// 集約の種別名を返す。
   fn type_name(&self) -> String;
   /// 集約のIDを文字列として返す
@@ -72,7 +73,7 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   async fn persist_event_and_snapshot(&mut self, event: &Self::EV, aggregate: &Self::AG) -> Result<()>;
 
   /// 最新のスナップショットを取得する。
-  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<(Self::AG, usize)>>;
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>>;
 
   /// 指定したIDとシーケンス番号以降のイベントを取得する。
   async fn get_events_by_id_since_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
