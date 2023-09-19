@@ -134,7 +134,7 @@ impl UserAccount {
   }
 
   fn apply_event(&mut self, event: UserAccountEvent) {
-    if let UserAccountEvent::Created { name, .. } = event {
+    if let UserAccountEvent::Renamed { name, .. } = event {
       self.rename(&name).unwrap();
     }
   }
@@ -248,29 +248,37 @@ async fn test_event_store() {
   };
 
   let (user_account, event) = UserAccount::new(id.clone(), "test".to_string()).unwrap();
+  // Persist the event and the snapshot
   event_store
     .persist_event_and_snapshot(&event, &user_account)
     .await
     .unwrap();
 
   let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
+  assert_eq!(user_account.name, "test");
+  assert_eq!(user_account.seq_nr, 1);
+  assert_eq!(user_account.version, 1);
 
   let event = user_account.rename("test2").unwrap();
 
-  event_store
-    .persist_event_and_snapshot(&event, &user_account)
-    .await
-    .unwrap();
+  // Persist the event only.
+  event_store.persist_event(&event, user_account.version()).await.unwrap();
 
   let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
-
   assert_eq!(user_account.name, "test2");
+  assert_eq!(user_account.seq_nr, 2);
+  assert_eq!(user_account.version, 2);
 
   let event = user_account.rename("test3").unwrap();
 
+  // Persist the event and the snapshot
   event_store
     .persist_event_and_snapshot(&event, &user_account)
     .await
     .unwrap();
+
+  let user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
   assert_eq!(user_account.name, "test3");
+  assert_eq!(user_account.seq_nr, 3);
+  assert_eq!(user_account.version, 3);
 }
