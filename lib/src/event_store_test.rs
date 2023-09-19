@@ -126,23 +126,11 @@ impl UserAccount {
     Ok((my_self, event))
   }
 
-  fn replay(
-    events: impl IntoIterator<Item = UserAccountEvent>,
-    snapshot_opt: Option<UserAccount>,
-    version: usize,
-  ) -> Self {
-    let mut result = events
-      .into_iter()
-      .fold(snapshot_opt, |result, event| match (result, event) {
-        (Some(mut this), event) => {
-          this.apply_event(event.clone());
-          Some(this)
-        }
-        (..) => None,
-      })
-      .unwrap();
-    result.version = version;
-    result
+  fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount) -> Self {
+    events.into_iter().fold(snapshot, |mut result, event| {
+      result.apply_event(event.clone());
+      result
+    })
   }
 
   fn apply_event(&mut self, event: UserAccountEvent) {
@@ -195,11 +183,11 @@ async fn find_by_id(
 ) -> Result<Option<UserAccount>> {
   let snapshot = event_store.get_latest_snapshot_by_id(id).await?;
   match snapshot {
-    Some((snapshot, version)) => {
+    Some(snapshot) => {
       let events = event_store
         .get_events_by_id_since_seq_nr(id, snapshot.seq_nr + 1)
         .await?;
-      let user_account = UserAccount::replay(events, Some(snapshot), version);
+      let user_account = UserAccount::replay(events, snapshot);
       Ok(Some(user_account))
     }
     None => Ok(None),

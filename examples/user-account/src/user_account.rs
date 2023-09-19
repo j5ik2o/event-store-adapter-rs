@@ -121,12 +121,11 @@ impl UserAccount {
     Ok((my_self, event))
   }
 
-  pub fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount, version: usize) -> Self {
-    let mut result = events.into_iter().fold(snapshot, |mut result, event| {
+  pub fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount) -> Self {
+    let result = events.into_iter().fold(snapshot, |mut result, event| {
       result.apply_event(event.clone());
       result
     });
-    result.version = version;
     result
   }
 
@@ -194,12 +193,12 @@ impl UserAccountRepository {
   pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<UserAccount>> {
     let snapshot = self.event_store.get_latest_snapshot_by_id(id).await?;
     match snapshot {
-      Some((snapshot, version)) => {
+      Some(snapshot) => {
         let events = self
           .event_store
           .get_events_by_id_since_seq_nr(id, snapshot.seq_nr + 1)
           .await?;
-        let result = UserAccount::replay(events, snapshot, version);
+        let result = UserAccount::replay(events, snapshot);
         Ok(Some(result))
       }
       None => Ok(None),

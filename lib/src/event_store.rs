@@ -39,7 +39,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   type AID = AID;
   type EV = E;
 
-  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<(Self::AG, usize)>> {
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>> {
     let response = self
       .client
       .query()
@@ -59,7 +59,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       }
       let payload = items[0].get("payload").unwrap();
       let bytes = payload.as_b().unwrap().clone().into_inner();
-      let aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
+      let mut aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
       let version = items[0]
         .get("version")
         .unwrap()
@@ -69,7 +69,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         .unwrap();
       let seq_nr = aggregate.seq_nr();
       log::debug!("seq_nr: {}", seq_nr);
-      Ok(Some((aggregate, version)))
+      aggregate.set_version(version);
+      Ok(Some(aggregate))
     } else {
       Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
     }
