@@ -54,7 +54,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await?;
     if let Some(items) = response.items {
-      if items.len() == 0 {
+      if items.is_empty() {
         return Ok(None);
       }
       let payload = items[0].get("payload").unwrap();
