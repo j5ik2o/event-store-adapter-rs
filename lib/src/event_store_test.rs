@@ -277,7 +277,7 @@ async fn test_event_store() {
     .await
     .unwrap();
 
-  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
+  let user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
   assert_eq!(user_account.name, "test3");
   assert_eq!(user_account.seq_nr, 3);
   assert_eq!(user_account.version, 3);
