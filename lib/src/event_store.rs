@@ -105,13 +105,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       panic!("Invalid event: {:?}", event);
     }
     self.update_event_and_snapshot_opt(event, version, None).await?;
-    if self.keep_snapshot_count.is_some() {
-      if self.delete_ttl.is_some() {
-        self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
-      } else {
-        self.delete_excess_snapshots(event.aggregate_id()).await?;
-      }
-    }
+    self.try_purge_excess_snapshots(event.aggregate_id()).await?;
     Ok(())
   }
 
@@ -122,13 +116,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       self
         .update_event_and_snapshot_opt(event, aggregate.version(), Some(aggregate))
         .await?;
-      if self.keep_snapshot_count.is_some() {
-        if self.delete_ttl.is_some() {
-          self.update_ttl_of_excess_snapshots(event.aggregate_id()).await?;
-        } else {
-          self.delete_excess_snapshots(event.aggregate_id()).await?;
-        }
-      }
+      self.try_purge_excess_snapshots(event.aggregate_id()).await?;
     }
     Ok(())
   }
@@ -434,5 +422,16 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .build();
 
     Ok(put_journal)
+  }
+
+  async fn try_purge_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<()> {
+    if self.keep_snapshot_count.is_some() {
+      if self.delete_ttl.is_some() {
+        self.update_ttl_of_excess_snapshots(aggregate_id).await?;
+      } else {
+        self.delete_excess_snapshots(aggregate_id).await?;
+      }
+    }
+    Ok(())
   }
 }
