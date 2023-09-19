@@ -14,6 +14,7 @@ use event_store_adapter_test_utils_rs::id_generator::id_generate;
 use crate::user_account::{UserAccount, UserAccountId, UserAccountRepository};
 
 mod user_account;
+mod user_account_repository;
 
 #[tokio::main]
 async fn main() {
