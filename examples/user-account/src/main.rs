@@ -2,7 +2,6 @@ use std::env;
 use std::thread::sleep;
 use std::time::Duration;
 
-use anyhow::Result;
 use testcontainers::clients::Cli;
 
 use event_store_adapter_rs::event_store::EventStoreForDynamoDB;
@@ -12,7 +11,7 @@ use event_store_adapter_test_utils_rs::dynamodb::{create_client, create_journal_
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 
 use crate::user_account::{UserAccount, UserAccountId};
-use crate::user_account_repository::UserAccountRepository;
+use crate::user_account_repository::{RepositoryError, UserAccountRepository};
 
 mod user_account;
 mod user_account_repository;
@@ -66,11 +65,16 @@ async fn main() {
   rename_user_account(&mut repository, &user_account_id, "test-2")
     .await
     .unwrap();
+
   let user_account = repository.find_by_id(&user_account_id).await.unwrap();
   log::info!("2: user_account = {:?}", user_account);
 }
 
-async fn create_user_account(repository: &mut UserAccountRepository, id: &str, name: &str) -> Result<UserAccountId> {
+async fn create_user_account(
+  repository: &mut UserAccountRepository,
+  id: &str,
+  name: &str,
+) -> Result<UserAccountId, RepositoryError> {
   let user_account_id = UserAccountId::new(id.to_string());
   let (user_account, user_account_event) = UserAccount::new(user_account_id.clone(), name.to_string()).unwrap();
   repository
@@ -83,8 +87,8 @@ async fn rename_user_account(
   repository: &mut UserAccountRepository,
   user_account_id: &UserAccountId,
   name: &str,
-) -> Result<()> {
-  let mut user_account = repository.find_by_id(user_account_id).await.unwrap().unwrap();
+) -> Result<(), RepositoryError> {
+  let mut user_account = repository.find_by_id(user_account_id).await?.unwrap();
   let user_account_event = user_account.rename(name).unwrap();
   repository
     .store_event(&user_account_event, user_account.version())

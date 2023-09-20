@@ -3,10 +3,14 @@ use std::sync::Arc;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use aws_sdk_dynamodb::error::SdkError;
+use aws_sdk_dynamodb::operation::transact_write_items::{TransactWriteItemsError, TransactWriteItemsOutput};
 use aws_sdk_dynamodb::primitives::Blob;
+use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, Put, Select, TransactWriteItem, Update, WriteRequest};
 use aws_sdk_dynamodb::Client;
 use chrono::{Duration, Utc};
+use thiserror::Error;
 
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
@@ -30,6 +34,24 @@ pub struct EventStoreForDynamoDB<AID: AggregateId, A: Aggregate, E: Event> {
 
 unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Sync for EventStoreForDynamoDB<AID, A, E> {}
 unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Send for EventStoreForDynamoDB<AID, A, E> {}
+
+#[derive(Error, Debug)]
+pub enum EventStoreWriteError {
+  #[error("SerializeError: {0}")]
+  SerializeError(anyhow::Error),
+  #[error("TransactionCanceledError: {0}")]
+  TransactionCanceledError(TransactionCanceledException),
+  #[error("IOError: {0}")]
+  IOError(TransactWriteItemsError),
+}
+
+#[derive(Error, Debug)]
+pub enum EventStoreReadError {
+  #[error("IOError: {0}")]
+  IOError(String),
+  #[error("DeserializeError: {0}")]
+  DeserializeError(anyhow::Error),
+}
 
 #[async_trait]
 impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> EventStore
@@ -72,7 +94,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       aggregate.set_version(version);
       Ok(Some(aggregate))
     } else {
-      Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
+      Err(EventStoreReadError::IOError(format!("No snapshot found for aggregate id: {}", aid)).into())
     }
   }
 
@@ -189,8 +211,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
           .build(),
       );
     }
-    builder.send().await?;
-    Ok(())
+    let result = builder.send().await;
+    Self::error_handling(result)
   }
 
   async fn update_event_and_snapshot_opt(&mut self, event: &E, version: usize, ar: Option<&A>) -> Result<()> {
@@ -210,8 +232,22 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
           .build(),
       );
     }
-    builder.send().await?;
-    Ok(())
+    let result = builder.send().await;
+    Self::error_handling(result)
+  }
+
+  fn error_handling(
+    result: std::result::Result<TransactWriteItemsOutput, SdkError<TransactWriteItemsError>>,
+  ) -> Result<()> {
+    match result {
+      Ok(_) => Ok(()),
+      Err(e) => match e.into_service_error() {
+        TransactWriteItemsError::TransactionCanceledException(e) => {
+          Err(EventStoreWriteError::TransactionCanceledError(e).into())
+        }
+        error => Err(EventStoreWriteError::IOError(error).into()),
+      },
+    }
   }
 
   /// Delete excess snapshots
