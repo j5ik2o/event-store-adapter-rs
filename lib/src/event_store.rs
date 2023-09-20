@@ -74,27 +74,32 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .expression_attribute_values(":seq_nr", AttributeValue::N("0".to_string()))
       .limit(1)
       .send()
-      .await?;
-    if let Some(items) = response.items {
-      if items.is_empty() {
-        return Ok(None);
+      .await;
+    match response {
+      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Ok(response) => {
+        if let Some(items) = response.items {
+          if items.is_empty() {
+            return Ok(None);
+          }
+          let payload = items[0].get("payload").unwrap();
+          let bytes = payload.as_b().unwrap().clone().into_inner();
+          let mut aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
+          let version = items[0]
+            .get("version")
+            .unwrap()
+            .as_n()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap();
+          let seq_nr = aggregate.seq_nr();
+          log::debug!("seq_nr: {}", seq_nr);
+          aggregate.set_version(version);
+          Ok(Some(aggregate))
+        } else {
+          Err(EventStoreReadError::IOError(format!("No snapshot found for aggregate id: {}", aid)).into())
+        }
       }
-      let payload = items[0].get("payload").unwrap();
-      let bytes = payload.as_b().unwrap().clone().into_inner();
-      let mut aggregate = *self.snapshot_serializer.deserialize(&bytes)?;
-      let version = items[0]
-        .get("version")
-        .unwrap()
-        .as_n()
-        .unwrap()
-        .parse::<usize>()
-        .unwrap();
-      let seq_nr = aggregate.seq_nr();
-      log::debug!("seq_nr: {}", seq_nr);
-      aggregate.set_version(version);
-      Ok(Some(aggregate))
-    } else {
-      Err(EventStoreReadError::IOError(format!("No snapshot found for aggregate id: {}", aid)).into())
     }
   }
 
@@ -110,17 +115,22 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_values(":seq_nr", AttributeValue::N(seq_nr.to_string()))
       .send()
-      .await?;
-    let mut events = Vec::new();
-    if let Some(items) = response.items {
-      for item in items {
-        let payload = item.get("payload").unwrap();
-        let bytes = payload.as_b().unwrap().clone().into_inner();
-        let event = *self.event_serializer.deserialize(&bytes)?;
-        events.push(event);
+      .await;
+    match response {
+      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Ok(response) => {
+        let mut events = Vec::new();
+        if let Some(items) = response.items {
+          for item in items {
+            let payload = item.get("payload").unwrap();
+            let bytes = payload.as_b().unwrap().clone().into_inner();
+            let event = *self.event_serializer.deserialize(&bytes)?;
+            events.push(event);
+          }
+        }
+        Ok(events)
       }
     }
-    Ok(events)
   }
 
   async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<()> {
@@ -329,8 +339,11 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .select(Select::Count)
       .send()
-      .await?;
-    Ok(response.count as usize)
+      .await;
+    match response {
+      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Ok(response) => Ok(response.count as usize),
+    }
   }
 
   async fn get_last_snapshot_keys(&mut self, aid: &AID, limit: i32) -> Result<Vec<(String, String)>> {
@@ -352,19 +365,24 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         .expression_attribute_values(":ttl", AttributeValue::N(0.to_string()))
         .filter_expression("#ttl = :ttl");
     }
-    let response = query_builder.send().await?;
-    if let Some(items) = response.items {
-      let mut result = Vec::new();
-      for item in items {
-        log::debug!("aid: {}", item.get("aid").unwrap().as_s().unwrap());
-        log::debug!("seq_nr: {}", item.get("seq_nr").unwrap().as_n().unwrap());
-        let pkey = item.get("pkey").unwrap().as_s().unwrap().clone();
-        let skey = item.get("skey").unwrap().as_s().unwrap().clone();
-        result.push((pkey, skey));
+    let response = query_builder.send().await;
+    match response {
+      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Ok(response) => {
+        if let Some(items) = response.items {
+          let mut result = Vec::new();
+          for item in items {
+            log::debug!("aid: {}", item.get("aid").unwrap().as_s().unwrap());
+            log::debug!("seq_nr: {}", item.get("seq_nr").unwrap().as_n().unwrap());
+            let pkey = item.get("pkey").unwrap().as_s().unwrap().clone();
+            let skey = item.get("skey").unwrap().as_s().unwrap().clone();
+            result.push((pkey, skey));
+          }
+          Ok(result)
+        } else {
+          Err(EventStoreReadError::IOError(format!("No snapshot found for aggregate id: {}", aid)).into())
+        }
       }
-      Ok(result)
-    } else {
-      Err(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid))
     }
   }
 
