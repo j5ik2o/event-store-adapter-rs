@@ -6,15 +6,13 @@ use async_trait::async_trait;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::transact_write_items::{TransactWriteItemsError, TransactWriteItemsOutput};
 use aws_sdk_dynamodb::primitives::Blob;
-use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, Put, Select, TransactWriteItem, Update, WriteRequest};
 use aws_sdk_dynamodb::Client;
 use chrono::{Duration, Utc};
-use thiserror::Error;
 
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
-use crate::types::{Aggregate, AggregateId, Event, EventStore};
+use crate::types::{Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError};
 
 /// Event Store for DynamoDB
 #[derive(Debug, Clone)]
@@ -34,24 +32,6 @@ pub struct EventStoreForDynamoDB<AID: AggregateId, A: Aggregate, E: Event> {
 
 unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Sync for EventStoreForDynamoDB<AID, A, E> {}
 unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Send for EventStoreForDynamoDB<AID, A, E> {}
-
-#[derive(Error, Debug)]
-pub enum EventStoreWriteError {
-  #[error("SerializeError: {0}")]
-  SerializeError(anyhow::Error),
-  #[error("TransactionCanceledError: {0}")]
-  TransactionCanceledError(TransactionCanceledException),
-  #[error("IOError: {0}")]
-  IOError(TransactWriteItemsError),
-}
-
-#[derive(Error, Debug)]
-pub enum EventStoreReadError {
-  #[error("IOError: {0}")]
-  IOError(String),
-  #[error("DeserializeError: {0}")]
-  DeserializeError(anyhow::Error),
-}
 
 #[async_trait]
 impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> EventStore
@@ -76,7 +56,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
       Ok(response) => {
         if let Some(items) = response.items {
           if items.is_empty() {
@@ -97,7 +77,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
           aggregate.set_version(version);
           Ok(Some(aggregate))
         } else {
-          Err(EventStoreReadError::IOError(format!("No snapshot found for aggregate id: {}", aid)).into())
+          Err(EventStoreReadError::IOError(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid)).into())
         }
       }
     }
@@ -117,7 +97,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
       Ok(response) => {
         let mut events = Vec::new();
         if let Some(items) = response.items {
@@ -255,7 +235,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         TransactWriteItemsError::TransactionCanceledException(e) => {
           Err(EventStoreWriteError::TransactionCanceledError(e).into())
         }
-        error => Err(EventStoreWriteError::IOError(error).into()),
+        error => Err(EventStoreWriteError::IOError(anyhow::Error::new(error)).into()),
       },
     }
   }
@@ -289,8 +269,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
             .request_items(self.snapshot_table_name.clone(), request_items)
             .send()
             .await;
-          if result.is_err() {
-            log::warn!("Failed to delete excess snapshots: {:?}", result);
+          if let Err(err) = result {
+            return Err(EventStoreWriteError::IOError(anyhow::Error::new(err)).into());
           } else {
             log::debug!("excess snapshots are deleted");
           }
@@ -311,7 +291,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         log::debug!("keys = {:?}", keys);
         let ttl = (Utc::now() + delete_ttl).timestamp();
         for (pkey, skey) in keys {
-          self
+          let result = self
             .client
             .update_item()
             .table_name(self.snapshot_table_name.clone())
@@ -321,7 +301,10 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
             .expression_attribute_names("#ttl", "ttl")
             .expression_attribute_values(":ttl", AttributeValue::N(ttl.to_string()))
             .send()
-            .await?;
+            .await;
+          if let Err(err) = result {
+            return Err(EventStoreWriteError::IOError(anyhow::Error::new(err)).into());
+          }
         }
       }
     }
@@ -341,7 +324,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
       Ok(response) => Ok(response.count as usize),
     }
   }
@@ -367,7 +350,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
     let response = query_builder.send().await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(err.to_string()).into()),
+      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
       Ok(response) => {
         if let Some(items) = response.items {
           let mut result = Vec::new();
@@ -380,7 +363,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
           }
           Ok(result)
         } else {
-          Err(EventStoreReadError::IOError(format!("No snapshot found for aggregate id: {}", aid)).into())
+          Err(EventStoreReadError::IOError(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid)).into())
         }
       }
     }

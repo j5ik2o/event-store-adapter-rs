@@ -1,8 +1,10 @@
 use anyhow::Result;
 use async_trait::async_trait;
+use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 use chrono::{DateTime, Utc};
 use serde::{de, Serialize};
 use std::fmt::Debug;
+use thiserror::Error;
 
 /// 集約のIDを表すトレイト。
 pub trait AggregateId:
@@ -76,4 +78,22 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
 
   /// 指定したIDとシーケンス番号以降のイベントを取得する。
   async fn get_events_by_id_since_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
+}
+
+#[derive(Error, Debug)]
+pub enum EventStoreWriteError {
+  #[error("SerializeError: {0}")]
+  SerializeError(anyhow::Error),
+  #[error("TransactionCanceledError: {0}")]
+  TransactionCanceledError(TransactionCanceledException),
+  #[error("IOError: {0}")]
+  IOError(anyhow::Error),
+}
+
+#[derive(Error, Debug)]
+pub enum EventStoreReadError {
+  #[error("DeserializeError: {0}")]
+  DeserializeError(anyhow::Error),
+  #[error("IOError: {0}")]
+  IOError(anyhow::Error),
 }
