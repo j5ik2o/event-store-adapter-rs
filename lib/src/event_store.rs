@@ -84,8 +84,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .index_name(self.journal_aid_index_name.clone())
       .key_condition_expression("#aid = :aid AND #seq_nr >= :seq_nr")
       .expression_attribute_names("#aid", "aid")
-      .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_names("#seq_nr", "seq_nr")
+      .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .expression_attribute_values(":seq_nr", AttributeValue::N(seq_nr.to_string()))
       .send()
       .await?;
