@@ -1,7 +1,6 @@
 use anyhow::Result;
 use chrono::{DateTime, Utc};
-use event_store_adapter_rs::event_store::EventStoreForDynamoDB;
-use event_store_adapter_rs::types::{Aggregate, AggregateId, Event, EventStore};
+use event_store_adapter_rs::types::{Aggregate, AggregateId, Event};
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
