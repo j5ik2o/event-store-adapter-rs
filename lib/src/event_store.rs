@@ -1,7 +1,6 @@
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::transact_write_items::{TransactWriteItemsError, TransactWriteItemsOutput};
@@ -41,7 +40,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   type AID = AID;
   type EV = E;
 
-  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>> {
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>, EventStoreReadError> {
     let response = self
       .client
       .query()
@@ -56,7 +55,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
+      Err(err) => Err(EventStoreReadError::IOError(err.into())),
       Ok(response) => {
         if let Some(items) = response.items {
           if items.is_empty() {
@@ -77,13 +76,20 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
           aggregate.set_version(version);
           Ok(Some(aggregate))
         } else {
-          Err(EventStoreReadError::IOError(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid)).into())
+          Err(EventStoreReadError::OtherError(format!(
+            "No snapshot found for aggregate id: {}",
+            aid
+          )))
         }
       }
     }
   }
 
-  async fn get_events_by_id_since_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>> {
+  async fn get_events_by_id_since_seq_nr(
+    &self,
+    aid: &Self::AID,
+    seq_nr: usize,
+  ) -> Result<Vec<Self::EV>, EventStoreReadError> {
     let response = self
       .client
       .query()
@@ -97,7 +103,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
+      Err(err) => Err(EventStoreReadError::IOError(err.into())),
       Ok(response) => {
         let mut events = Vec::new();
         if let Some(items) = response.items {
@@ -113,7 +119,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
-  async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<()> {
+  async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<(), EventStoreWriteError> {
     if event.is_created() {
       panic!("Invalid event: {:?}", event);
     }
@@ -122,7 +128,11 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Ok(())
   }
 
-  async fn persist_event_and_snapshot(&mut self, event: &Self::EV, aggregate: &Self::AG) -> Result<()> {
+  async fn persist_event_and_snapshot(
+    &mut self,
+    event: &Self::EV,
+    aggregate: &Self::AG,
+  ) -> Result<(), EventStoreWriteError> {
     if event.is_created() {
       self.create_event_and_snapshot(event, aggregate).await?;
     } else {
@@ -184,7 +194,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     self
   }
 
-  async fn create_event_and_snapshot(&mut self, event: &E, ar: &A) -> Result<()> {
+  async fn create_event_and_snapshot(&mut self, event: &E, ar: &A) -> Result<(), EventStoreWriteError> {
     let mut builder = self
       .client
       .transact_write_items()
@@ -205,7 +215,12 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Self::error_handling(result)
   }
 
-  async fn update_event_and_snapshot_opt(&mut self, event: &E, version: usize, ar: Option<&A>) -> Result<()> {
+  async fn update_event_and_snapshot_opt(
+    &mut self,
+    event: &E,
+    version: usize,
+    ar: Option<&A>,
+  ) -> Result<(), EventStoreWriteError> {
     let mut builder = self
       .client
       .transact_write_items()
@@ -227,27 +242,29 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   }
 
   fn error_handling(
-    result: std::result::Result<TransactWriteItemsOutput, SdkError<TransactWriteItemsError>>,
-  ) -> Result<()> {
+    result: Result<TransactWriteItemsOutput, SdkError<TransactWriteItemsError>>,
+  ) -> Result<(), EventStoreWriteError> {
     match result {
       Ok(_) => Ok(()),
       Err(e) => match e.into_service_error() {
         TransactWriteItemsError::TransactionCanceledException(e) => {
-          Err(EventStoreWriteError::TransactionCanceledError(e).into())
+          Err(EventStoreWriteError::TransactionCanceledError(e))
         }
-        error => Err(EventStoreWriteError::IOError(anyhow::Error::new(error)).into()),
+        error => Err(EventStoreWriteError::IOError(error.into())),
       },
     }
   }
 
   /// Delete excess snapshots
-  async fn delete_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<()> {
+  async fn delete_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<(), EventStoreWriteError> {
     if let Some(keep_snapshot_count) = self.keep_snapshot_count {
-      let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
+      let snapshot_count = self.get_snapshot_count_for_write(aggregate_id).await?;
       let excess_count = snapshot_count - keep_snapshot_count;
       if excess_count > 0 {
         log::debug!("excess_count: {}", excess_count);
-        let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
+        let keys = self
+          .get_last_snapshot_keys_for_write(aggregate_id, excess_count)
+          .await?;
         log::debug!("keys = {:?}", keys);
         if !keys.is_empty() {
           let request_items = keys
@@ -270,7 +287,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
             .send()
             .await;
           if let Err(err) = result {
-            return Err(EventStoreWriteError::IOError(anyhow::Error::new(err)).into());
+            return Err(EventStoreWriteError::IOError(Box::new(err.into_service_error())));
           } else {
             log::debug!("excess snapshots are deleted");
           }
@@ -281,13 +298,15 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   }
 
   /// Update ttl of excess snapshots
-  async fn update_ttl_of_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<()> {
+  async fn update_ttl_of_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<(), EventStoreWriteError> {
     if let (Some(keep_snapshot_count), Some(delete_ttl)) = (self.keep_snapshot_count, self.delete_ttl) {
-      let snapshot_count = self.get_snapshot_count(aggregate_id).await? - 1;
+      let snapshot_count = self.get_snapshot_count_for_write(aggregate_id).await?;
       let excess_count = snapshot_count - keep_snapshot_count;
       if excess_count > 0 {
         log::debug!("excess_count: {}", excess_count);
-        let keys = self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await?;
+        let keys = self
+          .get_last_snapshot_keys_for_write(aggregate_id, excess_count)
+          .await?;
         log::debug!("keys = {:?}", keys);
         let ttl = (Utc::now() + delete_ttl).timestamp();
         for (pkey, skey) in keys {
@@ -303,7 +322,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
             .send()
             .await;
           if let Err(err) = result {
-            return Err(EventStoreWriteError::IOError(anyhow::Error::new(err)).into());
+            return Err(EventStoreWriteError::IOError(err.into()));
           }
         }
       }
@@ -311,7 +330,25 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Ok(())
   }
 
-  async fn get_snapshot_count(&mut self, aid: &AID) -> Result<usize> {
+  async fn get_last_snapshot_keys_for_write(
+    &mut self,
+    aggregate_id: &AID,
+    excess_count: usize,
+  ) -> Result<Vec<(String, String)>, EventStoreWriteError> {
+    match self.get_last_snapshot_keys(aggregate_id, excess_count as i32).await {
+      Ok(r) => Ok(r),
+      Err(err) => Err(EventStoreWriteError::IOError(err.into())),
+    }
+  }
+
+  async fn get_snapshot_count_for_write(&mut self, aggregate_id: &AID) -> Result<usize, EventStoreWriteError> {
+    match self.get_snapshot_count(aggregate_id).await {
+      Ok(r) => Ok(r - 1),
+      Err(err) => Err(EventStoreWriteError::IOError(err.into())),
+    }
+  }
+
+  async fn get_snapshot_count(&mut self, aid: &AID) -> Result<usize, EventStoreReadError> {
     let response = self
       .client
       .query()
@@ -324,12 +361,16 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .send()
       .await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
+      Err(err) => Err(EventStoreReadError::IOError(Box::new(err.into_service_error()))),
       Ok(response) => Ok(response.count as usize),
     }
   }
 
-  async fn get_last_snapshot_keys(&mut self, aid: &AID, limit: i32) -> Result<Vec<(String, String)>> {
+  async fn get_last_snapshot_keys(
+    &mut self,
+    aid: &AID,
+    limit: i32,
+  ) -> Result<Vec<(String, String)>, EventStoreReadError> {
     let mut query_builder = self
       .client
       .query()
@@ -350,7 +391,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
     let response = query_builder.send().await;
     match response {
-      Err(err) => Err(EventStoreReadError::IOError(anyhow::Error::new(err)).into()),
+      Err(err) => Err(EventStoreReadError::IOError(err.into())),
       Ok(response) => {
         if let Some(items) = response.items {
           let mut result = Vec::new();
@@ -363,13 +404,16 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
           }
           Ok(result)
         } else {
-          Err(EventStoreReadError::IOError(anyhow::anyhow!("No snapshot found for aggregate id: {}", aid)).into())
+          Err(EventStoreReadError::OtherError(format!(
+            "No snapshot found for aggregate id: {}",
+            aid
+          )))
         }
       }
     }
   }
 
-  fn put_snapshot(&mut self, event: &E, seq_nr: usize, ar: &A) -> Result<Put> {
+  fn put_snapshot(&mut self, event: &E, seq_nr: usize, ar: &A) -> Result<Put, EventStoreWriteError> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
     let payload = self.snapshot_serializer.serialize(ar)?;
@@ -396,7 +440,13 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Ok(put_snapshot.build())
   }
 
-  fn update_snapshot(&mut self, event: &E, seq_nr: usize, version: usize, ar_opt: Option<&A>) -> Result<Update> {
+  fn update_snapshot(
+    &mut self,
+    event: &E,
+    seq_nr: usize,
+    version: usize,
+    ar_opt: Option<&A>,
+  ) -> Result<Update, EventStoreWriteError> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
     log::debug!(">--- update_snapshot ---");
@@ -441,7 +491,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     self.key_resolver.resolve_sort_key(id, seq_nr)
   }
 
-  fn put_journal(&mut self, event: &E) -> Result<Put> {
+  fn put_journal(&mut self, event: &E) -> Result<Put, EventStoreWriteError> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), event.seq_nr());
     let aid = event.aggregate_id().to_string();
@@ -462,7 +512,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Ok(put_journal)
   }
 
-  async fn try_purge_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<()> {
+  async fn try_purge_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<(), EventStoreWriteError> {
     if self.keep_snapshot_count.is_some() {
       if self.delete_ttl.is_some() {
         self.update_ttl_of_excess_snapshots(aggregate_id).await?;

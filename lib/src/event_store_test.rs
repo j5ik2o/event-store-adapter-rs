@@ -1,9 +1,3 @@
-use std::env;
-use std::fmt::{Display, Formatter};
-use std::thread::sleep;
-
-use anyhow::Result;
-
 use chrono::{DateTime, Utc};
 use event_store_adapter_test_utils_rs::docker::dynamodb_local;
 use event_store_adapter_test_utils_rs::dynamodb::{
@@ -11,12 +5,21 @@ use event_store_adapter_test_utils_rs::dynamodb::{
 };
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 use serde::{Deserialize, Serialize};
+use std::env;
+use std::error::Error as StdError;
+use std::fmt::{Display, Formatter};
+use std::thread::sleep;
 use testcontainers::clients::Cli;
 
 use ulid_generator_rs::ULID;
 
 use crate::event_store::EventStoreForDynamoDB;
 use crate::types::{Aggregate, AggregateId, Event, EventStore};
+
+#[derive(Debug)]
+pub enum UserAccountError {
+  AlreadyRenamed(String),
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserAccountId {
@@ -107,7 +110,7 @@ pub struct UserAccount {
 }
 
 impl UserAccount {
-  fn new(id: UserAccountId, name: String) -> Result<(Self, UserAccountEvent)> {
+  fn new(id: UserAccountId, name: String) -> (Self, UserAccountEvent) {
     let mut my_self = Self {
       id: id.clone(),
       name,
@@ -123,7 +126,7 @@ impl UserAccount {
       name: my_self.name.clone(),
       occurred_at: chrono::Utc::now(),
     };
-    Ok((my_self, event))
+    (my_self, event)
   }
 
   fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount) -> Self {
@@ -139,7 +142,10 @@ impl UserAccount {
     }
   }
 
-  pub fn rename(&mut self, name: &str) -> Result<UserAccountEvent> {
+  pub fn rename(&mut self, name: &str) -> Result<UserAccountEvent, UserAccountError> {
+    if self.name == name {
+      return Err(UserAccountError::AlreadyRenamed(name.to_string()));
+    }
     self.name = name.to_string();
     self.seq_nr += 1;
     let event = UserAccountEvent::Renamed {
@@ -180,7 +186,7 @@ impl Aggregate for UserAccount {
 async fn find_by_id(
   event_store: &mut EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent>,
   id: &UserAccountId,
-) -> Result<Option<UserAccount>> {
+) -> Result<Option<UserAccount>, Box<dyn StdError + Send + Sync>> {
   let snapshot = event_store.get_latest_snapshot_by_id(id).await?;
   match snapshot {
     Some(snapshot) => {
@@ -247,7 +253,7 @@ async fn test_event_store() {
     value: id_value.to_string(),
   };
 
-  let (user_account, event) = UserAccount::new(id.clone(), "test".to_string()).unwrap();
+  let (user_account, event) = UserAccount::new(id.clone(), "test".to_string());
   // Persist the event and the snapshot
   event_store
     .persist_event_and_snapshot(&event, &user_account)

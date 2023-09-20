@@ -1,10 +1,9 @@
-use crate::types::{Aggregate, Event};
-use anyhow::Result;
+use crate::types::{Aggregate, Event, EventStoreReadError, EventStoreWriteError};
 use std::fmt::Debug;
 
 pub trait EventSerializer<E: Event>: Debug + 'static {
-  fn serialize(&self, event: &E) -> Result<Vec<u8>>;
-  fn deserialize(&self, data: &[u8]) -> Result<Box<E>>;
+  fn serialize(&self, event: &E) -> Result<Vec<u8>, EventStoreWriteError>;
+  fn deserialize(&self, data: &[u8]) -> Result<Box<E>, EventStoreReadError>;
 }
 
 #[derive(Debug)]
@@ -21,19 +20,20 @@ impl<E: Event> Default for JsonEventSerializer<E> {
 }
 
 impl<E: Event> EventSerializer<E> for JsonEventSerializer<E> {
-  fn serialize(&self, event: &E) -> Result<Vec<u8>> {
-    serde_json::to_vec(event).map_err(|e| e.into())
+  fn serialize(&self, event: &E) -> Result<Vec<u8>, EventStoreWriteError> {
+    serde_json::to_vec(event).map_err(|e| EventStoreWriteError::SerializeError(e.into()))
   }
 
-  fn deserialize(&self, data: &[u8]) -> Result<Box<E>> {
-    let event: E = serde_json::from_slice(data)?;
-    Ok(Box::new(event))
+  fn deserialize(&self, data: &[u8]) -> Result<Box<E>, EventStoreReadError> {
+    serde_json::from_slice(data)
+      .map_err(|e| EventStoreReadError::DeserializeError(e.into()))
+      .map(Box::new)
   }
 }
 
 pub trait SnapshotSerializer<A: Aggregate>: Debug + 'static {
-  fn serialize(&self, aggregate: &A) -> Result<Vec<u8>>;
-  fn deserialize(&self, data: &[u8]) -> Result<Box<A>>;
+  fn serialize(&self, aggregate: &A) -> Result<Vec<u8>, EventStoreWriteError>;
+  fn deserialize(&self, data: &[u8]) -> Result<Box<A>, EventStoreReadError>;
 }
 
 #[derive(Debug)]
@@ -50,12 +50,13 @@ impl<A: Aggregate> Default for JsonSnapshotSerializer<A> {
 }
 
 impl<A: Aggregate> SnapshotSerializer<A> for JsonSnapshotSerializer<A> {
-  fn serialize(&self, aggregate: &A) -> Result<Vec<u8>> {
-    serde_json::to_vec(aggregate).map_err(|e| e.into())
+  fn serialize(&self, aggregate: &A) -> Result<Vec<u8>, EventStoreWriteError> {
+    serde_json::to_vec(aggregate).map_err(|e| EventStoreWriteError::SerializeError(e.into()))
   }
 
-  fn deserialize(&self, data: &[u8]) -> Result<Box<A>> {
-    let aggregate: A = serde_json::from_slice(data)?;
-    Ok(Box::new(aggregate))
+  fn deserialize(&self, data: &[u8]) -> Result<Box<A>, EventStoreReadError> {
+    serde_json::from_slice(data)
+      .map_err(|e| EventStoreReadError::DeserializeError(e.into()))
+      .map(Box::new)
   }
 }

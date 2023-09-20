@@ -14,7 +14,6 @@ repository = "https://github.com/j5ik2o/event-store-adapter-rs"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-anyhow = { workspace = true }
 thiserror = { workspace = true }
 async-trait = { workspace = true }
 aws-config = { workspace = true }
