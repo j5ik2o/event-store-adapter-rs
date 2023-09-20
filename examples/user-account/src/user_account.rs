@@ -121,7 +121,6 @@ impl UserAccount {
   }
 
   pub fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount) -> Self {
-    
     events.into_iter().fold(snapshot, |mut result, event| {
       result.apply_event(event.clone());
       result
