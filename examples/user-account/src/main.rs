@@ -11,7 +11,8 @@ use event_store_adapter_test_utils_rs::docker::dynamodb_local;
 use event_store_adapter_test_utils_rs::dynamodb::{create_client, create_journal_table, create_snapshot_table};
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 
-use crate::user_account::{UserAccount, UserAccountId, UserAccountRepository};
+use crate::user_account::{UserAccount, UserAccountId};
+use crate::user_account_repository::UserAccountRepository;
 
 mod user_account;
 mod user_account_repository;
