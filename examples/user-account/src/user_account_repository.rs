@@ -1,6 +1,6 @@
 use crate::user_account::{UserAccount, UserAccountEvent, UserAccountId};
-use event_store_adapter_rs::event_store::{EventStoreForDynamoDB, EventStoreReadError, EventStoreWriteError};
-use event_store_adapter_rs::types::{Aggregate, EventStore};
+use event_store_adapter_rs::event_store::EventStoreForDynamoDB;
+use event_store_adapter_rs::types::{Aggregate, EventStore, EventStoreReadError, EventStoreWriteError};
 
 pub struct UserAccountRepository {
   event_store: EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent>,
