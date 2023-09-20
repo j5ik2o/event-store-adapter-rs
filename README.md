@@ -20,29 +20,43 @@ pub struct UserAccountRepository {
 }
 
 impl UserAccountRepository {
-  pub fn new(event_store: EventStore<UserAccount, UserAccountEvent>) -> Self {
-    Self { event_store }
+  pub async fn store_event(&mut self, event: &UserAccountEvent, version: usize) -> Result<(), RepositoryError> {
+    let result = self.event_store.persist_event(event, version).await;
+    match result {
+      Ok(_) => Ok(()),
+      Err(err) => Err(Self::handle_event_store_write_error(err)),
+    }
   }
 
-  pub async fn store_event(&mut self, event: &UserAccountEvent, version: usize) -> Result<()> {
-    return self.event_store.persist_event(event, version).await;
+  pub async fn store_event_and_snapshot(
+    &mut self,
+    event: &UserAccountEvent,
+    snapshot: &UserAccount,
+  ) -> Result<(), RepositoryError> {
+    let result = self.event_store.persist_event_and_snapshot(event, snapshot).await;
+    match result {
+      Ok(_) => Ok(()),
+      Err(err) => Err(Self::handle_event_store_write_error(err)),
+    }
   }
 
-  pub async fn store_event_and_snapshot(&mut self, event: &UserAccountEvent, snapshot: &UserAccount) -> Result<()> {
-    return self.event_store.persist_event_and_snapshot(event, snapshot).await;
-  }
-
-  pub async fn find_by_id(&self, id: &UserAccountId) -> Result<UserAccount> {
-    let snapshot = self.event_store.get_latest_snapshot_by_id(id).await?;
-    match snapshot {
-      Some(snapshot) => {
-        let events = self.event_store
-          .get_events_by_id_since_seq_nr(id, snapshot.seq_nr)
-          .await?;
-        let result = UserAccount::replay(events, snapshot);
-        Ok(Some(result))
-      }
-      None => Ok(None),
+  pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<UserAccount>, RepositoryError> {
+    let snapshot_result = self.event_store.get_latest_snapshot_by_id(id).await;
+    match snapshot_result {
+      Ok(snapshot_opt) => match snapshot_opt {
+        Some(snapshot) => {
+          let events = self
+            .event_store
+            .get_events_by_id_since_seq_nr(id, snapshot.seq_nr() + 1)
+            .await;
+          match events {
+            Ok(events) => Ok(Some(UserAccount::replay(events, snapshot))),
+            Err(err) => Err(Self::handle_event_store_read_error(err)),
+          }
+        }
+        None => Ok(None),
+      },
+      Err(err) => Err(Self::handle_event_store_read_error(err)),
     }
   }
     
