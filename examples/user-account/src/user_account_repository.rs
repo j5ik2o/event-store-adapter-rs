@@ -21,7 +21,7 @@ impl UserAccountRepository {
     let result = self.event_store.persist_event(event, version).await;
     match result {
       Ok(_) => Ok(()),
-      Err(e) => Err(Self::handle_event_store_write_error(e)),
+      Err(err) => Err(Self::handle_event_store_write_error(err)),
     }
   }
 
@@ -33,7 +33,7 @@ impl UserAccountRepository {
     let result = self.event_store.persist_event_and_snapshot(event, snapshot).await;
     match result {
       Ok(_) => Ok(()),
-      Err(e) => Err(Self::handle_event_store_write_error(e)),
+      Err(err) => Err(Self::handle_event_store_write_error(err)),
     }
   }
 
@@ -57,20 +57,20 @@ impl UserAccountRepository {
     }
   }
 
-  fn handle_event_store_write_error(err: anyhow::Error) -> RepositoryError {
-    match err.downcast_ref::<EventStoreWriteError>() {
-      Some(EventStoreWriteError::TransactionCanceledError(e)) => RepositoryError::OptimisticLockError(e.to_string()),
-      Some(EventStoreWriteError::SerializeError(e)) => RepositoryError::IOError(e.to_string()),
-      Some(EventStoreWriteError::IOError(e)) => RepositoryError::IOError(e.to_string()),
-      _ => panic!("unexpected error: {:?}", err),
+  fn handle_event_store_write_error(err: EventStoreWriteError) -> RepositoryError {
+    match err {
+      EventStoreWriteError::TransactionCanceledError(e) => RepositoryError::OptimisticLockError(e.to_string()),
+      EventStoreWriteError::SerializeError(e) => RepositoryError::IOError(e.to_string()),
+      EventStoreWriteError::IOError(e) => RepositoryError::IOError(e.to_string()),
+      EventStoreWriteError::OtherError(e) => RepositoryError::IOError(e.to_string()),
     }
   }
 
-  fn handle_event_store_read_error(err: anyhow::Error) -> RepositoryError {
-    match err.downcast_ref::<EventStoreReadError>() {
-      Some(EventStoreReadError::DeserializeError(e)) => RepositoryError::IOError(e.to_string()),
-      Some(EventStoreReadError::IOError(e)) => RepositoryError::IOError(e.to_string()),
-      _ => panic!("unexpected error: {:?}", err),
+  fn handle_event_store_read_error(err: EventStoreReadError) -> RepositoryError {
+    match err {
+      EventStoreReadError::DeserializeError(e) => RepositoryError::IOError(e.to_string()),
+      EventStoreReadError::IOError(e) => RepositoryError::IOError(e.to_string()),
+      EventStoreReadError::OtherError(e) => RepositoryError::IOError(e.to_string()),
     }
   }
 }

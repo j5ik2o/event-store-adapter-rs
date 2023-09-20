@@ -1,8 +1,8 @@
-use anyhow::Result;
 use async_trait::async_trait;
 use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 use chrono::{DateTime, Utc};
 use serde::{de, Serialize};
+use std::error::Error as StdError;
 use std::fmt::Debug;
 use thiserror::Error;
 
@@ -60,7 +60,7 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   /// # 戻り値
   /// - `Ok(())` - 保存に成功した場合
   /// - `Err(e)` - 保存に失敗した場合
-  async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<()>;
+  async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<(), EventStoreWriteError>;
 
   /// イベント及びスナップショットを保存します。
   ///
@@ -71,29 +71,41 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   /// # 戻り値
   /// - `Ok(())` - 保存に成功した場合
   /// - `Err(e)` - 保存に失敗した場合
-  async fn persist_event_and_snapshot(&mut self, event: &Self::EV, aggregate: &Self::AG) -> Result<()>;
+  async fn persist_event_and_snapshot(
+    &mut self,
+    event: &Self::EV,
+    aggregate: &Self::AG,
+  ) -> Result<(), EventStoreWriteError>;
 
   /// 最新のスナップショットを取得する。
-  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>>;
+  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>, EventStoreReadError>;
 
   /// 指定したIDとシーケンス番号以降のイベントを取得する。
-  async fn get_events_by_id_since_seq_nr(&self, aid: &Self::AID, seq_nr: usize) -> Result<Vec<Self::EV>>;
+  async fn get_events_by_id_since_seq_nr(
+    &self,
+    aid: &Self::AID,
+    seq_nr: usize,
+  ) -> Result<Vec<Self::EV>, EventStoreReadError>;
 }
 
 #[derive(Error, Debug)]
 pub enum EventStoreWriteError {
   #[error("SerializeError: {0}")]
-  SerializeError(anyhow::Error),
+  SerializeError(Box<dyn StdError + Send + Sync>),
   #[error("TransactionCanceledError: {0}")]
-  TransactionCanceledError(TransactionCanceledException),
+  TransactionCanceledError(#[from] TransactionCanceledException),
   #[error("IOError: {0}")]
-  IOError(anyhow::Error),
+  IOError(#[from] Box<dyn StdError + Send + Sync>),
+  #[error("OtherError: {0}")]
+  OtherError(String),
 }
 
 #[derive(Error, Debug)]
 pub enum EventStoreReadError {
   #[error("DeserializeError: {0}")]
-  DeserializeError(anyhow::Error),
+  DeserializeError(Box<dyn StdError + Send + Sync>),
   #[error("IOError: {0}")]
-  IOError(anyhow::Error),
+  IOError(#[from] Box<dyn StdError + Send + Sync>),
+  #[error("OtherError: {0}")]
+  OtherError(String),
 }

@@ -76,7 +76,7 @@ async fn create_user_account(
   name: &str,
 ) -> Result<UserAccountId, RepositoryError> {
   let user_account_id = UserAccountId::new(id.to_string());
-  let (user_account, user_account_event) = UserAccount::new(user_account_id.clone(), name.to_string()).unwrap();
+  let (user_account, user_account_event) = UserAccount::new(user_account_id.clone(), name.to_string());
   repository
     .store_event_and_snapshot(&user_account_event, &user_account)
     .await?;
