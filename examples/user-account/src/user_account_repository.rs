@@ -60,7 +60,7 @@ impl UserAccountRepository {
   fn handle_event_store_write_error(err: EventStoreWriteError) -> RepositoryError {
     match err {
       EventStoreWriteError::TransactionCanceledError(e) => RepositoryError::OptimisticLockError(e.to_string()),
-      EventStoreWriteError::SerializeError(e) => RepositoryError::IOError(e.to_string()),
+      EventStoreWriteError::SerializationError(e) => RepositoryError::IOError(e.to_string()),
       EventStoreWriteError::IOError(e) => RepositoryError::IOError(e.to_string()),
       EventStoreWriteError::OtherError(e) => RepositoryError::IOError(e.to_string()),
     }
@@ -68,7 +68,7 @@ impl UserAccountRepository {
 
   fn handle_event_store_read_error(err: EventStoreReadError) -> RepositoryError {
     match err {
-      EventStoreReadError::DeserializeError(e) => RepositoryError::IOError(e.to_string()),
+      EventStoreReadError::DeserializationError(e) => RepositoryError::IOError(e.to_string()),
       EventStoreReadError::IOError(e) => RepositoryError::IOError(e.to_string()),
       EventStoreReadError::OtherError(e) => RepositoryError::IOError(e.to_string()),
     }
