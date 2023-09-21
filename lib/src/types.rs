@@ -91,7 +91,7 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
 #[derive(Error, Debug)]
 pub enum EventStoreWriteError {
   #[error("SerializeError: {0}")]
-  SerializeError(Box<dyn StdError + Send + Sync>),
+  SerializationError(Box<dyn StdError + Send + Sync>),
   #[error("TransactionCanceledError: {0}")]
   TransactionCanceledError(#[from] TransactionCanceledException),
   #[error("IOError: {0}")]
@@ -103,7 +103,7 @@ pub enum EventStoreWriteError {
 #[derive(Error, Debug)]
 pub enum EventStoreReadError {
   #[error("DeserializeError: {0}")]
-  DeserializeError(Box<dyn StdError + Send + Sync>),
+  DeserializationError(Box<dyn StdError + Send + Sync>),
   #[error("IOError: {0}")]
   IOError(#[from] Box<dyn StdError + Send + Sync>),
   #[error("OtherError: {0}")]

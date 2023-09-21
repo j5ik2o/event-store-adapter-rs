@@ -21,12 +21,12 @@ impl<E: Event> Default for JsonEventSerializer<E> {
 
 impl<E: Event> EventSerializer<E> for JsonEventSerializer<E> {
   fn serialize(&self, event: &E) -> Result<Vec<u8>, EventStoreWriteError> {
-    serde_json::to_vec(event).map_err(|e| EventStoreWriteError::SerializeError(e.into()))
+    serde_json::to_vec(event).map_err(|e| EventStoreWriteError::SerializationError(e.into()))
   }
 
   fn deserialize(&self, data: &[u8]) -> Result<Box<E>, EventStoreReadError> {
     serde_json::from_slice(data)
-      .map_err(|e| EventStoreReadError::DeserializeError(e.into()))
+      .map_err(|e| EventStoreReadError::DeserializationError(e.into()))
       .map(Box::new)
   }
 }
@@ -51,12 +51,12 @@ impl<A: Aggregate> Default for JsonSnapshotSerializer<A> {
 
 impl<A: Aggregate> SnapshotSerializer<A> for JsonSnapshotSerializer<A> {
   fn serialize(&self, aggregate: &A) -> Result<Vec<u8>, EventStoreWriteError> {
-    serde_json::to_vec(aggregate).map_err(|e| EventStoreWriteError::SerializeError(e.into()))
+    serde_json::to_vec(aggregate).map_err(|e| EventStoreWriteError::SerializationError(e.into()))
   }
 
   fn deserialize(&self, data: &[u8]) -> Result<Box<A>, EventStoreReadError> {
     serde_json::from_slice(data)
-      .map_err(|e| EventStoreReadError::DeserializeError(e.into()))
+      .map_err(|e| EventStoreReadError::DeserializationError(e.into()))
       .map(Box::new)
   }
 }
