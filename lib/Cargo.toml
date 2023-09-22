@@ -1,6 +1,6 @@
 [package]
 name = "event-store-adapter-rs"
-version = "0.2.9"
+version = "0.2.10"
 
 description = "crate to make DynamoDB an Event Store"
 authors = ["Junichi Kato <j5ik2o@gmail.com>"]
