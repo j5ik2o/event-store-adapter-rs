@@ -14,11 +14,9 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
           toolchain: nightly
-          override: true
       - name: release the crate
         run: |
           cargo publish --token ${{ secrets.CARGO_TOKEN }} -p event-store-adapter-rs
