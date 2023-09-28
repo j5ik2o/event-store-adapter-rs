@@ -98,6 +98,10 @@ repository
 
 See [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md).
 
+## CQRS/Event Sourcing Example
+
+See [j5ik2o/cqrs-es-example-rs](https://github.com/j5ik2o/cqrs-es-example-rs).
+
 ## License.
 
 MIT License. See [LICENSE](LICENSE) for details.
