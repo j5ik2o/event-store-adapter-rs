@@ -97,7 +97,11 @@ repository
 
 ## テーブル仕様
 
-See [docs/DATABASE_SCHEMA.ja.md](docs/DATABASE_SCHEMA.ja.md).
+[docs/DATABASE_SCHEMA.ja.md](docs/DATABASE_SCHEMA.ja.md)を参照してください。
+
+## CQRS/Event Sourcing サンプル
+
+[j5ik2o/cqrs-es-example-rs](https://github.com/j5ik2o/cqrs-es-example-rs)を参照してください。
 
 ## 他の言語のための実装
 
