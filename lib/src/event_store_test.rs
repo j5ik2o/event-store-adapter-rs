@@ -205,7 +205,7 @@ async fn test_event_store() {
   env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
   let _ = env_logger::builder().is_test(true).try_init();
 
-  let docker = Cli::docker();
+  let docker = Cli::default();
   let dynamodb_node = dynamodb_local(&docker);
   let port = dynamodb_node.get_host_port_ipv4(4566);
   log::debug!("DynamoDB port: {}", port);
