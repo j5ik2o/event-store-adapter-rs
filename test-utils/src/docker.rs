@@ -1,7 +1,6 @@
 use testcontainers::clients::Cli;
 use testcontainers::core::WaitFor;
-use testcontainers::images::generic::GenericImage;
-use testcontainers::Container;
+use testcontainers::{Container, GenericImage};
 
 pub fn dynamodb_local(docker: &Cli) -> Container<'_, GenericImage> {
   let wait_for = WaitFor::message_on_stdout("Ready.");

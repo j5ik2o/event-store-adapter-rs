@@ -134,7 +134,7 @@ pub async fn create_snapshot_table(client: &Client, table_name: &str, gsi_name: 
 
   let result = client
     .create_table()
-    .table_name(table_name.clone())
+    .table_name(table_name)
     .attribute_definitions(pkey_attribute_definition)
     .attribute_definitions(skey_attribute_definition)
     .attribute_definitions(aid_attribute_definition)

@@ -21,7 +21,7 @@ async fn main() {
   env::set_var("RUST_LOG", "info");
   env_logger::init();
 
-  let docker = Cli::docker();
+  let docker = Cli::default();
   let dynamodb_node = dynamodb_local(&docker);
   let port = dynamodb_node.get_host_port_ipv4(4566);
   log::debug!("DynamoDB port: {}", port);
