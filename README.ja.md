@@ -112,3 +112,5 @@ repository
 - [for Go](https://github.com/j5ik2o/event-store-adapter-go)
 - [for JavaScript/TypeScript](https://github.com/j5ik2o/event-store-adapter-js)
 - [for .NET](https://github.com/j5ik2o/event-store-adapter-dotnet)
+- [for PHP](https://github.com/j5ik2o/event-store-adapter-php)
+
