@@ -8,8 +8,7 @@ use thiserror::Error;
 
 /// 集約のIDを表すトレイト。
 pub trait AggregateId:
-  std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static
-{
+  std::fmt::Display + Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
   /// 集約の種別名を返す。
   fn type_name(&self) -> String;
   /// 集約のIDを文字列として返す
