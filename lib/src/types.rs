@@ -62,15 +62,16 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   /// - `Err(e)` - 保存に失敗した場合
   async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<(), EventStoreWriteError>;
 
+  /// Saves an event and a snapshot.<br/>
   /// イベント及びスナップショットを保存します。
   ///
   /// # 引数
-  /// - `event` - 保存するイベント
-  /// - `aggregate` - スナップショットを保存する集約
+  /// - `event` - event to be saved / 保存するイベント
+  /// - `aggregate` - aggregate to be saved as a snapshot / スナップショットを保存する集約
   ///
   /// # 戻り値
-  /// - `Ok(())` - 保存に成功した場合
-  /// - `Err(e)` - 保存に失敗した場合
+  /// - `Ok(())` - if succeeded / 保存に成功した場合
+  /// - `Err(e)` - if failed / 保存に失敗した場合
   async fn persist_event_and_snapshot(
     &mut self,
     event: &Self::EV,
@@ -93,7 +94,7 @@ pub enum EventStoreWriteError {
   #[error("SerializeError: {0}")]
   SerializationError(Box<dyn StdError + Send + Sync>),
   #[error("TransactionCanceledError: {0}")]
-  TransactionCanceledError(#[from] TransactionCanceledException),
+  OptimisticLockError(#[from] TransactionCanceledException),
   #[error("IOError: {0}")]
   IOError(#[from] Box<dyn StdError + Send + Sync>),
   #[error("OtherError: {0}")]
