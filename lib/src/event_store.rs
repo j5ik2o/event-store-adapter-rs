@@ -212,7 +212,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       );
     }
     let result = builder.send().await;
-    Self::error_handling(result)
+    Self::write_error_handling(result)
   }
 
   async fn update_event_and_snapshot_opt(
@@ -238,17 +238,21 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       );
     }
     let result = builder.send().await;
-    Self::error_handling(result)
+    Self::write_error_handling(result)
   }
 
-  fn error_handling(
+  fn write_error_handling(
     result: Result<TransactWriteItemsOutput, SdkError<TransactWriteItemsError>>,
   ) -> Result<(), EventStoreWriteError> {
     match result {
       Ok(_) => Ok(()),
       Err(e) => match e.into_service_error() {
         TransactWriteItemsError::TransactionCanceledException(e) => {
-          Err(EventStoreWriteError::TransactionCanceledError(e))
+          if e.cancellation_reasons().is_some() {
+            Err(EventStoreWriteError::OptimisticLockError(e))
+          } else {
+            Err(EventStoreWriteError::IOError(e.into()))
+          }
         }
         error => Err(EventStoreWriteError::IOError(error.into())),
       },

@@ -59,7 +59,7 @@ impl UserAccountRepository {
 
   fn handle_event_store_write_error(err: EventStoreWriteError) -> RepositoryError {
     match err {
-      EventStoreWriteError::TransactionCanceledError(e) => RepositoryError::OptimisticLockError(e.to_string()),
+      EventStoreWriteError::OptimisticLockError(e) => RepositoryError::OptimisticLockError(e.to_string()),
       EventStoreWriteError::SerializationError(e) => RepositoryError::IOError(e.to_string()),
       EventStoreWriteError::IOError(e) => RepositoryError::IOError(e.to_string()),
       EventStoreWriteError::OtherError(e) => RepositoryError::IOError(e.to_string()),
