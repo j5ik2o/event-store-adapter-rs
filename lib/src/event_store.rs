@@ -248,7 +248,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       Ok(_) => Ok(()),
       Err(e) => match e.into_service_error() {
         TransactWriteItemsError::TransactionCanceledException(e) => {
-          if e.cancellation_reasons().is_some() {
+          if !e.cancellation_reasons().is_empty() {
             Err(EventStoreWriteError::OptimisticLockError(e))
           } else {
             Err(EventStoreWriteError::IOError(e.into()))
@@ -279,7 +279,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
                   DeleteRequest::builder()
                     .key("pkey", AttributeValue::S(pkey))
                     .key("skey", AttributeValue::S(skey))
-                    .build(),
+                    .build()
+                    .unwrap(),
                 )
                 .build()
             })
@@ -441,7 +442,11 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         AttributeValue::N(event.occurred_at().timestamp_millis().to_string()),
       )
       .condition_expression("attribute_not_exists(pkey) AND attribute_not_exists(skey)");
-    Ok(put_snapshot.build())
+    let result = put_snapshot.build();
+    match result {
+      Ok(r) => Ok(r),
+      Err(err) => Err(EventStoreWriteError::IOError(err.into())),
+    }
   }
 
   fn update_snapshot(
@@ -484,7 +489,11 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         .expression_attribute_values(":seq_nr", AttributeValue::N(seq_nr.to_string()))
         .expression_attribute_values(":payload", AttributeValue::B(Blob::new(payload)));
     }
-    Ok(update_snapshot.build())
+    let result = update_snapshot.build();
+    match result {
+      Ok(r) => Ok(r),
+      Err(err) => Err(EventStoreWriteError::IOError(err.into())),
+    }
   }
 
   fn resolve_pkey(&self, id: &AID, shard_count: u64) -> String {
@@ -512,8 +521,10 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .item("payload", AttributeValue::B(Blob::new(payload)))
       .item("occurred_at", AttributeValue::N(occurred_at))
       .build();
-
-    Ok(put_journal)
+    match put_journal {
+      Ok(r) => Ok(r),
+      Err(err) => Err(EventStoreWriteError::IOError(err.into())),
+    }
   }
 
   async fn try_purge_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<(), EventStoreWriteError> {

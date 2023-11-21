@@ -7,8 +7,9 @@ publish = false
 [dependencies]
 log = { workspace = true }
 env_logger = { workspace = true }
-aws-config = { workspace = true }
+aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = { workspace = true }
+aws-http = { workspace = true }
 event-store-adapter-rs = { path = "../../lib" }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
