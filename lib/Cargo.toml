@@ -16,8 +16,9 @@ repository = "https://github.com/j5ik2o/event-store-adapter-rs"
 [dependencies]
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-aws-config = { workspace = true }
+aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = { workspace = true }
+aws-http = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
