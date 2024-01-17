@@ -13,7 +13,7 @@ use testcontainers::clients::Cli;
 
 use ulid_generator_rs::ULID;
 
-use crate::event_store::EventStoreForDynamoDB;
+use crate::event_store_for_dynamodb::EventStoreForDynamoDB;
 use crate::types::{Aggregate, AggregateId, Event, EventStore};
 
 #[derive(Debug)]
