@@ -11,7 +11,10 @@ use chrono::{Duration, Utc};
 
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
-use crate::types::{Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError};
+use crate::types::{
+  Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
+  TransactionCanceledExceptionWrapper,
+};
 
 /// Event Store for DynamoDB
 #[derive(Debug, Clone)]
@@ -249,7 +252,9 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       Err(e) => match e.into_service_error() {
         TransactWriteItemsError::TransactionCanceledException(e) => {
           if !e.cancellation_reasons().is_empty() {
-            Err(EventStoreWriteError::OptimisticLockError(e))
+            Err(EventStoreWriteError::OptimisticLockError(
+              TransactionCanceledExceptionWrapper(Some(e)),
+            ))
           } else {
             Err(EventStoreWriteError::IOError(e.into()))
           }
