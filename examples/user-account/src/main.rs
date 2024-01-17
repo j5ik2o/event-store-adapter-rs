@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use testcontainers::clients::Cli;
 
-use event_store_adapter_rs::event_store::EventStoreForDynamoDB;
+use event_store_adapter_rs::event_store_for_dynamodb::EventStoreForDynamoDB;
 use event_store_adapter_rs::types::Aggregate;
 use event_store_adapter_test_utils_rs::docker::dynamodb_local;
 use event_store_adapter_test_utils_rs::dynamodb::{create_client, create_journal_table, create_snapshot_table};
