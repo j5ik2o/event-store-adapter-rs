@@ -3,7 +3,7 @@ use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 use chrono::{DateTime, Utc};
 use serde::{de, Serialize};
 use std::error::Error as StdError;
-use std::fmt::Debug;
+use std::fmt::{Debug, Display};
 use thiserror::Error;
 
 /// 集約のIDを表すトレイト。
@@ -89,12 +89,26 @@ pub trait EventStore: Debug + Clone + Sync + Send + 'static {
   ) -> Result<Vec<Self::EV>, EventStoreReadError>;
 }
 
+#[derive(Debug)]
+pub struct TransactionCanceledExceptionWrapper(pub Option<TransactionCanceledException>);
+
+impl Display for TransactionCanceledExceptionWrapper {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    match &self.0 {
+      Some(e) => write!(f, "{}", e),
+      None => write!(f, "No TransactionCanceledException"),
+    }
+  }
+}
+
+impl StdError for TransactionCanceledExceptionWrapper {}
+
 #[derive(Error, Debug)]
 pub enum EventStoreWriteError {
   #[error("SerializeError: {0}")]
   SerializationError(Box<dyn StdError + Send + Sync>),
   #[error("TransactionCanceledError: {0}")]
-  OptimisticLockError(#[from] TransactionCanceledException),
+  OptimisticLockError(#[from] TransactionCanceledExceptionWrapper),
   #[error("IOError: {0}")]
   IOError(#[from] Box<dyn StdError + Send + Sync>),
   #[error("OtherError: {0}")]

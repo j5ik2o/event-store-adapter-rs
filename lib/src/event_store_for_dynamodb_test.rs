@@ -14,6 +14,7 @@ use testcontainers::clients::Cli;
 use ulid_generator_rs::ULID;
 
 use crate::event_store_for_dynamodb::EventStoreForDynamoDB;
+use crate::event_store_for_memory::EventStoreForMemory;
 use crate::types::{Aggregate, AggregateId, Event, EventStore};
 
 #[derive(Debug)]
@@ -183,8 +184,8 @@ impl Aggregate for UserAccount {
   }
 }
 
-async fn find_by_id(
-  event_store: &mut EventStoreForDynamoDB<UserAccountId, UserAccount, UserAccountEvent>,
+async fn find_by_id<T: EventStore<AID = UserAccountId, AG = UserAccount, EV = UserAccountEvent>>(
+  event_store: &mut T,
   id: &UserAccountId,
 ) -> Result<Option<UserAccount>, Box<dyn StdError + Send + Sync>> {
   let snapshot = event_store.get_latest_snapshot_by_id(id).await?;
@@ -201,7 +202,7 @@ async fn find_by_id(
 }
 
 #[tokio::test]
-async fn test_event_store() {
+async fn test_event_store_on_dynamodb() {
   env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
   let _ = env_logger::builder().is_test(true).try_init();
 
@@ -247,6 +248,54 @@ async fn test_event_store() {
   )
   .with_keep_snapshot_count(Some(1))
   .with_delete_ttl(Some(chrono::Duration::seconds(5)));
+
+  let id_value = id_generate();
+  let id = UserAccountId {
+    value: id_value.to_string(),
+  };
+
+  let (user_account, event) = UserAccount::new(id.clone(), "test".to_string());
+  // Persist the event and the snapshot
+  event_store
+    .persist_event_and_snapshot(&event, &user_account)
+    .await
+    .unwrap();
+
+  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
+  assert_eq!(user_account.name, "test");
+  assert_eq!(user_account.seq_nr, 1);
+  assert_eq!(user_account.version, 1);
+
+  let event = user_account.rename("test2").unwrap();
+
+  // Persist the event only.
+  event_store.persist_event(&event, user_account.version()).await.unwrap();
+
+  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
+  assert_eq!(user_account.name, "test2");
+  assert_eq!(user_account.seq_nr, 2);
+  assert_eq!(user_account.version, 2);
+
+  let event = user_account.rename("test3").unwrap();
+
+  // Persist the event and the snapshot
+  event_store
+    .persist_event_and_snapshot(&event, &user_account)
+    .await
+    .unwrap();
+
+  let user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
+  assert_eq!(user_account.name, "test3");
+  assert_eq!(user_account.seq_nr, 3);
+  assert_eq!(user_account.version, 3);
+}
+
+#[tokio::test]
+async fn test_event_store_on_memory() {
+  env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
+  let _ = env_logger::builder().is_test(true).try_init();
+
+  let mut event_store = EventStoreForMemory::new();
 
   let id_value = id_generate();
   let id = UserAccountId {
