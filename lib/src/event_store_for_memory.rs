@@ -34,15 +34,18 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       panic!("EventStoreForOnMemory does not support create event.")
     }
     let aid = event.aggregate_id().to_string();
-    let aggregate = self.snapshots.get_mut(&aid).unwrap();
-    if aggregate.version() != version {
+    let snapshot = self
+      .snapshots
+      .get_mut(&aid)
+      .ok_or_else(|| EventStoreWriteError::OtherError(aid.clone()))?;
+    if snapshot.version() != version {
       return Err(EventStoreWriteError::OptimisticLockError(
         TransactionCanceledExceptionWrapper(None),
       ));
     }
-    let new_version = aggregate.version() + 1;
+    let new_version = snapshot.version() + 1;
     self.events.entry(aid.clone()).or_insert(vec![]).push(event.clone());
-    aggregate.set_version(new_version);
+    snapshot.set_version(new_version);
     return Ok(());
   }
 
@@ -54,7 +57,10 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     let aid = event.aggregate_id().to_string();
     let mut new_version = 1;
     if !event.is_created() {
-      let snapshot = self.snapshots.get(&aid).unwrap();
+      let snapshot = self
+        .snapshots
+        .get(&aid)
+        .ok_or_else(|| EventStoreWriteError::OtherError(aid.clone()))?;
       let version = snapshot.version();
       if version != aggregate.version() {
         return Err(EventStoreWriteError::OptimisticLockError(
@@ -83,15 +89,13 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     seq_nr: usize,
   ) -> Result<Vec<Self::EV>, EventStoreReadError> {
     match self.events.get(&aid.to_string()) {
-      Some(events) => {
-        let mut result = vec![];
-        for event in events {
-          if event.seq_nr() >= seq_nr {
-            result.push(event.clone());
-          }
-        }
-        Ok(result)
-      }
+      Some(events) => Ok(
+        events
+          .iter()
+          .filter(|event| event.seq_nr() >= seq_nr)
+          .cloned()
+          .collect(),
+      ),
       None => Ok(vec![]),
     }
   }
