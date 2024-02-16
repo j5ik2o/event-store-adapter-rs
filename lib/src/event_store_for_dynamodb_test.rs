@@ -201,15 +201,24 @@ async fn find_by_id<T: EventStore<AID = UserAccountId, AG = UserAccount, EV = Us
   }
 }
 
+fn init_tracing() {
+  let _ = tracing_subscriber::fmt()
+    .with_max_level(tracing::Level::INFO)
+    .with_target(false)
+    .with_ansi(false)
+    .without_time()
+    .try_init();
+}
+
 #[tokio::test]
 async fn test_event_store_on_dynamodb() {
   env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
-  let _ = env_logger::builder().is_test(true).try_init();
+  init_tracing();
 
   let docker = Cli::default();
   let dynamodb_node = dynamodb_local(&docker);
   let port = dynamodb_node.get_host_port_ipv4(4566);
-  log::debug!("DynamoDB port: {}", port);
+  tracing::debug!("DynamoDB port: {}", port);
 
   let test_time_factor = env::var("TEST_TIME_FACTOR")
     .unwrap_or("1".to_string())
@@ -229,12 +238,12 @@ async fn test_event_store_on_dynamodb() {
   let _snapshot_table_output = create_snapshot_table(&client, snapshot_table_name, snapshot_aid_index_name).await;
 
   while !(wait_table(&client, journal_table_name).await) {
-    log::info!("Waiting for journal table to be created");
+    tracing::info!("Waiting for journal table to be created");
     sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
   }
 
   while !(wait_table(&client, snapshot_table_name).await) {
-    log::info!("Waiting for snapshot table to be created");
+    tracing::info!("Waiting for snapshot table to be created");
     sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
   }
 
@@ -293,7 +302,7 @@ async fn test_event_store_on_dynamodb() {
 #[tokio::test]
 async fn test_event_store_on_memory() {
   env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
-  let _ = env_logger::builder().is_test(true).try_init();
+  init_tracing();
 
   let mut event_store = EventStoreForMemory::new();
 

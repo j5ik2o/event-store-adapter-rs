@@ -18,13 +18,22 @@ mod user_account_repository;
 
 #[tokio::main]
 async fn main() {
-  env::set_var("RUST_LOG", "info");
-  env_logger::init();
+  let log_level = match env::var("LOG_LEVEL") {
+    Ok(level) => level,
+    Err(_) => "info".to_string(),
+  };
+  let subscriber = tracing_subscriber::fmt()
+    .with_env_filter(log_level)
+    .with_target(false)
+    .with_ansi(false)
+    .without_time()
+    .finish();
+  tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
   let docker = Cli::default();
   let dynamodb_node = dynamodb_local(&docker);
   let port = dynamodb_node.get_host_port_ipv4(4566);
-  log::debug!("DynamoDB port: {}", port);
+  tracing::debug!("DynamoDB port: {}", port);
 
   let test_time_factor = env::var("TEST_TIME_FACTOR")
     .unwrap_or("1".to_string())
@@ -60,14 +69,15 @@ async fn main() {
     .await
     .unwrap();
   let user_account = repository.find_by_id(&user_account_id).await.unwrap();
-  log::info!("1: user_account = {:?}", user_account);
+  tracing::info!("1: user_account = {:?}", user_account);
 
-  rename_user_account(&mut repository, &user_account_id, "test-2")
-    .await
-    .unwrap();
+  match rename_user_account(&mut repository, &user_account_id, "test-2").await {
+    Ok(_) => (),
+    Err(e) => tracing::error!("Failed to rename user account: {:?}", e),
+  }
 
   let user_account = repository.find_by_id(&user_account_id).await.unwrap();
-  log::info!("2: user_account = {:?}", user_account);
+  tracing::info!("2: user_account = {:?}", user_account);
 }
 
 async fn create_user_account(

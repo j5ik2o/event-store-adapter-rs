@@ -1,6 +1,9 @@
 [env]
 CARGO_MAKE_EXTEND_WORKSPACE_MAKEFILE = true
-RUST_BACKTRACE=1
+RUST_BACKTRACE = 1
+OTELCOL_IMG = "otel/opentelemetry-collector:0.88.0"
+OTELCOL_ARGS = ""
+OTEL_EXPORTER_OTLP_ENDPOINT = "otel-collector:4317"
 
 [tasks.fmt]
 description = "Format code"

@@ -3,6 +3,7 @@ use std::fmt::Debug;
 use std::marker::PhantomData;
 
 use async_trait::async_trait;
+use tracing::instrument;
 
 use crate::types::{
   Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
@@ -29,6 +30,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   type AID = AID;
   type EV = E;
 
+  #[instrument]
   async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<(), EventStoreWriteError> {
     if event.is_created() {
       panic!("EventStoreForOnMemory does not support create event.")
@@ -49,6 +51,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     return Ok(());
   }
 
+  #[instrument]
   async fn persist_event_and_snapshot(
     &mut self,
     event: &Self::EV,
@@ -76,6 +79,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     return Ok(());
   }
 
+  #[instrument]
   async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>, EventStoreReadError> {
     match self.snapshots.get(&aid.to_string()) {
       Some(aggregate) => Ok(Some(aggregate.clone())),
@@ -83,6 +87,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[instrument]
   async fn get_events_by_id_since_seq_nr(
     &self,
     aid: &Self::AID,

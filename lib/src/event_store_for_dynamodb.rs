@@ -8,6 +8,7 @@ use aws_sdk_dynamodb::primitives::Blob;
 use aws_sdk_dynamodb::types::{AttributeValue, DeleteRequest, Put, Select, TransactWriteItem, Update, WriteRequest};
 use aws_sdk_dynamodb::Client;
 use chrono::{Duration, Utc};
+use tracing::Instrument;
 
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
@@ -33,6 +34,7 @@ pub struct EventStoreForDynamoDB<AID: AggregateId, A: Aggregate, E: Event> {
 }
 
 unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Sync for EventStoreForDynamoDB<AID, A, E> {}
+
 unsafe impl<AID: AggregateId, A: Aggregate, E: Event> Send for EventStoreForDynamoDB<AID, A, E> {}
 
 #[async_trait]
@@ -43,6 +45,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   type AID = AID;
   type EV = E;
 
+  #[tracing::instrument]
   async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>, EventStoreReadError> {
     let response = self
       .client
@@ -75,7 +78,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
             .parse::<usize>()
             .unwrap();
           let seq_nr = aggregate.seq_nr();
-          log::debug!("seq_nr: {}", seq_nr);
+          tracing::debug!("seq_nr: {}", seq_nr);
           aggregate.set_version(version);
           Ok(Some(aggregate))
         } else {
@@ -88,6 +91,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument]
   async fn get_events_by_id_since_seq_nr(
     &self,
     aid: &Self::AID,
@@ -122,8 +126,10 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument]
   async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<(), EventStoreWriteError> {
     if event.is_created() {
+      tracing::error!("Invalid event: {:?}", event);
       panic!("Invalid event: {:?}", event);
     }
     self.update_event_and_snapshot_opt(event, version, None).await?;
@@ -131,6 +137,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Ok(())
   }
 
+  #[tracing::instrument]
   async fn persist_event_and_snapshot(
     &mut self,
     event: &Self::EV,
@@ -197,6 +204,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     self
   }
 
+  #[tracing::instrument(level = "debug")]
   async fn create_event_and_snapshot(&mut self, event: &E, ar: &A) -> Result<(), EventStoreWriteError> {
     let mut builder = self
       .client
@@ -218,6 +226,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Self::write_error_handling(result)
   }
 
+  #[tracing::instrument(level = "debug")]
   async fn update_event_and_snapshot_opt(
     &mut self,
     event: &E,
@@ -265,16 +274,17 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   }
 
   /// Delete excess snapshots
+  #[tracing::instrument(level = "debug")]
   async fn delete_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<(), EventStoreWriteError> {
     if let Some(keep_snapshot_count) = self.keep_snapshot_count {
       let snapshot_count = self.get_snapshot_count_for_write(aggregate_id).await?;
       let excess_count = snapshot_count - keep_snapshot_count;
       if excess_count > 0 {
-        log::debug!("excess_count: {}", excess_count);
+        tracing::debug!("excess_count: {}", excess_count);
         let keys = self
           .get_last_snapshot_keys_for_write(aggregate_id, excess_count)
           .await?;
-        log::debug!("keys = {:?}", keys);
+        tracing::debug!("keys = {:?}", keys);
         if !keys.is_empty() {
           let request_items = keys
             .into_iter()
@@ -290,16 +300,15 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
                 .build()
             })
             .collect::<Vec<_>>();
-          let result = self
+          let builder = self
             .client
             .batch_write_item()
-            .request_items(self.snapshot_table_name.clone(), request_items)
-            .send()
-            .await;
+            .request_items(self.snapshot_table_name.clone(), request_items);
+          let result = builder.send().instrument(tracing::debug_span!("send")).await;
           if let Err(err) = result {
             return Err(EventStoreWriteError::IOError(Box::new(err.into_service_error())));
           } else {
-            log::debug!("excess snapshots are deleted");
+            tracing::debug!("excess snapshots are deleted");
           }
         }
       }
@@ -308,16 +317,17 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   }
 
   /// Update ttl of excess snapshots
+  #[tracing::instrument(level = "debug")]
   async fn update_ttl_of_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<(), EventStoreWriteError> {
     if let (Some(keep_snapshot_count), Some(delete_ttl)) = (self.keep_snapshot_count, self.delete_ttl) {
       let snapshot_count = self.get_snapshot_count_for_write(aggregate_id).await?;
       let excess_count = snapshot_count - keep_snapshot_count;
       if excess_count > 0 {
-        log::debug!("excess_count: {}", excess_count);
+        tracing::debug!("excess_count: {}", excess_count);
         let keys = self
           .get_last_snapshot_keys_for_write(aggregate_id, excess_count)
           .await?;
-        log::debug!("keys = {:?}", keys);
+        tracing::debug!("keys = {:?}", keys);
         let ttl = (Utc::now() + delete_ttl).timestamp();
         for (pkey, skey) in keys {
           let result = self
@@ -340,6 +350,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     Ok(())
   }
 
+  #[tracing::instrument(level = "debug")]
   async fn get_last_snapshot_keys_for_write(
     &mut self,
     aggregate_id: &AID,
@@ -351,6 +362,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument(level = "debug")]
   async fn get_snapshot_count_for_write(&mut self, aggregate_id: &AID) -> Result<usize, EventStoreWriteError> {
     match self.get_snapshot_count(aggregate_id).await {
       Ok(r) => Ok(r - 1),
@@ -358,6 +370,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument(level = "debug")]
   async fn get_snapshot_count(&mut self, aid: &AID) -> Result<usize, EventStoreReadError> {
     let response = self
       .client
@@ -376,6 +389,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument(level = "debug")]
   async fn get_last_snapshot_keys(
     &mut self,
     aid: &AID,
@@ -406,8 +420,8 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
         if let Some(items) = response.items {
           let mut result = Vec::new();
           for item in items {
-            log::debug!("aid: {}", item.get("aid").unwrap().as_s().unwrap());
-            log::debug!("seq_nr: {}", item.get("seq_nr").unwrap().as_n().unwrap());
+            tracing::debug!("aid: {}", item.get("aid").unwrap().as_s().unwrap());
+            tracing::debug!("seq_nr: {}", item.get("seq_nr").unwrap().as_n().unwrap());
             let pkey = item.get("pkey").unwrap().as_s().unwrap().clone();
             let skey = item.get("skey").unwrap().as_s().unwrap().clone();
             result.push((pkey, skey));
@@ -423,16 +437,17 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument(level = "debug")]
   fn put_snapshot(&mut self, event: &E, seq_nr: usize, ar: &A) -> Result<Put, EventStoreWriteError> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
     let payload = self.snapshot_serializer.serialize(ar)?;
-    log::debug!(">--- put_snapshot ---");
-    log::debug!("pkey: {}", pkey);
-    log::debug!("skey: {}", skey);
-    log::debug!("aid: {}", event.aggregate_id().to_string());
-    log::debug!("seq_nr: {}", seq_nr);
-    log::debug!("<--- put_snapshot ---");
+    tracing::debug!(">--- put_snapshot ---");
+    tracing::debug!("pkey: {}", pkey);
+    tracing::debug!("skey: {}", skey);
+    tracing::debug!("aid: {}", event.aggregate_id().to_string());
+    tracing::debug!("seq_nr: {}", seq_nr);
+    tracing::debug!("<--- put_snapshot ---");
     let put_snapshot = Put::builder()
       .table_name(self.snapshot_table_name.clone())
       .item("pkey", AttributeValue::S(pkey))
@@ -454,6 +469,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument(level = "debug")]
   fn update_snapshot(
     &mut self,
     event: &E,
@@ -463,12 +479,12 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
   ) -> Result<Update, EventStoreWriteError> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), seq_nr);
-    log::debug!(">--- update_snapshot ---");
-    log::debug!("pkey: {}", pkey);
-    log::debug!("skey: {}", skey);
-    log::debug!("aid: {}", event.aggregate_id().to_string());
-    log::debug!("seq_nr: {}", seq_nr);
-    log::debug!("<--- update_snapshot ---");
+    tracing::debug!(">--- update_snapshot ---");
+    tracing::debug!("pkey: {}", pkey);
+    tracing::debug!("skey: {}", skey);
+    tracing::debug!("aid: {}", event.aggregate_id().to_string());
+    tracing::debug!("seq_nr: {}", seq_nr);
+    tracing::debug!("<--- update_snapshot ---");
     let mut update_snapshot = Update::builder()
       .table_name(self.snapshot_table_name.clone())
       .update_expression("SET #version=:after_version, #last_updated_at=:last_updated_at")
@@ -501,14 +517,17 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument(level = "debug")]
   fn resolve_pkey(&self, id: &AID, shard_count: u64) -> String {
     self.key_resolver.resolve_partition_key(id, shard_count)
   }
 
+  #[tracing::instrument(level = "debug")]
   fn resolve_skey(&self, id: &AID, seq_nr: usize) -> String {
     self.key_resolver.resolve_sort_key(id, seq_nr)
   }
 
+  #[tracing::instrument(level = "debug")]
   fn put_journal(&mut self, event: &E) -> Result<Put, EventStoreWriteError> {
     let pkey = self.resolve_pkey(event.aggregate_id(), self.shard_count);
     let skey = self.resolve_skey(event.aggregate_id(), event.seq_nr());
@@ -532,6 +551,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
     }
   }
 
+  #[tracing::instrument(level = "debug")]
   async fn try_purge_excess_snapshots(&mut self, aggregate_id: &AID) -> Result<(), EventStoreWriteError> {
     if self.keep_snapshot_count.is_some() {
       if self.delete_ttl.is_some() {
