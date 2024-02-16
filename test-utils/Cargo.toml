@@ -15,8 +15,9 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 log = { workspace = true }
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
-env_logger = { workspace = true }
 testcontainers = { workspace = true }
 serial_test = { workspace = true }
 once_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = [ "std", "env-filter" ] }

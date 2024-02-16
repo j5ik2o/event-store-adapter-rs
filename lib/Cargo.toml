@@ -22,13 +22,13 @@ aws-http = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
-log = { workspace = true }
+tracing = { workspace = true }
 
 [dev-dependencies]
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
-env_logger = { workspace = true }
 testcontainers = { workspace = true }
 serial_test = { workspace = true }
 once_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 event-store-adapter-test-utils-rs = { path = "../test-utils" }
+tracing-subscriber = { workspace = true, features = [ "std", "env-filter" ] }
