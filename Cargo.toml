@@ -6,7 +6,7 @@ resolver = "2"
 [workspace.dependencies]
 chrono = "0.4.38"
 anyhow = "1.0.82"
-thiserror = "1.0.58"
+thiserror = "1.0.59"
 async-trait = "0.1.80"
 aws-config = "1.2.0"
 aws-sdk-dynamodb = "1.22.0"
