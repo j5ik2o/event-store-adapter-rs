@@ -14,7 +14,7 @@ jobs:
           fetch-depth: 0
           persist-credentials: true
           token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      - uses: baptiste0928/cargo-install@21a18ba3bf4a184d1804e8b759930d3471b1c941 # v2
+      - uses: baptiste0928/cargo-install@9f6037ed331dcf7da101461a20656273fa72abf0 # v3
         with:
           crate: cargo-edit
       - uses: actions/setup-python@v5
