@@ -9,7 +9,6 @@ use std::env;
 use std::error::Error as StdError;
 use std::fmt::{Display, Formatter};
 use std::thread::sleep;
-use testcontainers::clients::Cli;
 
 use ulid_generator_rs::ULID;
 
@@ -215,9 +214,8 @@ async fn test_event_store_on_dynamodb() {
   env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
   init_tracing();
 
-  let docker = Cli::default();
-  let dynamodb_node = dynamodb_local(&docker);
-  let port = dynamodb_node.get_host_port_ipv4(4566);
+  let dynamodb_node = dynamodb_local().await;
+  let port = dynamodb_node.get_host_port_ipv4(4566).await;
   tracing::debug!("DynamoDB port: {}", port);
 
   let test_time_factor = env::var("TEST_TIME_FACTOR")
