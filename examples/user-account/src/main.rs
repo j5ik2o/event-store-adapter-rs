@@ -2,8 +2,6 @@ use std::env;
 use std::thread::sleep;
 use std::time::Duration;
 
-use testcontainers::clients::Cli;
-
 use event_store_adapter_rs::types::Aggregate;
 use event_store_adapter_rs::EventStoreForDynamoDB;
 use event_store_adapter_test_utils_rs::docker::dynamodb_local;
@@ -30,9 +28,8 @@ async fn main() {
     .finish();
   tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-  let docker = Cli::default();
-  let dynamodb_node = dynamodb_local(&docker);
-  let port = dynamodb_node.get_host_port_ipv4(4566);
+  let dynamodb_node = dynamodb_local().await;
+  let port = dynamodb_node.get_host_port_ipv4(4566).await;
   tracing::debug!("DynamoDB port: {}", port);
 
   let test_time_factor = env::var("TEST_TIME_FACTOR")
