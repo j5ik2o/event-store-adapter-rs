@@ -27,4 +27,4 @@ opentelemetry_sdk = "0.23"
 opentelemetry-stdout = { version = "0.4.0" }
 opentelemetry-jaeger = "0.22.0"
 opentelemetry-otlp = "0.16.0"
-tracing-opentelemetry = "0.24"
+tracing-opentelemetry = "0.25"
