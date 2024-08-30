@@ -1,3 +1,4 @@
+#[allow(dead_code)]
 mod event_store_for_dynamodb;
 #[cfg(test)]
 mod event_store_for_dynamodb_test;
