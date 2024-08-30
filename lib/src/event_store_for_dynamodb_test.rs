@@ -215,7 +215,7 @@ async fn test_event_store_on_dynamodb() {
   init_tracing();
 
   let dynamodb_node = dynamodb_local().await;
-  let port = dynamodb_node.get_host_port_ipv4(4566).await;
+  let port = dynamodb_node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   tracing::debug!("DynamoDB port: {}", port);
 
   let test_time_factor = env::var("TEST_TIME_FACTOR")
