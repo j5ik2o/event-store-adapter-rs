@@ -12,6 +12,7 @@ pub async fn dynamodb_local() -> ContainerAsync<GenericImage> {
     .with_env_var("DYNAMODB_SHARED_DB", "1")
     .with_env_var("DYNAMODB_IN_MEMORY", "1")
     .start()
-    .await.expect("Failed to start dynamodb container");
+    .await
+    .expect("Failed to start dynamodb container");
   container
 }
