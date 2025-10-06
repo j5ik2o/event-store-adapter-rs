@@ -4,7 +4,7 @@ use crate::types::{Aggregate, AggregateId, Event, EventStoreReadError, EventStor
 use async_trait::async_trait;
 use chrono::Duration;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 #[allow(dead_code)]
 pub struct SnapshotEnvelope<A> {
   pub aggregate: A,
@@ -12,7 +12,7 @@ pub struct SnapshotEnvelope<A> {
   pub version: usize,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq)]
 pub struct SnapshotMaintenance {
   pub keep_snapshot_count: Option<usize>,
   pub delete_ttl: Option<Duration>,
