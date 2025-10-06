@@ -1,3 +1,4 @@
+mod event_store_backend;
 #[allow(dead_code)]
 mod event_store_for_bigtable;
 #[cfg(test)]
@@ -7,6 +8,9 @@ mod event_store_for_dynamodb;
 #[cfg(test)]
 mod event_store_for_dynamodb_test;
 mod event_store_for_memory;
+#[cfg(test)]
+mod event_store_test_support;
+mod generic_event_store;
 pub mod key_resolver;
 pub mod serializer;
 pub mod types;

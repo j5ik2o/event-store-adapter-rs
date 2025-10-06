@@ -21,3 +21,5 @@ once_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true, features = [ "std", "env-filter" ] }
+googleapis-tonic-google-bigtable-admin-v2 = { workspace = true }
+tonic = { workspace = true, features = ["transport"] }

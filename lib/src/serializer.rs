@@ -1,7 +1,7 @@
 use crate::types::{Aggregate, Event, EventStoreReadError, EventStoreWriteError};
 use std::fmt::Debug;
 
-pub trait EventSerializer<E: Event>: Debug + 'static {
+pub trait EventSerializer<E: Event>: Debug + Send + Sync + 'static {
   fn serialize(&self, event: &E) -> Result<Vec<u8>, EventStoreWriteError>;
   fn deserialize(&self, data: &[u8]) -> Result<Box<E>, EventStoreReadError>;
 }
@@ -31,7 +31,7 @@ impl<E: Event> EventSerializer<E> for JsonEventSerializer<E> {
   }
 }
 
-pub trait SnapshotSerializer<A: Aggregate>: Debug + 'static {
+pub trait SnapshotSerializer<A: Aggregate>: Debug + Send + Sync + 'static {
   fn serialize(&self, aggregate: &A) -> Result<Vec<u8>, EventStoreWriteError>;
   fn deserialize(&self, data: &[u8]) -> Result<Box<A>, EventStoreReadError>;
 }
