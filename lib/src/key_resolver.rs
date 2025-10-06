@@ -3,7 +3,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::fmt::Debug;
 use std::hash::{Hash, Hasher};
 
-pub trait KeyResolver: Debug + Send + 'static {
+pub trait KeyResolver: Debug + Send + Sync + 'static {
   type ID: AggregateId;
 
   fn resolve_partition_key(&self, id: &Self::ID, shard_count: u64) -> String;
