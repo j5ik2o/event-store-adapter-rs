@@ -13,7 +13,8 @@ use googleapis_tonic_google_bigtable_v2::google::bigtable::v2::{
 use tonic::transport::Channel;
 use tonic::Status;
 
-use crate::event_store_backend::{GenericEventStore, SnapshotEnvelope, SnapshotMaintenance, StorageBackend};
+use crate::event_store_backend::{SnapshotEnvelope, SnapshotMaintenance, StorageBackend};
+use crate::generic_event_store::GenericEventStore;
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
 use crate::types::{

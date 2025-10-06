@@ -11,7 +11,8 @@ use aws_sdk_dynamodb::Client;
 use chrono::{Duration, Utc};
 use tracing::Instrument;
 
-use crate::event_store_backend::{GenericEventStore, SnapshotEnvelope, SnapshotMaintenance, StorageBackend};
+use crate::event_store_backend::{SnapshotEnvelope, SnapshotMaintenance, StorageBackend};
+use crate::generic_event_store::GenericEventStore;
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
 use crate::types::{
