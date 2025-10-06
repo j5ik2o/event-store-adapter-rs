@@ -7,7 +7,7 @@ use ulid_generator_rs::ULID;
 
 #[derive(Debug)]
 pub enum UserAccountError {
-  AlreadyRenamed(String),
+  AlreadyRenamed(#[allow(dead_code)] String),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

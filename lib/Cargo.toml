@@ -23,6 +23,8 @@ chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
+tonic = { workspace = true }
+googleapis-tonic-google-bigtable-v2 = { workspace = true }
 
 [dev-dependencies]
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
@@ -32,3 +34,4 @@ once_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 event-store-adapter-test-utils-rs = { path = "../test-utils" }
 tracing-subscriber = { workspace = true, features = [ "std", "env-filter" ] }
+googleapis-tonic-google-bigtable-admin-v2 = { workspace = true }

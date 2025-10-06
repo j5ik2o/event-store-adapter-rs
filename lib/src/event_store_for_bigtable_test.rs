@@ -1,19 +1,21 @@
-use chrono::{DateTime, Utc};
-use event_store_adapter_test_utils_rs::docker::dynamodb_local;
-use event_store_adapter_test_utils_rs::dynamodb::{
-  create_client, create_journal_table, create_snapshot_table, wait_table,
-};
-use event_store_adapter_test_utils_rs::id_generator::id_generate;
-use serde::{Deserialize, Serialize};
-use std::env;
 use std::error::Error as StdError;
 use std::fmt::{Display, Formatter};
-use std::thread::sleep;
 
+use chrono::{DateTime, Utc};
+use event_store_adapter_test_utils_rs::docker::bigtable_emulator;
+use event_store_adapter_test_utils_rs::id_generator::id_generate;
+use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::bigtable_table_admin_client::BigtableTableAdminClient;
+use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::gc_rule;
+use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::table;
+use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::{
+  ColumnFamily, CreateTableRequest, GcRule, Table,
+};
+use googleapis_tonic_google_bigtable_v2::google::bigtable::v2::bigtable_client::BigtableClient;
+use serde::{Deserialize, Serialize};
+use tonic::transport::Channel;
 use ulid_generator_rs::ULID;
 
-use crate::event_store_for_dynamodb::EventStoreForDynamoDB;
-use crate::event_store_for_memory::EventStoreForMemory;
+use crate::event_store_for_bigtable::EventStoreForBigtable;
 use crate::types::{Aggregate, AggregateId, Event, EventStore};
 
 #[derive(Debug)]
@@ -93,10 +95,7 @@ impl Event for UserAccountEvent {
   }
 
   fn is_created(&self) -> bool {
-    match self {
-      UserAccountEvent::Created { .. } => true,
-      UserAccountEvent::Renamed { .. } => false,
-    }
+    matches!(self, UserAccountEvent::Created { .. })
   }
 }
 
@@ -179,7 +178,7 @@ impl Aggregate for UserAccount {
   }
 
   fn last_updated_at(&self) -> &DateTime<Utc> {
-    todo!()
+    &self.last_updated_at
   }
 }
 
@@ -191,7 +190,7 @@ async fn find_by_id<T: EventStore<AID = UserAccountId, AG = UserAccount, EV = Us
   match snapshot {
     Some(snapshot) => {
       let events = event_store
-        .get_events_by_id_since_seq_nr(id, snapshot.seq_nr + 1)
+        .get_events_by_id_since_seq_nr(id, snapshot.seq_nr() + 1)
         .await?;
       let user_account = UserAccount::replay(events, snapshot);
       Ok(Some(user_account))
@@ -210,54 +209,46 @@ fn init_tracing() {
 }
 
 #[tokio::test]
-async fn test_event_store_on_dynamodb() {
-  env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
+async fn test_event_store_on_bigtable() {
   init_tracing();
 
-  let dynamodb_node = dynamodb_local().await;
-  let port = dynamodb_node
-    .get_host_port_ipv4(4566)
+  let node = bigtable_emulator().await;
+  let port = node
+    .get_host_port_ipv4(8086)
     .await
-    .expect("Failed to get port");
-  tracing::debug!("DynamoDB port: {}", port);
+    .expect("Failed to get Bigtable port");
 
-  let test_time_factor = env::var("TEST_TIME_FACTOR")
-    .unwrap_or("1".to_string())
-    .parse::<f32>()
-    .unwrap();
+  // エミュレータがテーブル作成を受け付けるまでわずかな待機を入れる
+  tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-  sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
+  let endpoint = format!("http://127.0.0.1:{}", port);
+  let channel = Channel::from_shared(endpoint.clone())
+    .expect("invalid endpoint")
+    .connect()
+    .await
+    .expect("failed to connect to emulator");
 
-  let client = create_client(port);
+  let project = "test-project";
+  let instance = "test-instance";
+  let parent = format!("projects/{}/instances/{}", project, instance);
 
-  let journal_table_name = "journal";
-  let journal_aid_index_name = "journal-aid-index";
-  let _journal_table_output = create_journal_table(&client, journal_table_name, journal_aid_index_name).await;
+  let mut table_admin = BigtableTableAdminClient::new(channel.clone());
+  create_table(&mut table_admin, &parent, "journal", &["event"]).await;
+  create_table(&mut table_admin, &parent, "snapshot", &["snapshot"]).await;
 
-  let snapshot_table_name = "snapshot";
-  let snapshot_aid_index_name = "snapshot-aid-index";
-  let _snapshot_table_output = create_snapshot_table(&client, snapshot_table_name, snapshot_aid_index_name).await;
+  // 少し待ってからデータ面へアクセス
+  tokio::time::sleep(std::time::Duration::from_millis(200)).await;
 
-  while !(wait_table(&client, journal_table_name).await) {
-    tracing::info!("Waiting for journal table to be created");
-    sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
-  }
+  let client = BigtableClient::new(channel.clone());
 
-  while !(wait_table(&client, snapshot_table_name).await) {
-    tracing::info!("Waiting for snapshot table to be created");
-    sleep(std::time::Duration::from_millis((1000f32 * test_time_factor) as u64));
-  }
-
-  let mut event_store = EventStoreForDynamoDB::new(
-    client.clone(),
-    journal_table_name.to_string(),
-    journal_aid_index_name.to_string(),
-    snapshot_table_name.to_string(),
-    snapshot_aid_index_name.to_string(),
+  let mut event_store = EventStoreForBigtable::new(
+    client,
+    project.to_string(),
+    instance.to_string(),
+    "journal".to_string(),
+    "snapshot".to_string(),
     64,
-  )
-  .with_keep_snapshot_count(Some(1))
-  .with_delete_ttl(Some(chrono::Duration::seconds(5)));
+  );
 
   let id_value = id_generate();
   let id = UserAccountId {
@@ -265,7 +256,6 @@ async fn test_event_store_on_dynamodb() {
   };
 
   let (user_account, event) = UserAccount::new(id.clone(), "test".to_string());
-  // Persist the event and the snapshot
   event_store
     .persist_event_and_snapshot(&event, &user_account)
     .await
@@ -277,8 +267,6 @@ async fn test_event_store_on_dynamodb() {
   assert_eq!(user_account.version, 1);
 
   let event = user_account.rename("test2").unwrap();
-
-  // Persist the event only.
   event_store.persist_event(&event, user_account.version()).await.unwrap();
 
   let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
@@ -287,8 +275,6 @@ async fn test_event_store_on_dynamodb() {
   assert_eq!(user_account.version, 2);
 
   let event = user_account.rename("test3").unwrap();
-
-  // Persist the event and the snapshot
   event_store
     .persist_event_and_snapshot(&event, &user_account)
     .await
@@ -300,50 +286,33 @@ async fn test_event_store_on_dynamodb() {
   assert_eq!(user_account.version, 3);
 }
 
-#[tokio::test]
-async fn test_event_store_on_memory() {
-  env::set_var("RUST_LOG", "event_store_adapter_rs=debug");
-  init_tracing();
+async fn create_table(client: &mut BigtableTableAdminClient<Channel>, parent: &str, table_id: &str, families: &[&str]) {
+  let mut column_families = std::collections::HashMap::new();
+  for &family in families {
+    column_families.insert(
+      family.to_string(),
+      ColumnFamily {
+        gc_rule: Some(GcRule {
+          rule: Some(gc_rule::Rule::MaxNumVersions(1)),
+        }),
+        ..Default::default()
+      },
+    );
+  }
 
-  let mut event_store = EventStoreForMemory::new();
-
-  let id_value = id_generate();
-  let id = UserAccountId {
-    value: id_value.to_string(),
+  let table = Table {
+    column_families,
+    granularity: table::TimestampGranularity::Millis as i32,
+    ..Default::default()
   };
 
-  let (user_account, event) = UserAccount::new(id.clone(), "test".to_string());
-  // Persist the event and the snapshot
-  event_store
-    .persist_event_and_snapshot(&event, &user_account)
+  client
+    .create_table(CreateTableRequest {
+      parent: parent.to_string(),
+      table_id: table_id.to_string(),
+      table: Some(table),
+      initial_splits: vec![],
+    })
     .await
-    .unwrap();
-
-  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
-  assert_eq!(user_account.name, "test");
-  assert_eq!(user_account.seq_nr, 1);
-  assert_eq!(user_account.version, 1);
-
-  let event = user_account.rename("test2").unwrap();
-
-  // Persist the event only.
-  event_store.persist_event(&event, user_account.version()).await.unwrap();
-
-  let mut user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
-  assert_eq!(user_account.name, "test2");
-  assert_eq!(user_account.seq_nr, 2);
-  assert_eq!(user_account.version, 2);
-
-  let event = user_account.rename("test3").unwrap();
-
-  // Persist the event and the snapshot
-  event_store
-    .persist_event_and_snapshot(&event, &user_account)
-    .await
-    .unwrap();
-
-  let user_account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
-  assert_eq!(user_account.name, "test3");
-  assert_eq!(user_account.seq_nr, 3);
-  assert_eq!(user_account.version, 3);
+    .expect("failed to create table");
 }

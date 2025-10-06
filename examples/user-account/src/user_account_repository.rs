@@ -8,8 +8,8 @@ pub struct UserAccountRepository {
 
 #[derive(Debug)]
 pub enum RepositoryError {
-  OptimisticLockError(String),
-  IOError(String),
+  OptimisticLockError(#[allow(dead_code)] String),
+  IOError(#[allow(dead_code)] String),
 }
 
 impl UserAccountRepository {
