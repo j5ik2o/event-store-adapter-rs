@@ -25,4 +25,4 @@ tracing-subscriber = "0.3"
 tonic = { version = "0.14", features = ["transport"] }
 prost = "0.14"
 googleapis-tonic-google-bigtable-v2 = "0.35.0"
-googleapis-tonic-google-bigtable-admin-v2 = "0.38.0"
+googleapis-tonic-google-bigtable-admin-v2 = "0.39.0"
