@@ -23,7 +23,7 @@
   },
   "statusLine": {
     "type": "command",
-    "command": "bun \"$CLAUDE_PROJECT_DIR/.claude/hooks/aidlc-statusline.ts\""
+    "command": "sh \"$CLAUDE_PROJECT_DIR/.claude/hooks/statusline-combined.sh\""
   },
   "env": {
     "BASH_MAX_OUTPUT_LENGTH": "10000",
