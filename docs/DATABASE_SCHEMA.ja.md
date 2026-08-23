@@ -47,3 +47,66 @@ aidとseq_nrはGSIが適用されており、リプレイ時はこのインデ�
 1. 集約のIDを指定して、スナップショットを取得します。
 2. 取得した集約のIDとスナップショットのシーケンス番号以降のイベントをjournalテーブルから読み込みます。
 3. 読み込んだイベントをスナップショットに適用することで、最新の集約状態を取得します。
+
+## EventStoreForSqliteが利用するSQLiteのテーブル構成
+
+- journal
+- snapshot
+
+**この節は情報提供です。** テーブルとインデックスはストアの構築時にライブラリが自動作成します（冪等な `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`）。利用者がこのDDLを実行する必要はありません。
+
+キー設計はDynamoDBのテーブルと対応しています。`pkey` / `skey` が書き込みアドレス（`PRIMARY KEY (pkey, skey)`）となり論理シャードへ書き込みを分散し、`(aid, seq_nr)` が集約のリプレイに使う読み込みキーです。
+
+```sql
+CREATE TABLE IF NOT EXISTS journal (
+  pkey TEXT NOT NULL,
+  skey TEXT NOT NULL,
+  aid TEXT NOT NULL,
+  seq_nr INTEGER NOT NULL,
+  payload BLOB NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  PRIMARY KEY (pkey, skey)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS journal_aid_seq_nr_idx ON journal (aid, seq_nr);
+CREATE TABLE IF NOT EXISTS snapshot (
+  pkey TEXT NOT NULL,
+  skey TEXT NOT NULL,
+  aid TEXT NOT NULL,
+  seq_nr INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  payload BLOB NOT NULL,
+  last_updated_at INTEGER NOT NULL,
+  PRIMARY KEY (pkey, skey)
+);
+CREATE INDEX IF NOT EXISTS snapshot_aid_seq_nr_idx ON snapshot (aid, seq_nr);
+```
+
+### journalテーブル（SQLite）
+
+| 列名 | 型 | 説明 |
+|:-----|:---|:-----|
+| pkey | TEXT | パーティションキー（集約種別名-hash(集約ID) % シャード数）— 書き込み分散キー。主キーの一部 |
+| skey | TEXT | ソートキー（集約種別名-集約IDの値部分-シーケンス番号）— 主キーの一部 |
+| aid | TEXT | 集約ID |
+| seq_nr | INTEGER | シーケンス番号（開始番号は1） |
+| payload | BLOB | イベント内容（デフォルトではJSONシリアライズ） |
+| occurred_at | INTEGER | イベントの発生日時（Unixエポックミリ秒） |
+
+`(aid, seq_nr)` のユニークインデックスがDynamoDBのGSIに相当し、リプレイ時に利用されます。
+
+### snapshotテーブル（SQLite）
+
+| 列名 | 型 | 説明 |
+|:-----|:---|:-----|
+| pkey | TEXT | パーティションキー（集約種別名-hash(集約ID) % シャード数）— 書き込み分散キー。主キーの一部 |
+| skey | TEXT | ソートキー（集約種別名-集約IDの値部分-シーケンス番号）。最新のスナップショットはシーケンス番号=0として読み書きされます |
+| aid | TEXT | 集約ID |
+| seq_nr | INTEGER | シーケンス番号（現行スロット行は0を維持し、履歴行は集約のseq_nrを持ちます） |
+| version | INTEGER | バージョン（楽観的ロック用。開始番号は1） |
+| payload | BLOB | 集約の状態（デフォルトではJSONシリアライズ） |
+| last_updated_at | INTEGER | 最終更新日時（Unixエポックミリ秒）。スナップショット保持TTLの判定にも使用 |
+
+`(aid, seq_nr)` のインデックスがリプレイ時に利用されます。
+
+- 楽観的ロックの検証と書き込みは単一のSQLiteトランザクション内で行われます。journalへの挿入とsnapshotの条件付き更新（`WHERE version = expected`）は、まとめてコミットまたはまとめてロールバックされます。バージョン不一致は `OptimisticLockError` として返されます。
+- スナップショット保持（`with_keep_snapshot_count` / `with_delete_ttl`）が有効な場合、seq_nr=0のスロットに加えて履歴スナップショット行（seq_nr > 0）が挿入され、上限超過・期限切れの履歴行は各永続化の後にクライアント主導で削除されます。DynamoDBと異なりストレージ側のTTL機構はないため、削除は常にライブラリが行います。

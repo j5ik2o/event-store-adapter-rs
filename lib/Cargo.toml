@@ -2,7 +2,7 @@
 name = "event-store-adapter-rs"
 version = "1.3.18"
 
-description = "crate to make DynamoDB an Event Store"
+description = "Event Store adapter for CQRS/Event Sourcing with DynamoDB, Bigtable, SQLite and in-memory backends"
 authors = ["Junichi Kato <j5ik2o@gmail.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
