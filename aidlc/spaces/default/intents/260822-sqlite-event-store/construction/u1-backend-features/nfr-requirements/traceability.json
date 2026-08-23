@@ -1,0 +1,12 @@
+{
+  "stage": "nfr-requirements",
+  "unit": "u1-backend-features",
+  "upstream_ids": ["NFR-1", "NFR-2", "NFR-3", "NFR-4", "NFR-5"],
+  "coverage": [
+    { "id": "NFR-1", "status": "OK", "target": "NFR-1.1, NFR-1.2 (tech-stack-decisions.md)" },
+    { "id": "NFR-2", "status": "OK", "target": "NFR-2.1, NFR-2.2 (security-requirements.md)" },
+    { "id": "NFR-3", "status": "OK", "target": "NFR-3.1 (tech-stack-decisions.md)" },
+    { "id": "NFR-4", "status": "OK", "target": "NFR-4.1, NFR-4.2, NFR-4.3, NFR-4.4 (security-requirements.md)" },
+    { "id": "NFR-5", "status": "N/A", "target": "SQLite関連テストはU2で導入するためU1では対象外。既存テストの緑維持はBR1.9（rules.md）が担う" }
+  ]
+}

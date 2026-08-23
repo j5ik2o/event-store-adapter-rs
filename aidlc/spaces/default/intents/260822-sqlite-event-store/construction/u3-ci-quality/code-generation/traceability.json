@@ -1,0 +1,16 @@
+{
+  "stage": "code-generation",
+  "unit": "u3-ci-quality",
+  "upstream_ids": ["AC3.3.1", "AC3.3.2", "AC3.3.3", "NFR-2.5", "NFR-2.6", "NFR-3.3", "NFR-4.9", "NFR-4.10", "NFR-4.11"],
+  "coverage": [
+    { "id": "AC3.3.1", "status": "OK", "target": ".github/workflows/ci.yml" },
+    { "id": "AC3.3.2", "status": "OK", "target": ".github/workflows/ci.yml" },
+    { "id": "AC3.3.3", "status": "OK", "target": "deny.toml" },
+    { "id": "NFR-2.5", "status": "OK", "target": "deny.toml" },
+    { "id": "NFR-2.6", "status": "OK", "target": ".github/workflows/ci.yml" },
+    { "id": "NFR-3.3", "status": "OK", "target": ".github/workflows/ci.yml" },
+    { "id": "NFR-4.9", "status": "OK", "target": ".github/workflows/ci.yml" },
+    { "id": "NFR-4.10", "status": "OK", "target": ".github/workflows/ci.yml" },
+    { "id": "NFR-4.11", "status": "OK", "target": ".github/workflows/ci.yml" }
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "stage": "infrastructure-design",
+  "unit": "u3-ci-quality",
+  "upstream_ids": ["NFR-2.5", "NFR-2.6", "NFR-3.3", "NFR-4.9", "NFR-4.10", "NFR-4.11"],
+  "coverage": [
+    { "id": "NFR-2.5", "status": "OK", "target": "auditジョブ＋deny.toml（cicd-pipeline.md 変更後のパイプライン／infrastructure-specification.md ジョブ構成）" },
+    { "id": "NFR-2.6", "status": "OK", "target": "feature-matrixジョブの6構成＋cargo tree検査（cicd-pipeline.md — Q1=Aのビルド/テスト分担を含む）" },
+    { "id": "NFR-3.3", "status": "OK", "target": "feature-matrixジョブ — 全6構成のビルド成立検証（cicd-pipeline.md）" },
+    { "id": "NFR-4.9", "status": "OK", "target": "clippyジョブ（cicd-pipeline.md／infrastructure-specification.md）" },
+    { "id": "NFR-4.10", "status": "OK", "target": "feature-matrix内のunsafe grepステップ（cicd-pipeline.md 引き渡し対応表）" },
+    { "id": "NFR-4.11", "status": "OK", "target": "シークレット追加なし・失敗顕在化・ignoreの理由コメント必須（cicd-pipeline.md／monitoring-design.md）" }
+  ]
+}

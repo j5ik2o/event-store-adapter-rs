@@ -1,0 +1,12 @@
+{
+  "stage": "nfr-requirements",
+  "unit": "u2-sqlite-backend",
+  "upstream_ids": ["NFR-1", "NFR-2", "NFR-3", "NFR-4", "NFR-5"],
+  "coverage": [
+    { "id": "NFR-1", "status": "OK", "target": "NFR-1.3 (tech-stack-decisions.md — 公開面の追加的変更のみ)" },
+    { "id": "NFR-2", "status": "OK", "target": "NFR-2.3, NFR-2.4 (security-requirements.md — rusqlite唯一・供給網追随。RUSTSEC照合のCI恒久化はU3へ委譲〔tech-stack-decisions D7〕)" },
+    { "id": "NFR-3", "status": "OK", "target": "NFR-3.2 (tech-stack-decisions.md — sqlite系featureのビルド互換。CIマトリクス化はU3へ委譲)" },
+    { "id": "NFR-4", "status": "OK", "target": "NFR-4.5, NFR-4.6, NFR-4.7, NFR-4.8 (security-requirements.md。clippy/rustfmtのCI強制はU3の責務)" },
+    { "id": "NFR-5", "status": "OK", "target": "NFR-5.1 (security-requirements.md — Docker不要・決定的・並列安全のテスト環境要件)" }
+  ]
+}

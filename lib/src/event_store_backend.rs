@@ -5,7 +5,6 @@ use async_trait::async_trait;
 use chrono::Duration;
 
 #[derive(Debug, Clone, PartialEq)]
-#[allow(dead_code)]
 pub struct SnapshotEnvelope<A> {
   pub aggregate: A,
   pub seq_nr: usize,

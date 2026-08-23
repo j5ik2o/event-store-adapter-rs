@@ -1,0 +1,16 @@
+{
+  "stage": "nfr-design",
+  "unit": "u2-sqlite-backend",
+  "upstream_ids": ["NFR-1.3", "NFR-2.3", "NFR-2.4", "NFR-3.2", "NFR-4.5", "NFR-4.6", "NFR-4.7", "NFR-4.8", "NFR-5.1"],
+  "coverage": [
+    { "id": "NFR-1.3", "status": "OK", "target": "EventStoreForSqliteファサードの追加的公開面設計（logical-components.md — 既存トレイト不変更・ロック型非露出）" },
+    { "id": "NFR-2.3", "status": "OK", "target": "依存宣言 default-features = false ＋ cargo tree検証手順（security-design.md 依存供給網の設計）" },
+    { "id": "NFR-2.4", "status": "OK", "target": "Renovate追随＋RUSTSEC照合の分担設計（security-design.md — CI恒久化はU3へ委譲）" },
+    { "id": "NFR-3.2", "status": "OK", "target": "sqlite／sqlite-system 各構成のビルド検証手順（security-design.md 検証手順 — CIマトリクス化はU3へ委譲）" },
+    { "id": "NFR-4.5", "status": "OK", "target": "エラー写像の一元化ヘルパー設計と写像決定表（security-design.md panic排除とエラー写像設計）" },
+    { "id": "NFR-4.6", "status": "OK", "target": "Arc<Mutex<Connection>>内部隠蔽による自動導出設計＋grep検証（security-design.md スレッド安全設計）" },
+    { "id": "NFR-4.7", "status": "OK", "target": "メッセージ衛生規則 — BR1.2書式限定・パス/生エラー非混入（security-design.md）" },
+    { "id": "NFR-4.8", "status": "OK", "target": "機密リテラル禁止＋grep検証（security-design.md 機密情報の取り扱い）" },
+    { "id": "NFR-5.1", "status": "OK", "target": ":memory:／一時ディレクトリ一意名によるDocker不要テスト設計（security-design.md テスト環境衛生）" }
+  ]
+}

@@ -2,7 +2,7 @@
 name = "event-store-adapter-rs"
 version = "1.4.0"
 
-description = "crate to make DynamoDB an Event Store"
+description = "Event Store adapter for CQRS/Event Sourcing with DynamoDB, Bigtable, SQLite and in-memory backends"
 authors = ["Junichi Kato <j5ik2o@gmail.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
@@ -13,23 +13,33 @@ repository = "https://github.com/j5ik2o/event-store-adapter-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# default features are empty, so docs.rs must opt into every backend to document them
+[package.metadata.docs.rs]
+all-features = true
+
+[features]
+default = []
+dynamodb = ["dep:aws-config", "dep:aws-sdk-dynamodb"]
+bigtable = ["dep:tonic", "dep:googleapis-tonic-google-bigtable-v2"]
+sqlite = ["dep:rusqlite", "rusqlite/bundled"]
+sqlite-system = ["dep:rusqlite"]
+
 [dependencies]
 thiserror = { workspace = true }
 async-trait = { workspace = true }
-aws-config = { workspace = true, features = ["behavior-version-latest"] }
-aws-sdk-dynamodb = { workspace = true }
-aws-http = { workspace = true }
+aws-config = { workspace = true, features = ["behavior-version-latest"], optional = true }
+aws-sdk-dynamodb = { workspace = true, optional = true }
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 tracing = { workspace = true }
-tonic = { workspace = true }
-googleapis-tonic-google-bigtable-v2 = { workspace = true }
+tonic = { workspace = true, optional = true }
+googleapis-tonic-google-bigtable-v2 = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
 testcontainers = { workspace = true }
-serial_test = { workspace = true }
 once_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 event-store-adapter-test-utils-rs = { path = "../test-utils" }

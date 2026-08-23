@@ -47,3 +47,66 @@ This table is used to store aggregate state and to speed up replay of aggregates
 1. Specify the ID of the aggregate and take a snapshot.
 2. Read the events from the journal table after the ID of the retrieved aggregate and the sequence number of the snapshot.
 3. Apply the read events to the snapshot to obtain the latest aggregate state.
+
+## SQLite table schema used by EventStoreForSqlite
+
+- journal
+- snapshot
+
+**This section is informational.** The tables and indexes are created automatically by the library when the store is constructed (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`); you never run this DDL yourself.
+
+The key design mirrors the DynamoDB tables: `pkey` / `skey` form the write address (`PRIMARY KEY (pkey, skey)`) and distribute writes across logical shards, while `(aid, seq_nr)` is the read key used to replay an aggregate.
+
+```sql
+CREATE TABLE IF NOT EXISTS journal (
+  pkey TEXT NOT NULL,
+  skey TEXT NOT NULL,
+  aid TEXT NOT NULL,
+  seq_nr INTEGER NOT NULL,
+  payload BLOB NOT NULL,
+  occurred_at INTEGER NOT NULL,
+  PRIMARY KEY (pkey, skey)
+);
+CREATE UNIQUE INDEX IF NOT EXISTS journal_aid_seq_nr_idx ON journal (aid, seq_nr);
+CREATE TABLE IF NOT EXISTS snapshot (
+  pkey TEXT NOT NULL,
+  skey TEXT NOT NULL,
+  aid TEXT NOT NULL,
+  seq_nr INTEGER NOT NULL,
+  version INTEGER NOT NULL,
+  payload BLOB NOT NULL,
+  last_updated_at INTEGER NOT NULL,
+  PRIMARY KEY (pkey, skey)
+);
+CREATE INDEX IF NOT EXISTS snapshot_aid_seq_nr_idx ON snapshot (aid, seq_nr);
+```
+
+### journal table (SQLite)
+
+| column name | type | description |
+|:------------|:-----|:------------|
+| pkey | TEXT | Partition key (`${aggregate-type-name}-hash($aid) % shard-count`) — write-distribution key, part of the primary key |
+| skey | TEXT | Sort key (`${aggregate-type-name}-${aid.value}-${seq_nr}`) — part of the primary key |
+| aid | TEXT | Aggregate ID |
+| seq_nr | INTEGER | Sequence number (origin=1) |
+| payload | BLOB | Event payload (serialized JSON by default) |
+| occurred_at | INTEGER | Occurred datetime of the event in Unix epoch milliseconds |
+
+A unique index on `(aid, seq_nr)` plays the role of the DynamoDB GSI and is used during replay.
+
+### snapshot table (SQLite)
+
+| column name | type | description |
+|:------------|:-----|:------------|
+| pkey | TEXT | Partition key (`${aggregate-type-name}-hash($aid) % shard-count`) — write-distribution key, part of the primary key |
+| skey | TEXT | Sort key (`${aggregate-type-name}-${aid.value}-${seq_nr}`); the latest snapshot is read/written as seq_nr=0 | 
+| aid | TEXT | Aggregate ID |
+| seq_nr | INTEGER | Sequence number (the current-slot row keeps 0; history rows keep the aggregate's seq_nr) |
+| version | INTEGER | Version for optimistic locking (origin=1) |
+| payload | BLOB | State of the aggregate (serialized JSON by default) |
+| last_updated_at | INTEGER | Last updated datetime in Unix epoch milliseconds; also used to evaluate the snapshot retention TTL |
+
+An index on `(aid, seq_nr)` is used during replay.
+
+- Optimistic-lock verification and writes happen inside a single SQLite transaction: the journal insert and the conditional snapshot update (`WHERE version = expected`) either commit together or roll back together. A version mismatch is returned as `OptimisticLockError`.
+- When snapshot retention is enabled via `with_keep_snapshot_count`, history snapshot rows (seq_nr > 0) are inserted in addition to the seq_nr=0 slot, and excess/expired history rows are deleted client-initiated after each persist. `with_delete_ttl` takes effect only when a retention count is also configured (contract-symmetric with the DynamoDB backend); on its own it records no history. Unlike DynamoDB there is no storage-side TTL; the deletion is always performed by the library.

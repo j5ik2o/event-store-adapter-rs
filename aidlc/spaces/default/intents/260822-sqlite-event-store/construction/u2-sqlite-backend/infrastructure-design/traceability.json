@@ -1,0 +1,16 @@
+{
+  "stage": "infrastructure-design",
+  "unit": "u2-sqlite-backend",
+  "upstream_ids": ["NFR-1.3", "NFR-2.3", "NFR-2.4", "NFR-3.2", "NFR-4.5", "NFR-4.6", "NFR-4.7", "NFR-4.8", "NFR-5.1"],
+  "coverage": [
+    { "id": "NFR-1.3", "status": "N/A", "target": "公開面の追加的変更はコード設計事項（nfr-design/logical-components.md）でありパイプライン資源を要さない" },
+    { "id": "NFR-2.3", "status": "OK", "target": "hashlink不在検査のU3引き渡し要求仕様（cicd-pipeline.md — U2時点はsecurity-design.mdの手動cargo tree手順、CI恒久化はU3へ委譲）" },
+    { "id": "NFR-2.4", "status": "OK", "target": "RUSTSEC照合のU3引き渡し（cicd-pipeline.md ステージ→ゲート対応 — Renovate追随は既存運用のまま）" },
+    { "id": "NFR-3.2", "status": "OK", "target": "sqlite系2構成のマトリクス追加のU3引き渡し要求仕様（cicd-pipeline.md）" },
+    { "id": "NFR-4.5", "status": "OK", "target": "既存test-lib（--all-features）によるsqliteテストのCI実行（cicd-pipeline.md U2での変更 — エラー契約テストがCIに乗る）" },
+    { "id": "NFR-4.6", "status": "OK", "target": "unsafe不在grepを本書のU3引き渡し要求仕様に新規追加（cicd-pipeline.md 項目4 — U1・U2の従来引き渡しリストに未列挙だったためU2完了時点で追加）" },
+    { "id": "NFR-4.7", "status": "N/A", "target": "メッセージ衛生はコード設計事項（nfr-design/security-design.md）でありパイプライン資源を要さない" },
+    { "id": "NFR-4.8", "status": "OK", "target": "CI/CDの資格情報構成不変・新規シークレット追加なし（cicd-pipeline.md U2での変更）" },
+    { "id": "NFR-5.1", "status": "OK", "target": "Docker不要のsqliteテストが既存CIランナーでそのまま実行可能（cicd-pipeline.md — ユニットスコープ実行コマンドのU3引き渡し）" }
+  ]
+}

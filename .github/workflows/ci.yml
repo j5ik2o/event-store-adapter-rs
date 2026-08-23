@@ -26,4 +26,81 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - run: cargo test --verbose -p event-store-adapter-rs
+      - run: cargo test --verbose -p event-store-adapter-rs --all-features
+  feature-matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # Docker-free configurations run build + tests; the Docker-backed
+          # integration tests (dynamodb / bigtable / all-features) stay in
+          # test-lib, so those configurations are build-only here.
+          - name: no-features
+            flags: --no-default-features
+            mode: test
+          - name: sqlite
+            flags: --no-default-features --features sqlite
+            mode: test
+          - name: sqlite-system
+            flags: --no-default-features --features sqlite-system
+            mode: test
+            system-sqlite: true
+          - name: dynamodb
+            flags: --no-default-features --features dynamodb
+            mode: build
+          - name: bigtable
+            flags: --no-default-features --features bigtable
+            mode: build
+          - name: all-features
+            flags: --all-features
+            mode: build
+    name: feature-matrix (${{ matrix.name }})
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - if: matrix.system-sqlite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - if: matrix.mode == 'build'
+        run: cargo build --verbose -p event-store-adapter-rs ${{ matrix.flags }}
+      - if: matrix.mode == 'test'
+        run: cargo test --verbose -p event-store-adapter-rs ${{ matrix.flags }}
+      - name: cloud SDKs must be absent without features
+        if: matrix.name == 'no-features'
+        run: |
+          if cargo tree -p event-store-adapter-rs -e normal --no-default-features | grep -E "aws-|tonic|googleapis"; then
+            echo "cloud SDK crates leaked into the featureless dependency graph"
+            exit 1
+          fi
+      - name: hashlink must be absent from the sqlite graph
+        if: matrix.name == 'sqlite'
+        run: |
+          if cargo tree -p event-store-adapter-rs -e normal --no-default-features --features sqlite | grep hashlink; then
+            echo "hashlink leaked into the sqlite dependency graph"
+            exit 1
+          fi
+      - name: no hand-written unsafe impl
+        if: matrix.name == 'no-features'
+        run: |
+          if grep -rn "unsafe impl" lib/src/; then
+            echo "hand-written unsafe impl Send/Sync is forbidden"
+            exit 1
+          fi
+  clippy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+  audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses

@@ -1,0 +1,29 @@
+{
+  "stage": "domain-design",
+  "upstream_ids": ["US1.1", "US1.2", "US1.3", "US1.4", "US2.1", "US2.2", "US2.3", "US3.1", "US3.2", "US3.3", "US4.1", "US4.2"],
+  "coverage": [
+    { "id": "US1.1", "status": "OK", "target": "SqliteBackend, StorageAbstraction" },
+    { "id": "US1.2", "status": "OK", "target": "SqliteBackend, CoreTypes" },
+    { "id": "US1.3", "status": "OK", "target": "SqliteBackend" },
+    { "id": "US1.4", "status": "OK", "target": "SqliteBackend, StorageAbstraction" },
+    { "id": "US2.1", "status": "OK", "target": "DynamoDbBackend, BigtableBackend, SqliteBackend, MemoryBackend" },
+    { "id": "US2.2", "status": "OK", "target": "CoreTypes" },
+    { "id": "US2.3", "status": "OK", "target": "SqliteBackend" },
+    { "id": "US3.1", "status": "OK", "target": "MemoryBackend, StorageAbstraction" },
+    { "id": "US3.2", "status": "OK", "target": "TestSupport" },
+    { "id": "US3.3", "status": "Deferred", "target": "ci-pipeline" },
+    { "id": "US4.1", "status": "Deferred", "target": "code-generation" },
+    { "id": "US4.2", "status": "Deferred", "target": "code-generation" }
+  ],
+  "reverse": [
+    { "id": "CoreTypes", "status": "OK", "target": "US2.2, US1.2" },
+    { "id": "StorageAbstraction", "status": "OK", "target": "US1.1, US1.4, US3.1" },
+    { "id": "SqliteBackend", "status": "OK", "target": "US1.1, US1.2, US1.3, US1.4, US2.3" },
+    { "id": "MemoryBackend", "status": "OK", "target": "US3.1" },
+    { "id": "DynamoDbBackend", "status": "OK", "target": "US2.1" },
+    { "id": "BigtableBackend", "status": "OK", "target": "US2.1" },
+    { "id": "KeyResolver", "status": "N/A", "target": "既存共用コンポーネント（変更なし。特定ストーリーに帰属しない横断基盤）" },
+    { "id": "Serialization", "status": "N/A", "target": "既存共用コンポーネント（変更なし。特定ストーリーに帰属しない横断基盤）" },
+    { "id": "TestSupport", "status": "OK", "target": "US3.2" }
+  ]
+}
