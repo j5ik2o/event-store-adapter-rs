@@ -97,7 +97,8 @@ where
     })
   }
 
-  /// Sets the number of snapshots to keep and returns the updated store.
+  /// Sets the number of historical snapshots to keep and returns the updated store.
+  /// `Some(0)` keeps no history rows: existing ones are pruned and new ones are not inserted.
   pub fn with_keep_snapshot_count(mut self, keep_snapshot_count: Option<usize>) -> Self {
     self.inner = self.inner.with_keep_snapshot_count(keep_snapshot_count);
     self
@@ -110,6 +111,7 @@ where
   }
 
   /// Sets the shard count used to resolve partition keys and returns the updated store.
+  /// Zero is rejected at write time with a neutral store error (key resolution would divide by zero).
   pub fn with_shard_count(mut self, shard_count: u64) -> Self {
     self.inner.backend_mut().set_shard_count(shard_count);
     self
@@ -246,6 +248,17 @@ where
     self.key_resolver.resolve_partition_key(id, self.shard_count)
   }
 
+  // shard_count=0 はキー解決（hash % shard_count）がゼロ除算でpanicするため、
+  // キー解決前に中立エラーで拒否する（panic禁止のエラー契約を維持）
+  fn ensure_shard_count(&self) -> Result<(), EventStoreWriteError> {
+    if self.shard_count == 0 {
+      return Err(EventStoreWriteError::OtherError(
+        "shard_count must be greater than zero".to_string(),
+      ));
+    }
+    Ok(())
+  }
+
   fn resolve_skey(&self, id: &AID, seq_nr: usize) -> String {
     self.key_resolver.resolve_sort_key(id, seq_nr)
   }
@@ -338,6 +351,7 @@ where
     aggregate: &A,
     maintenance: &SnapshotMaintenance,
   ) -> Result<(), EventStoreWriteError> {
+    self.ensure_shard_count()?;
     let aid = event.aggregate_id();
     let aid_string = aid.to_string();
     let pkey = self.resolve_pkey(aid);
@@ -387,7 +401,8 @@ where
       expected_version,
     )?;
     // 保持設定時は履歴スナップショット行（skey=実seq_nr）も同一トランザクションで挿入する
-    if maintenance.keep_snapshot_count.is_some() {
+    // （保持数0は履歴を持たない設定のため挿入しない）
+    if maintenance.keep_snapshot_count.is_some_and(|count| count > 0) {
       execute_write_mapping_conflict(
         &tx,
         INSERT_SNAPSHOT_SQL,
@@ -414,6 +429,7 @@ where
     expected_version: usize,
     maintenance: &SnapshotMaintenance,
   ) -> Result<(), EventStoreWriteError> {
+    self.ensure_shard_count()?;
     let aid = event.aggregate_id();
     let aid_string = aid.to_string();
     let pkey = self.resolve_pkey(aid);
@@ -474,7 +490,12 @@ where
       &aid_string,
       expected_version,
     )?;
-    if let (Some(aggregate), Some(payload), Some(_)) = (aggregate, &snapshot_payload, maintenance.keep_snapshot_count) {
+    // 保持数0は履歴を持たない設定のため履歴行を挿入しない
+    if let (Some(aggregate), Some(payload), Some(_)) = (
+      aggregate,
+      &snapshot_payload,
+      maintenance.keep_snapshot_count.filter(|count| *count > 0),
+    ) {
       execute_write_mapping_conflict(
         &tx,
         INSERT_SNAPSHOT_SQL,
@@ -495,10 +516,11 @@ where
   }
 
   async fn on_event_persisted(&self, aid: &AID, maintenance: &SnapshotMaintenance) -> Result<(), EventStoreWriteError> {
-    // 保持ポリシーの実行点（BR2.7）。keep_snapshot_count 未設定なら何もしない
+    // 保持ポリシーの実行点（BR2.7）。keep_snapshot_count 未設定なら何もしない。
+    // 保持数0は「履歴を残さない」設定として全履歴行を剪定し、delete_ttl も併せて適用する
     let keep_snapshot_count = match maintenance.keep_snapshot_count {
-      Some(count) if count > 0 => count,
-      _ => return Ok(()),
+      Some(count) => count,
+      None => return Ok(()),
     };
     let aid_string = aid.to_string();
     let expiration_cutoff = maintenance

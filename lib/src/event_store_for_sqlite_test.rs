@@ -293,3 +293,45 @@ async fn test_event_store_on_sqlite_write_failure_returns_neutral_error() {
     other => panic!("expected IOError, got {:?}", other.map(|_| "Ok(store)")),
   }
 }
+
+#[tokio::test]
+async fn test_event_store_on_sqlite_snapshot_retention_zero() {
+  let db = TempDb::new();
+  let id = UserAccountId::new(id_generate().to_string());
+  {
+    // keep_snapshot_count=0 は「履歴を残さない」設定: 履歴行は挿入されず、既存分も剪定される
+    let mut event_store = new_file_event_store(&db.path).with_keep_snapshot_count(Some(0));
+    let (user_account, created) = UserAccount::new(id.clone(), "test".to_string());
+    event_store
+      .persist_event_and_snapshot(&created, &user_account)
+      .await
+      .unwrap();
+    let mut account = find_by_id(&mut event_store, &id).await.unwrap().unwrap();
+    let event = account.rename("renamed-once").unwrap();
+    event_store.persist_event_and_snapshot(&event, &account).await.unwrap();
+  }
+
+  let (slot_count, history_seq_nrs) = count_snapshot_rows(&db.path, &id);
+  // 現行スロット行（seq_nr=0）は保持し続ける
+  assert_eq!(slot_count, 1);
+  // 履歴行（seq_nr > 0）は一切残らない
+  assert!(history_seq_nrs.is_empty());
+}
+
+#[tokio::test]
+async fn test_event_store_on_sqlite_zero_shard_count_returns_neutral_error() {
+  // shard_count=0 はキー解決のゼロ除算panicではなく、バックエンド中立なエラーで拒否される
+  let mut event_store: EventStoreForSqlite<UserAccountId, UserAccount, UserAccountEvent> =
+    EventStoreForSqlite::new_in_memory()
+      .expect("failed to open in-memory sqlite event store")
+      .with_shard_count(0);
+  let (user_account, created) = UserAccount::new(UserAccountId::new(id_generate().to_string()), "test".to_string());
+
+  let result = event_store.persist_event_and_snapshot(&created, &user_account).await;
+  match result {
+    Err(EventStoreWriteError::OtherError(message)) => {
+      assert!(message.contains("shard_count"));
+    }
+    other => panic!("expected OtherError, got {:?}", other),
+  }
+}
