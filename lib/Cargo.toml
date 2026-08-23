@@ -17,8 +17,8 @@ repository = "https://github.com/j5ik2o/event-store-adapter-rs"
 default = []
 dynamodb = ["dep:aws-config", "dep:aws-sdk-dynamodb"]
 bigtable = ["dep:tonic", "dep:googleapis-tonic-google-bigtable-v2"]
-# U1では器のみ（rusqlite依存とsqlite実装はU2で追加）
-sqlite = []
+sqlite = ["dep:rusqlite", "rusqlite/bundled"]
+sqlite-system = ["dep:rusqlite"]
 
 [dependencies]
 thiserror = { workspace = true }
@@ -31,6 +31,7 @@ serde_json = { workspace = true }
 tracing = { workspace = true }
 tonic = { workspace = true, optional = true }
 googleapis-tonic-google-bigtable-v2 = { workspace = true, optional = true }
+rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
