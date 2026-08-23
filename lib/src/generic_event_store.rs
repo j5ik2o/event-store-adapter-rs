@@ -43,6 +43,8 @@ where
     self
   }
 
+  // シリアライザ等のセッタを持つバックエンドのファサードだけが使う（U2でsqliteが加わる）
+  #[cfg(any(feature = "dynamodb", feature = "bigtable"))]
   pub fn backend_mut(&mut self) -> &mut B {
     &mut self.backend
   }
