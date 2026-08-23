@@ -317,8 +317,8 @@ mod tests {
         state
           .events
           .iter()
-          .cloned()
           .filter(|event| event.seq_nr() >= seq_nr)
+          .cloned()
           .collect(),
       )
     }
