@@ -13,6 +13,10 @@ repository = "https://github.com/j5ik2o/event-store-adapter-rs"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+# default features are empty, so docs.rs must opt into every backend to document them
+[package.metadata.docs.rs]
+all-features = true
+
 [features]
 default = []
 dynamodb = ["dep:aws-config", "dep:aws-sdk-dynamodb"]

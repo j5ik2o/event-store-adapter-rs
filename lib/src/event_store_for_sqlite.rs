@@ -105,6 +105,9 @@ where
   }
 
   /// Sets the retention period for historical snapshots and returns the updated store.
+  /// Takes effect only when `with_keep_snapshot_count` is also configured (contract-symmetric
+  /// with the DynamoDB backend); without a count, no history rows are recorded and this
+  /// setting has no effect.
   pub fn with_delete_ttl(mut self, delete_ttl: Option<Duration>) -> Self {
     self.inner = self.inner.with_delete_ttl(delete_ttl);
     self

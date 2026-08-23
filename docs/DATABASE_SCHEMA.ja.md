@@ -109,4 +109,4 @@ CREATE INDEX IF NOT EXISTS snapshot_aid_seq_nr_idx ON snapshot (aid, seq_nr);
 `(aid, seq_nr)` のインデックスがリプレイ時に利用されます。
 
 - 楽観的ロックの検証と書き込みは単一のSQLiteトランザクション内で行われます。journalへの挿入とsnapshotの条件付き更新（`WHERE version = expected`）は、まとめてコミットまたはまとめてロールバックされます。バージョン不一致は `OptimisticLockError` として返されます。
-- スナップショット保持（`with_keep_snapshot_count` / `with_delete_ttl`）が有効な場合、seq_nr=0のスロットに加えて履歴スナップショット行（seq_nr > 0）が挿入され、上限超過・期限切れの履歴行は各永続化の後にクライアント主導で削除されます。DynamoDBと異なりストレージ側のTTL機構はないため、削除は常にライブラリが行います。
+- スナップショット保持は `with_keep_snapshot_count` で有効になり、seq_nr=0のスロットに加えて履歴スナップショット行（seq_nr > 0）が挿入され、上限超過・期限切れの履歴行は各永続化の後にクライアント主導で削除されます。`with_delete_ttl` は保持数が設定されている場合にのみ効果を持ちます（DynamoDBバックエンドと対称の契約 — 単独設定では履歴が記録されません）。DynamoDBと異なりストレージ側のTTL機構はないため、削除は常にライブラリが行います。
