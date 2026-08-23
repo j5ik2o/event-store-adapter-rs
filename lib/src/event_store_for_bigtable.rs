@@ -18,8 +18,7 @@ use crate::generic_event_store::GenericEventStore;
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
 use crate::types::{
-  Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
-  TransactionCanceledExceptionWrapper,
+  format_optimistic_lock_message, Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
 };
 
 const EVENT_FAMILY: &str = "event";
@@ -475,7 +474,11 @@ where
       })?;
     if snapshot.version != expected_version {
       return Err(EventStoreWriteError::OptimisticLockError(
-        TransactionCanceledExceptionWrapper(None),
+        format_optimistic_lock_message(
+          &event.aggregate_id().to_string(),
+          expected_version,
+          Some(snapshot.version),
+        ),
       ));
     }
 
@@ -560,9 +563,9 @@ impl RowAccumulator {
       self.key.clear();
       return None;
     }
-    let key = std::mem::take(&mut self.key);
+    self.key.clear();
     let cells = std::mem::take(&mut self.cells);
-    Some(RowData { key, cells })
+    Some(RowData { cells })
   }
 
   fn reset(&mut self) {
@@ -575,7 +578,6 @@ impl RowAccumulator {
 }
 
 struct RowData {
-  key: Vec<u8>,
   cells: HashMap<(String, Vec<u8>), Vec<u8>>,
 }
 
@@ -608,20 +610,4 @@ fn parse_usize(bytes: &[u8]) -> Result<usize, EventStoreReadError> {
   let s = std::str::from_utf8(bytes).map_err(|err| EventStoreReadError::OtherError(err.to_string()))?;
   s.parse::<usize>()
     .map_err(|err| EventStoreReadError::OtherError(err.to_string()))
-}
-
-unsafe impl<AID, A, E> Sync for EventStoreForBigtable<AID, A, E>
-where
-  AID: AggregateId,
-  A: Aggregate<ID = AID>,
-  E: Event<AggregateID = AID>,
-{
-}
-
-unsafe impl<AID, A, E> Send for EventStoreForBigtable<AID, A, E>
-where
-  AID: AggregateId,
-  A: Aggregate<ID = AID>,
-  E: Event<AggregateID = AID>,
-{
 }

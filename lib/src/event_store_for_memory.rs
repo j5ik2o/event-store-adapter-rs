@@ -6,8 +6,7 @@ use async_trait::async_trait;
 use tracing::instrument;
 
 use crate::types::{
-  Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
-  TransactionCanceledExceptionWrapper,
+  format_optimistic_lock_message, Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
 };
 
 /// Event Store for On-Memory
@@ -42,7 +41,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       .ok_or_else(|| EventStoreWriteError::OtherError(aid.clone()))?;
     if snapshot.version() != version {
       return Err(EventStoreWriteError::OptimisticLockError(
-        TransactionCanceledExceptionWrapper(None),
+        format_optimistic_lock_message(&aid, version, Some(snapshot.version())),
       ));
     }
     let new_version = snapshot.version() + 1;
@@ -67,7 +66,7 @@ impl<AID: AggregateId, A: Aggregate<ID = AID>, E: Event<AggregateID = AID>> Even
       let version = snapshot.version();
       if version != aggregate.version() {
         return Err(EventStoreWriteError::OptimisticLockError(
-          TransactionCanceledExceptionWrapper(None),
+          format_optimistic_lock_message(&aid, aggregate.version(), Some(version)),
         ));
       }
       new_version = snapshot.version() + 1;

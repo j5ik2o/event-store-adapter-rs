@@ -16,8 +16,7 @@ use crate::generic_event_store::GenericEventStore;
 use crate::key_resolver::{DefaultKeyResolver, KeyResolver};
 use crate::serializer::{EventSerializer, SnapshotSerializer};
 use crate::types::{
-  Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
-  TransactionCanceledExceptionWrapper,
+  format_optimistic_lock_message, Aggregate, AggregateId, Event, EventStore, EventStoreReadError, EventStoreWriteError,
 };
 
 #[derive(Clone, Debug)]
@@ -513,7 +512,7 @@ where
       );
     }
     let result = builder.send().await;
-    write_error_handling(result)
+    write_error_handling(result, &event.aggregate_id().to_string(), aggregate.version())
   }
 
   async fn update_event_and_snapshot(
@@ -540,7 +539,7 @@ where
       );
     }
     let result = builder.send().await;
-    write_error_handling(result)
+    write_error_handling(result, &event.aggregate_id().to_string(), expected_version)
   }
 
   async fn on_event_persisted(&self, aid: &AID, maintenance: &SnapshotMaintenance) -> Result<(), EventStoreWriteError> {
@@ -580,14 +579,17 @@ where
 
 fn write_error_handling(
   result: Result<TransactWriteItemsOutput, SdkError<TransactWriteItemsError>>,
+  aid: &str,
+  expected_version: usize,
 ) -> Result<(), EventStoreWriteError> {
   match result {
     Ok(_) => Ok(()),
     Err(e) => match e.into_service_error() {
       TransactWriteItemsError::TransactionCanceledException(e) => {
         if !e.cancellation_reasons().is_empty() {
+          // 実バージョンはSDKエラーから判明しないため付加しない（BR1.2の判明分のみ規約）
           Err(EventStoreWriteError::OptimisticLockError(
-            TransactionCanceledExceptionWrapper(Some(e)),
+            format_optimistic_lock_message(aid, expected_version, None),
           ))
         } else {
           Err(EventStoreWriteError::IOError(e.into()))
@@ -596,20 +598,4 @@ fn write_error_handling(
       error => Err(EventStoreWriteError::IOError(error.into())),
     },
   }
-}
-
-unsafe impl<AID, A, E> Sync for EventStoreForDynamoDB<AID, A, E>
-where
-  AID: AggregateId,
-  A: Aggregate<ID = AID>,
-  E: Event<AggregateID = AID>,
-{
-}
-
-unsafe impl<AID, A, E> Send for EventStoreForDynamoDB<AID, A, E>
-where
-  AID: AggregateId,
-  A: Aggregate<ID = AID>,
-  E: Event<AggregateID = AID>,
-{
 }
