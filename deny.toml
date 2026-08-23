@@ -1,0 +1,58 @@
+# cargo-deny configuration (NFR-2.5)
+# Run: cargo deny check advisories licenses
+
+[graph]
+# Scan the full dependency surface including optional feature deps
+# (dynamodb / bigtable / sqlite / sqlite-system), so RUSTSEC advisories
+# for e.g. the bundled SQLite C sources (libsqlite3-sys) are caught.
+all-features = true
+
+[advisories]
+# RUSTSEC advisory matching: any unaddressed advisory fails the check.
+# Entries may only be added here with a reason explaining why the
+# advisory does not apply or what backlog item tracks its resolution.
+#
+# The four entries below share one root cause: aws-smithy-http-client
+# (pulled via aws-config / aws-sdk-dynamodb for the dynamodb feature)
+# still links the legacy rustls 0.21 TLS stack, which pins h2 to 0.3.x
+# and rustls-webpki to 0.101.x. No patched release exists in those major
+# lines (h2 is fixed in >=0.4.16, rustls-webpki in >=0.103.13), so the
+# fix requires migrating the AWS SDK TLS feature set — a dependency
+# change outside U3 (CI quality) scope, tracked as backlog.
+ignore = [
+  { id = "RUSTSEC-2026-0258", reason = "h2 0.3.27 via legacy aws-smithy rustls-0.21 stack; fixed only in h2 >=0.4.16 — AWS SDK TLS migration is backlogged" },
+  { id = "RUSTSEC-2026-0098", reason = "rustls-webpki 0.101.7 via rustls 0.21 (aws-smithy legacy TLS); fixed only in >=0.103.13 — AWS SDK TLS migration is backlogged" },
+  { id = "RUSTSEC-2026-0099", reason = "rustls-webpki 0.101.7 via rustls 0.21 (aws-smithy legacy TLS); fixed only in >=0.103.13 — AWS SDK TLS migration is backlogged" },
+  { id = "RUSTSEC-2026-0104", reason = "rustls-webpki 0.101.7 via rustls 0.21 (aws-smithy legacy TLS); fixed only in >=0.103.13 — AWS SDK TLS migration is backlogged" },
+]
+
+[licenses]
+# Allow-list policy: only the permissive licenses actually present in the
+# current dependency graph are allowed. Copyleft (GPL / AGPL / LGPL) is
+# deliberately not listed, so a future dependency introducing one fails
+# this check and surfaces for review.
+allow = [
+  "MIT",
+  "Apache-2.0",
+  "BSD-2-Clause",
+  "BSD-3-Clause",
+  "ISC",
+  "Unicode-3.0",
+]
+# Workspace-internal crates that are not published by lib-release.yml
+# (only event-store-adapter-rs is) and carry no `license` field of their
+# own; they are covered by the repository's MIT OR Apache-2.0 dual
+# license (LICENSE-MIT / LICENSE-APACHE at the repo root).
+[[licenses.clarify]]
+crate = "event-store-adapter-test-utils-rs"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[[licenses.clarify]]
+crate = "example-user-account"
+expression = "MIT OR Apache-2.0"
+license-files = []
+
+[licenses.private]
+# examples/* set `publish = false`; skip license checks for them.
+ignore = true
