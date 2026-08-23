@@ -1,0 +1,16 @@
+{
+  "stage": "nfr-design",
+  "unit": "u1-backend-features",
+  "upstream_ids": ["NFR-1.1", "NFR-1.2", "NFR-2.1", "NFR-2.2", "NFR-3.1", "NFR-4.1", "NFR-4.2", "NFR-4.3", "NFR-4.4"],
+  "coverage": [
+    { "id": "NFR-1.1", "status": "OK", "target": "公開面の固定（security-design.md スレッド安全設計 — 公開APIはEventStoreForMemory::new()とEventStoreトレイトのみ）と障害ドメイン分析（logical-components.md CoreTypes/MemoryBackend行）" },
+    { "id": "NFR-1.2", "status": "OK", "target": "隠蔽境界の設計（security-design.md — ロック型を公開シグネチャに出さずnew()互換を維持）" },
+    { "id": "NFR-2.1", "status": "OK", "target": "依存供給網の隔離設計＋cargo tree検証手順（security-design.md）" },
+    { "id": "NFR-2.2", "status": "OK", "target": "optional化とdep:列挙によるfeature束ね設計（security-design.md 依存隔離）" },
+    { "id": "NFR-3.1", "status": "OK", "target": "featureマトリクスのビルド検証手順（security-design.md 検証手順 — feature未指定・dynamodb/bigtable/sqlite各単独・全featureのcargo buildコマンド列。CI昇格はU3）" },
+    { "id": "NFR-4.1", "status": "OK", "target": "GenericEventStore共通制御でのErr返却＋エラー写像決定表の設計固定（security-design.md）" },
+    { "id": "NFR-4.2", "status": "OK", "target": "Arc<Mutex>内部隠蔽による自動導出設計＋unsafe grep検証（security-design.md スレッド安全設計）" },
+    { "id": "NFR-4.3", "status": "OK", "target": "機密情報リテラル禁止＋grep検証手順（security-design.md）" },
+    { "id": "NFR-4.4", "status": "OK", "target": "楽観的ロック失敗メッセージの書式固定と衛生規則（security-design.md — 基本形＋actual_version任意付加）" }
+  ]
+}

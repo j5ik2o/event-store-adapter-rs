@@ -1,9 +1,12 @@
-# Team-Level Rules
+# Team Practices — event-store-adapter-rs
 
-> This team's affirmed practices and corrections. Loaded after `org.md` as
-> strict-additive guidance; contradictions with broader policy are rejected.
-> Populated by the practices-discovery affirmation gate. Edit at the gate,
-> not directly.
+> practices-discovery ステージの確定版。ソロメンテナーOSS Rustクレートの
+> Git履歴・CI設定・コードスタイル設定・リバースエンジニアリング成果物
+> （`aidlc/spaces/default/codekb/sqlite/code-structure.md`,
+> `technology-stack.md`, `dependencies.md`, `code-quality-assessment.md`,
+> `architecture.md`, `business-overview.md`）から推定した実務慣行に、
+> quality/developer/devsecops 3エージェントの検分と人間インタビュー
+> （Q1〜Q8）の回答を統合した最終版。
 
 ## Way of Working
 
@@ -36,6 +39,11 @@ org.md既定どおり `main` です。
 付けを行い、それをトリガーに `lib-release.yml` が crates.io へ publish します。
 すなわち「mainへのマージ = 次リリース候補の自動生成」という運用です。この
 自動バンプ・自動タグの仕組みは今回の作業でも変更しません（詳細は
+## Deployment 参照）。
+
+今回の作業（SQLiteバックエンド追加 + feature分割）でも、既存の
+マージコミット方式・Conventional Commits・タグ駆動リリースを踏襲します。
+
 ## Walking Skeleton
 
 **インタビュー確認事項（Q2）**: 私たちはウォーキングスケルトンを最初に作ります。
@@ -172,15 +180,14 @@ automergeは（特にbundled SQLiteのC由来CVE面が加わる今回は）リ�
   では宣言・検証を追加しません（Q6のCI強化範囲はclippyに限定し、MSRV
   検証はバックログとします）。
 
-## Forbidden
+## Security（devsecops検分より、参考情報）
 
-<!-- Team-specific forbidden patterns -->
-
-## Mandated
-
-<!-- Team-specific mandates -->
-
-## Corrections
-
-<!-- Self-learning loop appends here. -->
-- lib-bump-version.yml の起動トリガーは workflow_dispatch と日次cron（0 0 * * *）のみであり、mainマージ即時の自動バンプ・自動タグではない。mainマージ後は最大約24時間以内の次回cron起動時（または手動起動時）にConventional Commitsからsemverレベルが判定されバンプ・タグ付けされる。本ファイル ## Way of Working / ## Deployment の「mainマージ後に自動判定・自動タグ」という記述はこの実測に読み替えること（U1インフラ設計レビューの実機確認） (learned 2026-08-23) <!-- cid:260822-sqlite-event-store:infrastructure-design:158e224da7f41880b54f3191424e4716c2aed81337ab0543ce338c6767ce0aea -->
+- DAST は本プロジェクトでは非該当（稼働Webサービスを持たないライブラリ
+  クレートのため）。
+- SAST相当は clippy（`-D warnings`）＋依存監査＋unsafe監査の3点で足ります。
+- SQLite統合実装ではSQLインジェクション対策（`rusqlite` の `params!`
+  バインドパラメータを使用し、文字列連結でSQLを構築しない）を徹底します。
+- `openai-review.yml` の `pull_request_target` + 可変タグ
+  `coderabbitai/openai-pr-reviewer@latest` 参照はサプライチェーンリスク
+  として認識していますが、今回のSQLite Boltスコープには含めません
+  （別イニシアチブのバックログ）。

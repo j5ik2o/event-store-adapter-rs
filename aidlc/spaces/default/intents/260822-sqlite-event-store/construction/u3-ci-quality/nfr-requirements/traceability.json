@@ -1,0 +1,12 @@
+{
+  "stage": "nfr-requirements",
+  "unit": "u3-ci-quality",
+  "upstream_ids": ["NFR-1", "NFR-2", "NFR-3", "NFR-4", "NFR-5"],
+  "coverage": [
+    { "id": "NFR-1", "status": "N/A", "target": "公開API互換はU1/U2のコード要件（NFR-1.1〜1.3）で確定済み — U3はCI設定のみで公開面に触れない" },
+    { "id": "NFR-2", "status": "OK", "target": "NFR-2.5, NFR-2.6 (security-requirements.md — RUSTSEC照合と依存隔離検証のCI恒久化)" },
+    { "id": "NFR-3", "status": "OK", "target": "NFR-3.3 (tech-stack-decisions.md — featureマトリクス6構成の恒久検証)" },
+    { "id": "NFR-4", "status": "OK", "target": "NFR-4.9, NFR-4.10, NFR-4.11 (security-requirements.md — clippy/unsafe grep/CIジョブ健全性)" },
+    { "id": "NFR-5", "status": "N/A", "target": "U2のNFR-5.1（Docker不要・決定的・並列安全なテスト環境）で既に充足済み。U3はCI側でその前提を維持するのみ（tech-stack-decisions.md D5の分担）で、新規の派生要件を追加しない" }
+  ]
+}

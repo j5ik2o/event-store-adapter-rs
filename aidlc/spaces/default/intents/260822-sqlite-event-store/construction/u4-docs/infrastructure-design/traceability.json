@@ -1,0 +1,10 @@
+{
+  "stage": "infrastructure-design",
+  "unit": "u4-docs",
+  "upstream_ids": ["NFR-1.4", "NFR-1.5", "NFR-4.12"],
+  "coverage": [
+    { "id": "NFR-1.4", "status": "OK", "target": "既存配信経路の整理と文書鮮度の維持手順（infrastructure-specification.md / monitoring-design.md — 文書はマージ即時、crates.io READMEは次回リリース時）" },
+    { "id": "NFR-1.5", "status": "OK", "target": "開示事項を載せる文書の配信経路確認（infrastructure-specification.md — 新規インフラなしで既存経路に乗る）" },
+    { "id": "NFR-4.12", "status": "OK", "target": "examplesのクラウド接続なし・Docker不要の実行要件と、CI通過条件（cicd-pipeline.md — 依存追加なし・fmt/clippy対象）" }
+  ]
+}

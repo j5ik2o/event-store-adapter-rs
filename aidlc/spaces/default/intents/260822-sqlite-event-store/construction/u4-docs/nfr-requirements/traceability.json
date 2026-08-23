@@ -1,0 +1,12 @@
+{
+  "stage": "nfr-requirements",
+  "unit": "u4-docs",
+  "upstream_ids": ["NFR-1", "NFR-2", "NFR-3", "NFR-4", "NFR-5"],
+  "coverage": [
+    { "id": "NFR-1", "status": "OK", "target": "NFR-1.4, NFR-1.5 (security-requirements.md — 文書の正確性と境界事項の開示)" },
+    { "id": "NFR-2", "status": "N/A", "target": "U4は依存を追加しない（tech-stack-decisions.md D1）— 依存最小要件はU1〜U3で充足済み" },
+    { "id": "NFR-3", "status": "N/A", "target": "U4はビルド構成に触れない — ビルド互換要件はU1〜U3で充足済み（examplesのビルド検証は既知の欠落・バックログ）" },
+    { "id": "NFR-4", "status": "OK", "target": "NFR-4.12 (security-requirements.md — 文書衛生。コード品質要件本体はU1〜U3で充足済み)" },
+    { "id": "NFR-5", "status": "N/A", "target": "U4はテストを追加しない — テスト実行環境要件はU2のNFR-5.1で充足済み" }
+  ]
+}

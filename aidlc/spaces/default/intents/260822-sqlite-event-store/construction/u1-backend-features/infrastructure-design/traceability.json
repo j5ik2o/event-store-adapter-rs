@@ -1,0 +1,16 @@
+{
+  "stage": "infrastructure-design",
+  "unit": "u1-backend-features",
+  "upstream_ids": ["NFR-1.1", "NFR-1.2", "NFR-2.1", "NFR-2.2", "NFR-3.1", "NFR-4.1", "NFR-4.2", "NFR-4.3", "NFR-4.4"],
+  "coverage": [
+    { "id": "NFR-1.1", "status": "OK", "target": "ci.yml test-lib の --all-features 化（既存トレイト利用テストのCI実行維持 — cicd-pipeline.md U1での変更）" },
+    { "id": "NFR-1.2", "status": "N/A", "target": "公開API維持はコード設計事項（nfr-design/security-design.md 隠蔽境界）でありパイプライン資源を要さない" },
+    { "id": "NFR-2.1", "status": "OK", "target": "依存グラフ検査のU3引き渡し要求仕様として明記（cicd-pipeline.md — U1時点はsecurity-design.mdの手動cargo tree手順、CI恒久化はU3へ委譲）" },
+    { "id": "NFR-2.2", "status": "OK", "target": "同上（feature単独の依存隔離検査 — U1時点は手動、CI恒久化はU3へ委譲）" },
+    { "id": "NFR-3.1", "status": "OK", "target": "featureマトリクスビルドのU3引き渡し要求仕様＋U1の--all-features最小修正（cicd-pipeline.md ステージ→ゲート対応）" },
+    { "id": "NFR-4.1", "status": "OK", "target": "--all-features テストによる既存挙動回帰の維持（panic排除の検証テストはU2/コード生成で追加、CI実行面は本設計が担保）" },
+    { "id": "NFR-4.2", "status": "OK", "target": "unsafe不在grepのU3引き渡し要求仕様（U1時点はsecurity-design.mdの手動手順へ委譲）" },
+    { "id": "NFR-4.3", "status": "OK", "target": "CI/CDの資格情報構成不変・新規シークレット追加なし（cicd-pipeline.md U1での変更）" },
+    { "id": "NFR-4.4", "status": "N/A", "target": "エラーメッセージ書式はコード設計事項（nfr-design/security-design.md）でありパイプライン資源を要さない" }
+  ]
+}

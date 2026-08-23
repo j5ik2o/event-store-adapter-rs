@@ -1,0 +1,13 @@
+{
+  "stage": "nfr-design",
+  "unit": "u3-ci-quality",
+  "upstream_ids": ["NFR-2.5", "NFR-2.6", "NFR-3.3", "NFR-4.9", "NFR-4.10", "NFR-4.11"],
+  "coverage": [
+    { "id": "NFR-2.5", "status": "OK", "target": "deny.toml設計＋auditジョブ設計（security-design.md 依存監査の設計）" },
+    { "id": "NFR-2.6", "status": "OK", "target": "マトリクス6構成＋依存グラフ検査の設計（security-design.md featureマトリクスと検証の設計）" },
+    { "id": "NFR-3.3", "status": "OK", "target": "マトリクスジョブ設計 — 6構成のビルド＋Docker不要テスト（security-design.md）" },
+    { "id": "NFR-4.9", "status": "OK", "target": "clippyジョブ設計（security-design.md 静的解析の設計）" },
+    { "id": "NFR-4.10", "status": "OK", "target": "unsafe不在検査の組み込み（security-design.md featureマトリクスと検証の設計）" },
+    { "id": "NFR-4.11", "status": "OK", "target": "資格情報不要・失敗顕在化のジョブ健全性設計（security-design.md CIジョブ健全性の設計）" }
+  ]
+}

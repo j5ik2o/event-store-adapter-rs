@@ -1,0 +1,10 @@
+{
+  "stage": "nfr-design",
+  "unit": "u4-docs",
+  "upstream_ids": ["NFR-1.4", "NFR-1.5", "NFR-4.12"],
+  "coverage": [
+    { "id": "NFR-1.4", "status": "OK", "target": "記載割り当て表と正確性担保手順（security-design.md — 転記元照合・コンパイル可能なコード例・TD-10解消）" },
+    { "id": "NFR-1.5", "status": "OK", "target": "開示3事項のREADME/DATABASE_SCHEMA割り当て（security-design.md 記載割り当ての設計）" },
+    { "id": "NFR-4.12", "status": "OK", "target": "文書衛生の設計 — 機密リテラル禁止・相対パス/:memory:・grep検証（security-design.md）" }
+  ]
+}
