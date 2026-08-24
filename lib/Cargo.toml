@@ -1,6 +1,6 @@
 [package]
 name = "event-store-adapter-rs"
-version = "1.4.0"
+version = "2.0.0"
 
 description = "Event Store adapter for CQRS/Event Sourcing with DynamoDB, Bigtable, SQLite and in-memory backends"
 authors = ["Junichi Kato <j5ik2o@gmail.com>"]
