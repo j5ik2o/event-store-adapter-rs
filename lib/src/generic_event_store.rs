@@ -687,6 +687,82 @@ mod tests {
     assert_eq!(events[0].payload().name, "renamed");
   }
 
+  // NFR3.2 / BR5.2 / P1: ContractViolation の理由文字列が「規約名 + seq_nr / expected_version の
+  // 数値」テンプレートのみで構成されること（それ以外の情報を含まないこと）を機械的に固定する
+  // （OptimisticLockError の許可キー検証と同格の回帰テスト）
+  fn assert_contract_violation_reason_template(reason: &str) {
+    let mut parts = reason.split(", ");
+    let head = parts.next().unwrap();
+    // 先頭は「BR<x>.<y>: <固定説明文>」— 規約名で始まる
+    let (rule_id, description) = head.split_once(": ").expect("reason must start with a rule id prefix");
+    assert!(
+      rule_id.starts_with("BR")
+        && rule_id[2..]
+          .split('.')
+          .all(|s| !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())),
+      "reason must start with a BR rule id, got: {}",
+      rule_id
+    );
+    assert!(!description.is_empty());
+    // 後続はすべて許可キーの key=数値 のみ（集約 ID・payload 内容・接続情報は含めない）
+    let allowed_keys = ["seq_nr", "expected_version", "keep_snapshot_count"];
+    for part in parts {
+      let (key, value) = part
+        .split_once('=')
+        .unwrap_or_else(|| panic!("non key=value part in reason: {}", part));
+      assert!(allowed_keys.contains(&key), "unexpected field in reason: {}", part);
+      assert!(
+        !value.is_empty() && value.bytes().all(|b| b.is_ascii_digit()),
+        "non-numeric value in reason: {}",
+        part
+      );
+    }
+    assert!(!reason.contains("://"), "reason must not contain connection strings");
+  }
+
+  #[tokio::test]
+  async fn test_contract_violation_reason_strings_follow_fixed_template() {
+    // ContractViolation を返す全 4 規則（BR1.4 / BR2.2 / BR2.6 / BR4.1）の理由文字列を収集する
+    let (_backend, mut store) = new_store();
+    let mut reasons = Vec::new();
+
+    // BR1.4
+    match store.persist_event(envelope(1, 0, "zero"), 1).await {
+      Err(EventStoreWriteError::ContractViolation(reason)) => reasons.push(reason),
+      other => panic!("expected ContractViolation, got {:?}", other),
+    }
+    // BR2.2
+    match store.persist_event(envelope(1, 1, "created"), 0).await {
+      Err(EventStoreWriteError::ContractViolation(reason)) => reasons.push(reason),
+      other => panic!("expected ContractViolation, got {:?}", other),
+    }
+    // BR2.6
+    match store
+      .persist_event_and_snapshot(
+        envelope(1, 1, "created"),
+        TestAggregate {
+          name: "test".to_string(),
+        },
+        5,
+      )
+      .await
+    {
+      Err(EventStoreWriteError::ContractViolation(reason)) => reasons.push(reason),
+      other => panic!("expected ContractViolation, got {:?}", other),
+    }
+    // BR4.1
+    let (_backend2, store2) = new_store();
+    match store2.with_keep_snapshot_count(Some(0)) {
+      Err(EventStoreWriteError::ContractViolation(reason)) => reasons.push(reason),
+      other => panic!("expected ContractViolation, got {:?}", other.map(|_| ())),
+    }
+
+    assert_eq!(reasons.len(), 4);
+    for reason in &reasons {
+      assert_contract_violation_reason_template(reason);
+    }
+  }
+
   // FR7.3 ② / NFR2: derive なしプレーン型（Debug / Clone なし）でも GenericEventStore が
   // EventStore を実装できることのコンパイル証明（derive 戦略の回帰ガード）
   #[derive(Serialize, Deserialize)]
