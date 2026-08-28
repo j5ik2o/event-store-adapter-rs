@@ -1,9 +1,9 @@
 name: ci
 on:
   push:
-    branches: [ main ]
+    branches: [ main, feature/v3-event-envelope ]
   pull_request:
-    branches: [ main ]
+    branches: [ main, feature/v3-event-envelope ]
   schedule:
     - cron: '0 0 * * *'
 env:

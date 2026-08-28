@@ -1,3 +1,6 @@
+pub mod event_envelope;
+#[cfg(test)]
+mod event_envelope_test;
 mod event_store_backend;
 #[cfg(feature = "bigtable")]
 mod event_store_for_bigtable;

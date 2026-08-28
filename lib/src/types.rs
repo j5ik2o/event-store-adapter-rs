@@ -1,9 +1,15 @@
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use serde::de::DeserializeOwned;
 use serde::{de, Serialize};
 use std::error::Error as StdError;
 use std::fmt::Debug;
 use thiserror::Error;
+
+use crate::event_envelope::{EventEnvelope, SnapshotEnvelope};
+
+// FR3.1 / FR3.2: v3 で `Event` / `Aggregate` trait は廃止した。ドメインイベント・集約状態は
+// ライブラリ trait を実装しないプレーンな serde 型（payload）として扱い、メタデータは
+// 封筒（EventEnvelope / SnapshotEnvelope）が運搬する。
 
 /// 集約のIDを表すトレイト。
 pub trait AggregateId:
@@ -14,78 +20,97 @@ pub trait AggregateId:
   fn value(&self) -> String;
 }
 
-/// イベントを表すトレイト。
-pub trait Event: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
-  type ID: std::fmt::Display;
-  type AggregateID: AggregateId;
-  fn id(&self) -> &Self::ID;
-  fn aggregate_id(&self) -> &Self::AggregateID;
-  fn seq_nr(&self) -> usize;
-  fn occurred_at(&self) -> &DateTime<Utc>;
-  fn is_created(&self) -> bool;
-}
-
-/// 集約を表すトレイト。
-pub trait Aggregate: Debug + Clone + Serialize + for<'de> de::Deserialize<'de> + Send + Sync + 'static {
-  type ID: AggregateId;
-  /// IDを返す。
-  fn id(&self) -> &Self::ID;
-  /// シーケンス番号を返す。
-  fn seq_nr(&self) -> usize;
-  /// バージョンを返す。
-  fn version(&self) -> usize;
-  /// シーケンス番号を設定する。
-  fn set_version(&mut self, version: usize);
-  /// 最終更新日時を返す。
-  fn last_updated_at(&self) -> &DateTime<Utc>;
-}
-
 /// イベントストアを表すトレイト。
+///
+/// イベント・集約状態は封筒（[`EventEnvelope`] / [`SnapshotEnvelope`]）で受け渡し、
+/// ストアは封筒を透過運搬してメタデータを破棄しない（FR2.2 / FR5.1 / FR5.2）。
+///
+/// # payload の型要求（FR3.1 / BR1.6）
+///
+/// 集約 payload（`A`）とイベント payload（`P`）への要求は最小境界
+/// `Serialize + DeserializeOwned + Send + Sync + 'static` のみで、`Debug` / `Clone` は
+/// 要求しない（Memory バックエンドの実装のみ追加で `Clone` を要求する — 文書化済みの非対称）。
+///
+/// # seq_nr 契約（FR3.3 / FR3.4 / BR6.1）
+///
+/// - seq_nr は 1 始まりで、同一ストリーム内で連続していることを利用者（ドメイン側）が保証する。
+///   採番はドメイン側の責務であり、ストアは採番しない
+/// - ライブラリは連続性を検証しない。重複した seq_nr は楽観ロック（CAS / 一意制約）が拒否し、
+///   飛び番は検出されずそのまま書き込まれる（利用者責務）
+/// - 最初のイベント（新規作成）は seq_nr == 1 であり、create / update の分岐はこの導出で行う（BR2.1）
+///
+/// # expected_version の規約（BR2.3 / BR2.6）
+///
+/// 新規作成（seq_nr == 1）は `expected_version == 0`、更新は読取済み
+/// [`SnapshotEnvelope::version`] の値を渡す。対応が崩れる呼び出しは
+/// [`EventStoreWriteError::ContractViolation`] で拒否される。
 #[async_trait]
 pub trait EventStore: Debug + Clone + Sync + Send + 'static {
-  /// イベントの型。
-  type EV: Event;
-  /// 集約の型。
-  type AG: Aggregate;
   /// 集約のIDの型。
   type AID: AggregateId;
+  /// 集約 payload の型（純ドメイン状態 — 最小境界のみ、BR1.6）。
+  type A: Serialize + DeserializeOwned + Send + Sync + 'static;
+  /// イベント payload の型（純ドメイン内容 — 最小境界のみ、BR1.6）。
+  type P: Serialize + DeserializeOwned + Send + Sync + 'static;
 
-  /// イベントを保存します。
+  /// イベント封筒のみを保存します（更新専用）。
+  ///
+  /// BR2.2: seq_nr == 1（新規作成）の封筒は受け付けず、
+  /// [`EventStoreWriteError::ContractViolation`] を返します。新規作成は
+  /// [`EventStore::persist_event_and_snapshot`] を使ってください。
   ///
   /// # 引数
-  /// - `event` - 保存するイベント
-  /// - `version` - イベントを保存する集約のバージョン
+  /// - `event` - 保存するイベント封筒（値渡し — 所有権移動）
+  /// - `expected_version` - 読取済みスナップショット封筒の version（CAS 照合値）
   ///
   /// # 戻り値
   /// - `Ok(())` - 保存に成功した場合
-  /// - `Err(e)` - 保存に失敗した場合
-  async fn persist_event(&mut self, event: &Self::EV, version: usize) -> Result<(), EventStoreWriteError>;
-
-  /// Saves an event and a snapshot.<br/>
-  /// イベント及びスナップショットを保存します。
-  ///
-  /// # 引数
-  /// - `event` - event to be saved / 保存するイベント
-  /// - `aggregate` - aggregate to be saved as a snapshot / スナップショットを保存する集約
-  ///
-  /// # 戻り値
-  /// - `Ok(())` - if succeeded / 保存に成功した場合
-  /// - `Err(e)` - if failed / 保存に失敗した場合
-  async fn persist_event_and_snapshot(
+  /// - `Err(e)` - 保存に失敗した場合（競合時は `OptimisticLockError`）
+  async fn persist_event(
     &mut self,
-    event: &Self::EV,
-    aggregate: &Self::AG,
+    event: EventEnvelope<Self::AID, Self::P>,
+    expected_version: usize,
   ) -> Result<(), EventStoreWriteError>;
 
-  /// 最新のスナップショットを取得する。
-  async fn get_latest_snapshot_by_id(&self, aid: &Self::AID) -> Result<Option<Self::AG>, EventStoreReadError>;
+  /// イベント封筒及びスナップショット（集約状態）を保存します。
+  ///
+  /// BR2.1: seq_nr == 1 は新規作成経路（journal + snapshot の原子的作成、version = 1）、
+  /// seq_nr > 1 は更新経路（version CAS）に分岐します。
+  /// BR2.6: seq_nr == 1 ⇔ expected_version == 0 の対応が崩れる呼び出しは
+  /// [`EventStoreWriteError::ContractViolation`] で拒否します。
+  ///
+  /// # 引数
+  /// - `event` - 保存するイベント封筒（値渡し — 所有権移動）
+  /// - `aggregate` - スナップショットとして保存する集約 payload
+  /// - `expected_version` - 新規作成は 0、更新は読取済みスナップショット封筒の version
+  ///
+  /// # 戻り値
+  /// - `Ok(())` - 保存に成功した場合
+  /// - `Err(e)` - 保存に失敗した場合（競合時は `OptimisticLockError`）
+  async fn persist_event_and_snapshot(
+    &mut self,
+    event: EventEnvelope<Self::AID, Self::P>,
+    aggregate: Self::A,
+    expected_version: usize,
+  ) -> Result<(), EventStoreWriteError>;
 
-  /// 指定したIDとシーケンス番号以降のイベントを取得する。
+  /// 最新のスナップショット封筒を取得する。
+  ///
+  /// BR3.1: 存在しない場合は `None` を返す（エラーにしない）。封筒の seq_nr が
+  /// リプレイ開始点、version が次回書込の expected_version となる（FR2.2）。
+  async fn get_latest_snapshot_by_id(
+    &self,
+    aid: &Self::AID,
+  ) -> Result<Option<SnapshotEnvelope<Self::A>>, EventStoreReadError>;
+
+  /// 指定したIDとシーケンス番号以降のイベント封筒列を取得する。
+  ///
+  /// BR3.2: 裸の payload 列ではなく、列由来メタデータを載せた封筒の列を seq_nr 昇順で返す（FR5.1）。
   async fn get_events_by_id_since_seq_nr(
     &self,
     aid: &Self::AID,
     seq_nr: usize,
-  ) -> Result<Vec<Self::EV>, EventStoreReadError>;
+  ) -> Result<Vec<EventEnvelope<Self::AID, Self::P>>, EventStoreReadError>;
 }
 
 /// 楽観的ロック失敗の説明文字列を整形する。
@@ -116,6 +141,11 @@ pub enum EventStoreWriteError {
   SerializationError(Box<dyn StdError + Send + Sync>),
   #[error("OptimisticLockError: {0}")]
   OptimisticLockError(String),
+  // BR5.2: 契約違反（BR1.4 / BR2.2 / BR2.6 / BR4.1）は専用バリアントで返し、
+  // 他の失敗と型で判別可能にする。理由文字列は規約名 + seq_nr / expected_version の
+  // 数値に限定する（NFR3.2）
+  #[error("ContractViolation: {0}")]
+  ContractViolation(String),
   #[error("IOError: {0}")]
   IOError(#[from] Box<dyn StdError + Send + Sync>),
   #[error("OtherError: {0}")]
@@ -167,5 +197,15 @@ mod tests {
       assert!(allowed_keys.contains(&key), "unexpected field in message: {}", part);
     }
     assert!(!message.contains("://"), "message must not contain connection strings");
+  }
+
+  #[test]
+  fn test_contract_violation_display_carries_reason() {
+    // BR5.2: 契約違反は専用バリアントで判別でき、理由文字列を表示に含める
+    let error = EventStoreWriteError::ContractViolation("BR1.4: seq_nr must be at least 1, seq_nr=0".to_string());
+    assert_eq!(
+      error.to_string(),
+      "ContractViolation: BR1.4: seq_nr must be at least 1, seq_nr=0"
+    );
   }
 }
