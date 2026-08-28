@@ -38,52 +38,68 @@ event-store-adapter-rs = { version = "<latest>", features = ["sqlite"] }
 イベントストアを使えば、Event Sourcing対応リポジトリを簡単に実装できます。以下はSQLiteバックエンド（`features = ["sqlite"]`）を使う例です:
 
 ```rust
-use event_store_adapter_rs::types::{Aggregate, EventStore, EventStoreReadError, EventStoreWriteError};
+use event_store_adapter_rs::event_envelope::EventEnvelope;
+use event_store_adapter_rs::types::{EventStore, EventStoreReadError, EventStoreWriteError};
 use event_store_adapter_rs::EventStoreForSqlite;
 
+// UserAccount / UserAccountEvent はプレーンな `#[derive(Serialize, Deserialize)]` 型 —
+// v3 ではドメイン型にライブラリのtraitを実装する必要はありません。
 pub struct UserAccountRepository {
   event_store: EventStoreForSqlite<UserAccountId, UserAccount, UserAccountEvent>,
 }
 
+/// 最新スナップショット + 差分リプレイから復元した読取結果。
+/// 次のイベントの採番は `seq_nr + 1`、次の書込のexpected_versionは `version` を使います。
+pub struct ReplayedUserAccount {
+  pub state: UserAccount,
+  pub seq_nr: usize,
+  pub version: usize,
+}
+
 impl UserAccountRepository {
-  pub async fn store_event(&mut self, event: &UserAccountEvent, version: usize) -> Result<(), RepositoryError> {
-    let result = self.event_store.persist_event(event, version).await;
-    match result {
-      Ok(_) => Ok(()),
-      Err(err) => Err(Self::handle_event_store_write_error(err)),
-    }
+  pub async fn store_event(
+    &mut self,
+    event: EventEnvelope<UserAccountId, UserAccountEvent>,
+    expected_version: usize,
+  ) -> Result<(), RepositoryError> {
+    self
+      .event_store
+      .persist_event(event, expected_version)
+      .await
+      .map_err(Self::handle_event_store_write_error)
   }
 
   pub async fn store_event_and_snapshot(
     &mut self,
-    event: &UserAccountEvent,
-    snapshot: &UserAccount,
+    event: EventEnvelope<UserAccountId, UserAccountEvent>,
+    snapshot: UserAccount,
+    expected_version: usize,
   ) -> Result<(), RepositoryError> {
-    let result = self.event_store.persist_event_and_snapshot(event, snapshot).await;
-    match result {
-      Ok(_) => Ok(()),
-      Err(err) => Err(Self::handle_event_store_write_error(err)),
-    }
+    self
+      .event_store
+      .persist_event_and_snapshot(event, snapshot, expected_version)
+      .await
+      .map_err(Self::handle_event_store_write_error)
   }
 
-  pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<UserAccount>, RepositoryError> {
-    let snapshot_result = self.event_store.get_latest_snapshot_by_id(id).await;
-    match snapshot_result {
-      Ok(snapshot_opt) => match snapshot_opt {
-        Some(snapshot) => {
-          let events = self
-            .event_store
-            .get_events_by_id_since_seq_nr(id, snapshot.seq_nr() + 1)
-            .await;
-          match events {
-            Ok(events) => Ok(Some(UserAccount::replay(events, snapshot))),
-            Err(err) => Err(Self::handle_event_store_read_error(err)),
-          }
-        }
-        None => Ok(None),
-      },
-      Err(err) => Err(Self::handle_event_store_read_error(err)),
-    }
+  pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<ReplayedUserAccount>, RepositoryError> {
+    let snapshot = match self.event_store.get_latest_snapshot_by_id(id).await {
+      Ok(Some(snapshot)) => snapshot,
+      Ok(None) => return Ok(None),
+      Err(err) => return Err(Self::handle_event_store_read_error(err)),
+    };
+    let (snapshot_seq_nr, version) = (snapshot.seq_nr(), snapshot.version());
+    let events = self
+      .event_store
+      .get_events_by_id_since_seq_nr(id, snapshot_seq_nr + 1)
+      .await
+      .map_err(Self::handle_event_store_read_error)?;
+    let seq_nr = events.last().map(|event| event.seq_nr()).unwrap_or(snapshot_seq_nr);
+    let state = UserAccount::replay(
+      events.into_iter().map(EventEnvelope::into_payload),
+      snapshot.into_aggregate(),
+    );
+    Ok(Some(ReplayedUserAccount { state, seq_nr, version }))
   }
 }
 ```
@@ -93,23 +109,22 @@ impl UserAccountRepository {
 ```rust
 // ファイルDB。`:memory:` を使う場合は EventStoreForSqlite::new_in_memory()
 let event_store = EventStoreForSqlite::new("user-account.db")?;
-
 let mut repository = UserAccountRepository::new(event_store);
 
-// Replay the aggregate from the event store
-let mut user_account = repository.find_by_id(&user_account_id).await?.unwrap();
+// 作成: ストリームの最初のイベントは seq_nr == 1 で、expected_version == 0 で書き込みます。
+let (user_account, created) = UserAccount::new(user_account_id.clone(), "test-1".to_string());
+let envelope = EventEnvelope::new(user_account_id.clone(), 1, Utc::now(), created).with_manifest(CREATED_MANIFEST);
+repository.store_event_and_snapshot(envelope, user_account, 0).await?;
 
-// Execute a command on the aggregate
-let user_account_event = user_account.rename("new-name").unwrap();
+// イベントストアから集約をリプレイ: seq_nr / version は集約フィールドではなく
+// 封筒（ストア側の列）から取得します。
+let mut replayed = repository.find_by_id(&user_account_id).await?.unwrap();
 
-// Store the new event without a snapshot
-repository
-  .store_event(&user_account_event, user_account.version())
-  .await?;
-// Store the new event with a snapshot
-// repository
-//   .store_event_and_snapshot(&user_account_event, &user_account)
-//   .await?;
+// コマンドを実行し、次のイベントを replayed.seq_nr + 1 で採番、リプレイした
+// version を楽観的ロックの expected_version として渡します。
+let renamed = replayed.state.rename("new-name").unwrap();
+let envelope = EventEnvelope::new(user_account_id.clone(), replayed.seq_nr + 1, Utc::now(), renamed);
+repository.store_event(envelope, replayed.version).await?;
 ```
 
 実行可能な完全なサンプルは [examples/user-account-sqlite](examples/user-account-sqlite) です（`cargo run -p example-user-account-sqlite` — クラウド接続・Docker不要）。
@@ -133,6 +148,10 @@ let event_store = EventStoreForDynamoDB::new(
 
 - サポートされる共有単位は**1つのストアインスタンスとそのクローン**です（クローンは基底の接続を共有します）。同一のデータベースファイルを複数のストアインスタンスや複数プロセスから同時に開くことは**サポート外**です。マルチプロセスでの同時アクセスの防止（例: CLIツールの多重起動防止）はアプリケーション側の責務です。
 - インメモリストア（`new_in_memory`）はそのインスタンスとクローンの間でのみ共有され、最後のクローンがdropされた時点で消えます。
+
+## 3.x への移行
+
+3.x では `Event` / `Aggregate` traitが `EventEnvelope` APIに置き換わります: ドメインのイベント型・集約型はプレーンな `serde` 型となり、メタデータ（`aggregate_id` / `seq_nr` / `occurred_at` / `manifest`）は封筒が運搬し、楽観的ロックのversionはストア側の列のみが保持します。**2.x で書き込まれたデータは 3.x では読み取れません** — 保存済みデータの移行は利用者の責務です。完全なガイドは [docs/MIGRATION_GUIDE_v3.ja.md](docs/MIGRATION_GUIDE_v3.ja.md)（[English](docs/MIGRATION_GUIDE_v3.md)）を参照してください。
 
 ## 1.x からの移行
 

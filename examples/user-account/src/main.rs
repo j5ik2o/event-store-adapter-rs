@@ -2,17 +2,22 @@ use std::env;
 use std::thread::sleep;
 use std::time::Duration;
 
-use event_store_adapter_rs::types::Aggregate;
+use chrono::Utc;
+use event_store_adapter_rs::event_envelope::EventEnvelope;
 use event_store_adapter_rs::EventStoreForDynamoDB;
 use event_store_adapter_test_utils_rs::docker::dynamodb_local;
 use event_store_adapter_test_utils_rs::dynamodb::{create_client, create_journal_table, create_snapshot_table};
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 
-use crate::user_account::{UserAccount, UserAccountId};
+use crate::user_account::{UserAccount, UserAccountId, CREATED_MANIFEST, RENAMED_MANIFEST};
 use crate::user_account_repository::{RepositoryError, UserAccountRepository};
 
 mod user_account;
 mod user_account_repository;
+
+// FR8.4: v3 envelope-API walkthrough. Creation persists a seq_nr=1 envelope with
+// expected_version=0; updates number the next envelope from the replayed seq_nr and pass the
+// replayed version as expected_version (BR2.3 / BR2.6).
 
 #[tokio::main]
 async fn main() {
@@ -86,10 +91,10 @@ async fn create_user_account(
   name: &str,
 ) -> Result<UserAccountId, RepositoryError> {
   let user_account_id = UserAccountId::new(id.to_string());
-  let (user_account, user_account_event) = UserAccount::new(user_account_id.clone(), name.to_string());
-  repository
-    .store_event_and_snapshot(&user_account_event, &user_account)
-    .await?;
+  let (user_account, created) = UserAccount::new(user_account_id.clone(), name.to_string());
+  // The first event of a stream is seq_nr == 1 and is written with expected_version == 0 (BR2.6).
+  let envelope = EventEnvelope::new(user_account_id.clone(), 1, Utc::now(), created).with_manifest(CREATED_MANIFEST);
+  repository.store_event_and_snapshot(envelope, user_account, 0).await?;
   Ok(user_account_id)
 }
 
@@ -98,9 +103,11 @@ async fn rename_user_account(
   user_account_id: &UserAccountId,
   name: &str,
 ) -> Result<(), RepositoryError> {
-  let mut user_account = repository.find_by_id(user_account_id).await?.unwrap();
-  let user_account_event = user_account.rename(name).unwrap();
-  repository
-    .store_event(&user_account_event, user_account.version())
-    .await
+  let mut replayed = repository.find_by_id(user_account_id).await?.unwrap();
+  let renamed = replayed.state.rename(name).unwrap();
+  // The domain numbers the next event as replayed seq_nr + 1 (FR3.3) and passes the replayed
+  // version as expected_version for the optimistic lock (FR2.2).
+  let envelope = EventEnvelope::new(user_account_id.clone(), replayed.seq_nr + 1, Utc::now(), renamed)
+    .with_manifest(RENAMED_MANIFEST);
+  repository.store_event(envelope, replayed.version).await
 }

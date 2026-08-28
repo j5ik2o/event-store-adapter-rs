@@ -90,13 +90,37 @@ jobs:
           fi
   clippy:
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # FR8.5 / NFR6.12: lint every backend, bigtable included. The examples are
+        # workspace members that enable the dynamodb / sqlite features of the library,
+        # so feature unification widens the effective feature set of each configuration;
+        # the per-feature isolation of the library graph stays with the feature-matrix job.
+        include:
+          - name: no-features
+            flags: --no-default-features
+          - name: dynamodb
+            flags: --no-default-features --features dynamodb
+          - name: bigtable
+            flags: --no-default-features --features bigtable
+          - name: sqlite
+            flags: --no-default-features --features sqlite
+          - name: sqlite-system
+            flags: --no-default-features --features sqlite-system
+            system-sqlite: true
+          - name: all-features
+            flags: --all-features
+    name: clippy (${{ matrix.name }})
     steps:
       - uses: actions/checkout@v6
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
           components: clippy
-      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - if: matrix.system-sqlite
+        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
+      - run: cargo clippy --workspace --all-targets ${{ matrix.flags }} -- -D warnings
   audit:
     runs-on: ubuntu-latest
     steps:
