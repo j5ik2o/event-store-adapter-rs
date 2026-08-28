@@ -273,3 +273,34 @@ async fn test_event_store_on_memory_persists_plain_clone_type_end_to_end() {
   assert_eq!(events[0].manifest(), "");
   assert_eq!(events[0].payload().name, "renamed-again");
 }
+
+// BR2.3 / AC2.2.3: 未作成（Absent）の集約への更新系呼び出しは OptimisticLockError を返す
+// （状態遷移図: Absent --> Absent : W2/W3 update → OptimisticLockError。actual_version なし書式）
+#[tokio::test]
+async fn test_event_store_on_memory_update_on_absent_aggregate_yields_optimistic_lock_error() {
+  let mut store = new_memory_event_store();
+  let id = UserAccountId::new(id_generate().to_string());
+  let (user_account, _created) = UserAccount::new(id.clone(), "test".to_string());
+
+  // 未作成のまま seq_nr=2 / expected_version=1 のスナップショット付き更新（W3 経路）を呼ぶ
+  let envelope = EventEnvelope::new(
+    id.clone(),
+    2,
+    Utc::now(),
+    UserAccountEvent::Renamed {
+      name: "ghost".to_string(),
+    },
+  );
+  let result = store.persist_event_and_snapshot(envelope, user_account, 1).await;
+  match result {
+    Err(EventStoreWriteError::OptimisticLockError(message)) => {
+      // actual_version を含まない書式であることを完全一致で固定する
+      assert_eq!(
+        message,
+        format!("optimistic lock failed, aid={}, expected_version=1", id)
+      );
+      assert_optimistic_lock_message_format(&message);
+    }
+    other => panic!("expected OptimisticLockError, got {:?}", other),
+  }
+}

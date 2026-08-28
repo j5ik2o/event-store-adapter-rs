@@ -253,13 +253,14 @@ where
   ) -> Result<(), EventStoreWriteError> {
     let aid = event.aggregate_id().to_string();
     let mut state = self.lock_state().map_err(EventStoreWriteError::OtherError)?;
-    let entry = state
-      .get_mut(&aid)
-      .ok_or_else(|| EventStoreWriteError::OtherError(format!("snapshot not found for aggregate {}", aid)))?;
-    let latest = entry
-      .snapshots
-      .last_mut()
-      .ok_or_else(|| EventStoreWriteError::OtherError(format!("snapshot not found for aggregate {}", aid)))?;
+    // BR2.3 / AC2.2.3: 対象集約が不在の更新は楽観ロック競合として扱う
+    // （状態遷移図: Absent --> Absent : W2/W3 update → OptimisticLockError。actual_version なし書式）
+    let entry = state.get_mut(&aid).ok_or_else(|| {
+      EventStoreWriteError::OptimisticLockError(format_optimistic_lock_message(&aid, expected_version, None))
+    })?;
+    let latest = entry.snapshots.last_mut().ok_or_else(|| {
+      EventStoreWriteError::OptimisticLockError(format_optimistic_lock_message(&aid, expected_version, None))
+    })?;
     // BR2.3: version CAS。競合時は統一書式の楽観ロックエラー（NFR3.2 — 許可キーのみ）
     if latest.version() != expected_version {
       return Err(EventStoreWriteError::OptimisticLockError(

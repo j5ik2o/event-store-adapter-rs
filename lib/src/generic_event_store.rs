@@ -338,10 +338,14 @@ mod tests {
       state
         .calls
         .push(format!("update(expected_version={})", expected_version));
-      let current = state
-        .snapshot
-        .as_ref()
-        .ok_or_else(|| EventStoreWriteError::OtherError("snapshot not found".to_string()))?;
+      // BR2.3 / AC2.2.3: 対象集約が不在の更新は楽観ロック競合（actual_version なし書式）— 実体と同じ意味論
+      let current = state.snapshot.as_ref().ok_or_else(|| {
+        EventStoreWriteError::OptimisticLockError(crate::types::format_optimistic_lock_message(
+          &event.aggregate_id().to_string(),
+          expected_version,
+          None,
+        ))
+      })?;
       if current.version() != expected_version {
         return Err(EventStoreWriteError::OtherError("version mismatch".to_string()));
       }
