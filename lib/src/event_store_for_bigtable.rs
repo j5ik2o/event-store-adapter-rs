@@ -112,6 +112,10 @@ where
   ///
   /// BR4.1 / P3: 検証（`Some(0)` の拒否）は `GenericEventStore` 側の 1 箇所で行い、
   /// このラッパーは Result を素通しする。
+  ///
+  /// BR3.1: 設定を有効にすると各書込後に履歴剪定フックが走る。剪定フック自体の読取・削除の
+  /// 失敗は書込エラーとして呼出し側へ伝播する（このとき journal / snapshot 現行行の書込は
+  /// 既に成功している）。
   pub fn with_keep_snapshot_count(mut self, keep_snapshot_count: Option<usize>) -> Result<Self, EventStoreWriteError> {
     self.inner = self.inner.with_keep_snapshot_count(keep_snapshot_count)?;
     Ok(self)
@@ -614,7 +618,10 @@ where
     // BR3.1 / P5: プレイメージ読取は keep_snapshot_count = Some(n) かつスナップショット付き
     // 更新の場合のみ行う。読取 version ≠ expected_version なら履歴コピーはしない（version は
     // 単調増加のため後続 CAS は必ず失敗する — 競合判定はあくまで述語側）。読取失敗は
-    // ベストエフォートとして warn 記録のみで継続する（競合・接続不能の実エラーは直後の CAS が返す）
+    // ベストエフォートとして warn 記録のみで継続する。接続系の実エラー（IOError）は直後の
+    // CAS が同根で返す一方、行データ破損（セル欠落・整数パース失敗等の OtherError）は CAS の
+    // 検査対象が version セルのみのため CAS 自体は成功しうる — その場合は当該更新の履歴コピー
+    // だけが静かにスキップされ、破損自体は読取経路（fetch_latest_snapshot 等）で顕在化する
     let pre_image = if maintenance.keep_snapshot_count.is_some() && aggregate.is_some() {
       match self.read_snapshot_row(aid).await {
         Ok(Some(image)) if image.version == expected_version => Some(image),
@@ -713,7 +720,11 @@ where
 
   async fn on_event_persisted(&self, aid: &AID, maintenance: &SnapshotMaintenance) -> Result<(), EventStoreWriteError> {
     // BR3.1 / FR6.3 / AC2.3.4: 保持ポリシーの実行点。keep_snapshot_count = None は
-    // 現行互換の no-op（履歴行も書かれないため剪定対象が存在しない）
+    // 現行互換の no-op（履歴行も書かれないため剪定対象が存在しない）。
+    // 剪定フック自体の読取・削除の失敗は warn 継続にせず呼出し側へ伝播する（CAS 成功直後の
+    // 履歴コピーの warn 継続とは扱いが異なる意図的な非対称 — 剪定は明示設定に基づく保持契約の
+    // 実行であり、失敗の黙殺は「エラーを握り潰さない」原則に反するため）。journal / snapshot
+    // 現行行の書込は伝播時点で既に成功している点に注意
     let keep = match maintenance.keep_snapshot_count {
       Some(keep) => keep,
       None => return Ok(()),

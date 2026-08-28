@@ -1,11 +1,14 @@
-use chrono::{DateTime, Utc};
-use event_store_adapter_rs::types::{Aggregate, AggregateId, Event};
+use event_store_adapter_rs::types::AggregateId;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 use std::sync::{Mutex, OnceLock};
 use ulid_generator_rs::{ULIDGenerator, ULID};
 
-/// Generates a ULID used as an event ID.
+// FR8.4 / FR3.1 / FR3.2: v3 example domain model. The `Event` / `Aggregate` traits are gone;
+// the event and the aggregate state are plain serde types (payloads), and the metadata
+// (aggregate_id / seq_nr / occurred_at / manifest) travels in the envelopes.
+
+/// Generates a ULID used as an aggregate ID.
 pub fn id_generate() -> ULID {
   static GENERATOR: OnceLock<Mutex<ULIDGenerator>> = OnceLock::new();
   let mut generator = GENERATOR
@@ -14,6 +17,11 @@ pub fn id_generate() -> ULID {
     .expect("ULID generator mutex is poisoned");
   generator.generate().expect("failed to generate a ULID")
 }
+
+/// Manifest value carried by the creation event envelope (FR1.2 — user-supplied, free-form).
+pub const CREATED_MANIFEST: &str = "user-account-created/v1";
+/// Manifest value carried by the rename event envelope.
+pub const RENAMED_MANIFEST: &str = "user-account-renamed/v1";
 
 #[derive(Debug)]
 pub enum UserAccountError {
@@ -47,103 +55,38 @@ impl AggregateId for UserAccountId {
   }
 }
 
+/// Event payload: pure domain content only — no event ID, no seq_nr, no timestamp.
+/// The envelope carries those (FR1.1).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UserAccountEvent {
-  Created {
-    id: ULID,
-    aggregate_id: UserAccountId,
-    seq_nr: usize,
-    name: String,
-    occurred_at: DateTime<Utc>,
-  },
-  Renamed {
-    id: ULID,
-    aggregate_id: UserAccountId,
-    seq_nr: usize,
-    name: String,
-    occurred_at: DateTime<Utc>,
-  },
+  Created { name: String },
+  Renamed { name: String },
 }
 
-impl Event for UserAccountEvent {
-  type AggregateID = UserAccountId;
-  type ID = ULID;
-
-  fn id(&self) -> &Self::ID {
-    match self {
-      UserAccountEvent::Created { id, .. } => id,
-      UserAccountEvent::Renamed { id, .. } => id,
-    }
-  }
-
-  fn aggregate_id(&self) -> &Self::AggregateID {
-    match self {
-      UserAccountEvent::Created { aggregate_id, .. } => aggregate_id,
-      UserAccountEvent::Renamed { aggregate_id, .. } => aggregate_id,
-    }
-  }
-
-  fn seq_nr(&self) -> usize {
-    match self {
-      UserAccountEvent::Created { seq_nr, .. } => *seq_nr,
-      UserAccountEvent::Renamed { seq_nr, .. } => *seq_nr,
-    }
-  }
-
-  fn occurred_at(&self) -> &DateTime<Utc> {
-    match self {
-      UserAccountEvent::Created { occurred_at, .. } => occurred_at,
-      UserAccountEvent::Renamed { occurred_at, .. } => occurred_at,
-    }
-  }
-
-  fn is_created(&self) -> bool {
-    match self {
-      UserAccountEvent::Created { .. } => true,
-      UserAccountEvent::Renamed { .. } => false,
-    }
-  }
-}
-
+/// Aggregate payload: pure domain state only — no seq_nr, no version, no last_updated_at.
+/// The snapshot envelope carries seq_nr / version (FR2.1 / FR3.2).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserAccount {
   id: UserAccountId,
   name: String,
-  seq_nr: usize,
-  version: usize,
-  last_updated_at: DateTime<Utc>,
 }
 
 impl UserAccount {
   pub fn new(id: UserAccountId, name: String) -> (Self, UserAccountEvent) {
-    let mut my_self = Self {
-      id: id.clone(),
-      name,
-      seq_nr: 0,
-      version: 1,
-      last_updated_at: chrono::Utc::now(),
-    };
-    my_self.seq_nr += 1;
-    let event = UserAccountEvent::Created {
-      id: id_generate(),
-      aggregate_id: id,
-      seq_nr: my_self.seq_nr,
-      name: my_self.name.clone(),
-      occurred_at: chrono::Utc::now(),
-    };
-    (my_self, event)
+    let my_self = Self { id, name: name.clone() };
+    (my_self, UserAccountEvent::Created { name })
   }
 
   pub fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount) -> Self {
     events.into_iter().fold(snapshot, |mut result, event| {
-      result.apply_event(event.clone());
+      result.apply_event(&event);
       result
     })
   }
 
-  fn apply_event(&mut self, event: UserAccountEvent) {
-    if let UserAccountEvent::Renamed { name, .. } = event {
-      self.rename(&name).unwrap();
+  fn apply_event(&mut self, event: &UserAccountEvent) {
+    if let UserAccountEvent::Renamed { name } = event {
+      self.name = name.clone();
     }
   }
 
@@ -152,38 +95,6 @@ impl UserAccount {
       return Err(UserAccountError::AlreadyRenamed(name.to_string()));
     }
     self.name = name.to_string();
-    self.seq_nr += 1;
-    let event = UserAccountEvent::Renamed {
-      id: id_generate(),
-      aggregate_id: self.id.clone(),
-      seq_nr: self.seq_nr,
-      name: name.to_string(),
-      occurred_at: Utc::now(),
-    };
-    Ok(event)
-  }
-}
-
-impl Aggregate for UserAccount {
-  type ID = UserAccountId;
-
-  fn id(&self) -> &Self::ID {
-    &self.id
-  }
-
-  fn seq_nr(&self) -> usize {
-    self.seq_nr
-  }
-
-  fn version(&self) -> usize {
-    self.version
-  }
-
-  fn set_version(&mut self, version: usize) {
-    self.version = version
-  }
-
-  fn last_updated_at(&self) -> &DateTime<Utc> {
-    &self.last_updated_at
+    Ok(UserAccountEvent::Renamed { name: name.to_string() })
   }
 }
