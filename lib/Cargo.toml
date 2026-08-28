@@ -6,6 +6,10 @@ description = "Event Store adapter for CQRS/Event Sourcing with DynamoDB, Bigtab
 authors = ["Junichi Kato <j5ik2o@gmail.com>"]
 edition = "2021"
 license = "MIT OR Apache-2.0"
+# FR8.3: MSRV measured with `cargo build -p event-store-adapter-rs --all-features` on
+# 2026-08-28 - the AWS SDK crates (aws-config / aws-sdk-dynamodb and their smithy stack)
+# require rustc 1.94.1; 1.94.0 and below fail to resolve. Re-measure when bumping them.
+rust-version = "1.94.1"
 keywords = ["event-sourcing", "cqrs", "ddd"]
 categories = ["data-structures", "web-programming", "rust-patterns"]
 readme = "../README.md"
