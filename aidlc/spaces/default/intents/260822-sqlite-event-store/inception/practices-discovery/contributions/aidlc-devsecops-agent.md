@@ -2,7 +2,7 @@
 
 ## Contribution
 
-セキュリティ観点（lint/format・SAST/DAST・シークレット/依存スキャン・サプライチェーン統制）からのブラインドレビュー。対象エビデンス: `.github/workflows/`（3本）、`renovate.json`、`aidlc/spaces/default/codekb/sqlite/dependencies.md`、`code-quality-assessment.md`、およびリード草稿3点。ソロOSS Rustクレートという文脈（project.md ## Corrections）に比例した統制のみ提案する。
+セキュリティ観点（lint/format・SAST/DAST・シークレット/依存スキャン・サプライチェーン統制）からのブラインドレビュー。対象エビデンス: `.github/workflows/`（4本）、`renovate.json`、`aidlc/spaces/default/codekb/sqlite/dependencies.md`、`code-quality-assessment.md`、およびリード草稿3点。ソロOSS Rustクレートという文脈（project.md ## Corrections）に比例した統制のみ提案する。
 
 ### 1. Lint / Format — 現状評価と推奨
 
@@ -32,6 +32,7 @@
 
 ### 5. サプライチェーン統制 — GitHub Actions と bundled SQLite
 
+- **[P1] `openai-review.yml` は `pull_request_target` トリガで `coderabbitai/openai-pr-reviewer@latest` という可変タグ参照を実行し、`GITHUB_TOKEN`（pull-requests: write）と `OPENAI_API_KEY` を渡している**。`@latest` は上流アクションの改竄・乗っ取りがそのまま secrets 窃取に直結する既知のサプライチェーン攻撃経路であり、リード草稿・evidence.md はこのワークフローを「LLMレビューが動く」としか評価していない。推奨: コミットSHAピン留めへ変更、または当該アクション（アーカイブ済みで更新停止中）の廃止・代替を検討。4ワークフロー中、これが唯一の即時対応価値がある指摘。
 - **[P2] アクション参照のピン留めが不統一**: `baptiste0928/cargo-install` はSHAピン（良い実践）だが、`actions/checkout@v6` / `dtolnay/rust-toolchain` / `actions/create-release@v1` はタグ参照。特に `actions/create-release@v1` は**アーカイブ済み・保守終了**のアクション。方針として「サードパーティ製アクションはSHAピン、GitHub公式はメジャータグ可」程度の軽量ルールを discovered-rules.md 候補にできる。
 - **[P2] `permissions:` ブロック欠如**: `ci.yml` / `lib-bump-version.yml` / `lib-release.yml` はトップレベル `permissions:` 未指定で、デフォルトトークン権限に依存。最小権限原則として `ci.yml` に `permissions: contents: read` の明示を推奨（1行の変更で済む）。
 - **bundled SQLite の新規サプライチェーン面**: `rusqlite` の `bundled` feature は `libsqlite3-sys` 同梱の SQLite C アマルガメーションを `cc` でコンパイルする。これにより (a) C コード（SQLite本体のCVE）がクレートの脆弱性面に加わる、(b) その供給元は crates.io パッケージの同梱ソースになる。統制としては、RUSTSEC が `libsqlite3-sys` 同梱SQLiteのCVEを追跡しているため、**上記4の cargo-audit/deny ゲートが bundled 採用の実質的な前提条件**となる（アドバイザリ検出 → Renovate のpatch自動マージで修正が流れる、という閉ループが成立する）。ライセンス面は SQLite = パブリックドメインで問題なし。`cargo vet` / SBOM 生成まではソロOSSには過剰と判断し提案しない。
@@ -40,8 +41,9 @@
 
 ### インタビュー項目への追加提案（ソロOSS・リスク/技術判断に限定）
 
-1. crates.io publish を長期トークン継続か Trusted Publishing (OIDC) へ移行するか。
-2. `cargo-deny`（advisories + licenses）を日次cron CIに追加するか、`cargo audit` のみの最小構成にするか。
+1. `openai-review.yml` の `@latest` + `pull_request_target` を続けるか、SHAピン/廃止するか（P1）。
+2. crates.io publish を長期トークン継続か Trusted Publishing (OIDC) へ移行するか。
+3. `cargo-deny`（advisories + licenses）を日次cron CIに追加するか、`cargo audit` のみの最小構成にするか。
 
 ## Positions
 
@@ -49,4 +51,5 @@
 - AGREE: デプロイを「crates.io publish」に読み替えた整理と、SQLiteリリース時の手動承認要否をインタビューに回す判断 — project.md のライブラリ文脈置換に忠実で、完全自動フローの実態記述もワークフロー実装と一致している。
 - AGREE: DBスキーマはライブラリ自動作成が担うという Mandated ルール — SQLite実装でバインドパラメータ必須のDDL/DML統制を敷く前提とも整合する。
 - OBJECT: evidence.md の「SQLite関連の新規依存追加時もこのRenovate運用に乗る前提で問題ない」— RUSTSEC照合ゲートが皆無のまま automerge に乗せる評価は、bundled SQLite で C コードのCVE面が加わる本イニシアチブでは楽観的すぎる。cargo-audit/deny 追加を前提条件として併記すべき。
+- OBJECT: `openai-review.yml` の評価が「LLMレビューが動く」に留まっている — `pull_request_target` + 可変タグ `@latest` + secrets 露出という4ワークフロー中最大のサプライチェーンリスクが未評価。team-practices.md か未確定項目のいずれかに載せるべき。
 - OBJECT: リリース自動化の記述にサプライチェーン統制の欠落（アクションのピン留め不統一、アーカイブ済み `actions/create-release@v1`、`permissions:` 未指定、長期 `CARGO_TOKEN`）が反映されていない — 「手動承認の要否」だけでなく「publish経路の資格情報強化」もインタビュー項目に含めるべき。

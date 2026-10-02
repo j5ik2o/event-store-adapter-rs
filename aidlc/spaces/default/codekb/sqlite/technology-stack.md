@@ -45,5 +45,5 @@ feature ゲートが一切なく、**すべて無条件依存**である点が f
 ## 補助ツール・ローカルインフラ
 
 - `tools/docker-compose.yaml` — LocalStack（DynamoDB）と Bigtable エミュレータのローカル起動。`tools/otel-collector-config.yaml` / `tools/prometheus.yaml` は観測系の補助設定（今回の分析ではスキム）。
-- GitHub Actions 3 ワークフロー（`ci.yml` / `lib-release.yml` / `lib-bump-version.yml`）。詳細は `code-quality-assessment.md`。
+- GitHub Actions 4 ワークフロー（`ci.yml` / `lib-release.yml` / `lib-bump-version.yml` / `openai-review.yml`）。詳細は `code-quality-assessment.md`。
 - 環境変数 `TEST_TIME_FACTOR` — 統合テストのタイムアウト係数。

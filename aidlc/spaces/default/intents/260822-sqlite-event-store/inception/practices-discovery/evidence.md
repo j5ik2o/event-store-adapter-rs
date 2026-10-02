@@ -34,8 +34,9 @@
   存在しない。
 - 推論: 「マージ→リリース」は完全自動化されている。Q5で維持が確定した。
 
-### `renovate.json`
-- 観察: Renovateはminor/patch/pin/digestと
+### `openai-review.yml` / `renovate.json`
+- 観察: PRに対してLLM（coderabbitai/openai-pr-reviewer）自動レビューが
+  動く（renovateラベル付きPRは除外）。Renovateはminor/patch/pin/digestと
   devDependenciesを自動マージする設定（`platformAutomerge: true`,
   `prConcurrentLimit: 5`）。
 - 推論: 依存更新は高度に自動化されている。devsecops検分により
@@ -130,12 +131,17 @@
 - OBJECT（採用）: 「Renovate運用に乗る前提で問題ない」という評価は
   RUSTSEC照合ゲート不在を捨象している — Q8として提示しAで確定
   （依存監査を今回CIに追加）。
-- crates.io Trusted Publishing移行は今回の8問には含めなかった —
-  理由: ソロOSSのリスク/
+- OBJECT（一部採用）: `openai-review.yml`の`pull_request_target`+
+  可変タグ`@latest`のサプライチェーンリスクが未評価 —
+  team-practices.md「Security（参考情報）」に認識として記載したが、
+  今回のSQLite Boltスコープには含めず別イニシアチブのバックログとした
+  （インタビューでは択一の3項目提案のうち依存監査（Q8相当）のみを
+  スコープに採用し、`openai-review.yml`ピン留めとcrates.io Trusted
+  Publishing移行は今回の8問には含めなかった — 理由: ソロOSSのリスク/
   技術判断に絞るというproject.md学習事項に照らし、SQLite Bolt自体の
   受け入れ基準に直結する項目（テスト態勢・依存監査）を優先し、
   ワークフロー基盤の改修（publish認証方式・CI actionピン留め）は
-  スコープクリープと判断したため。
+  スコープクリープと判断したため）。
 - OBJECT（採用）: 手書き`unsafe impl Send/Sync`はセキュリティ観点でも
   要注意 — discovered-rules.mdにNEVER化（developer検分と一致）。
 
@@ -163,6 +169,7 @@
 
 - MSRV（`rust-version`）の宣言要否とCI検証ジョブの追加。
 - examplesビルド検証のCI追加。
+- `openai-review.yml`のアクションSHAピン留め／代替方式検討。
 - crates.io publishのTrusted Publishing（OIDC）移行、`PERSONAL_ACCESS_TOKEN`
   のスコープ最小化確認。
 - `SECURITY.md`の追加、`.github/CODEONWERS`タイポ修正（TD-12）。

@@ -26,6 +26,7 @@
 | `ci.yml` | push / PR | fmt チェック → `cargo test -p`（lib、統合テスト含む） |
 | `lib-release.yml` | `v` タグ | crates.io publish |
 | `lib-bump-version.yml` | main へのマージ | Conventional Commits によるバージョン自動バンプ |
+| `openai-review.yml` | PR | LLM レビュー補助 |
 
 Renovate による依存更新は有効。CI の網羅性の欠落（clippy / カバレッジ / feature マトリクス / MSRV / examples ビルド）は TD-11 参照。
 

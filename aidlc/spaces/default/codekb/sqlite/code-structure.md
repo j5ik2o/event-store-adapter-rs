@@ -25,7 +25,7 @@ event-store-adapter-rs/
 │   └── src/                   # main.rs / user_account.rs / user_account_repository.rs
 ├── docs/                      # DATABASE_SCHEMA.md / DATABASE_SCHEMA.ja.md (DynamoDB の Journal/Snapshot 設計)
 ├── tools/                     # docker-compose.yaml (LocalStack / Bigtable emulator) ほか
-├── .github/workflows/         # ci.yml / lib-release.yml / lib-bump-version.yml
+├── .github/workflows/         # ci.yml / lib-release.yml / lib-bump-version.yml / openai-review.yml
 ├── Makefile.toml              # cargo-make (fmt タスクのみ)
 └── rustfmt.toml               # max_width=120, tab_spaces=2
 ```
