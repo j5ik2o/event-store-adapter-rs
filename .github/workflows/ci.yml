@@ -128,3 +128,21 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses
+  ci-success:
+    name: CI Success
+    runs-on: ubuntu-latest
+    needs: [lint, test-lib, feature-matrix, clippy]
+    if: always()
+    steps:
+      - name: Check CI results
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          TEST_LIB_RESULT: ${{ needs.test-lib.result }}
+          FEATURE_MATRIX_RESULT: ${{ needs.feature-matrix.result }}
+          CLIPPY_RESULT: ${{ needs.clippy.result }}
+        run: |
+          if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
+                "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT"
+            exit 1
+          fi
