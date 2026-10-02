@@ -187,7 +187,3 @@ automergeは（特にbundled SQLiteのC由来CVE面が加わる今回は）リ�
 - SAST相当は clippy（`-D warnings`）＋依存監査＋unsafe監査の3点で足ります。
 - SQLite統合実装ではSQLインジェクション対策（`rusqlite` の `params!`
   バインドパラメータを使用し、文字列連結でSQLを構築しない）を徹底します。
-- `openai-review.yml` の `pull_request_target` + 可変タグ
-  `coderabbitai/openai-pr-reviewer@latest` 参照はサプライチェーンリスク
-  として認識していますが、今回のSQLite Boltスコープには含めません
-  （別イニシアチブのバックログ）。
