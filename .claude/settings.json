@@ -19,6 +19,12 @@
       "Grep",
       "Task",
       "WebSearch"
+    ],
+    "deny": [
+      "Read(./.takt/tools/**)",
+      "Read(./.takt/facets/**)",
+      "Read(./.takt/workflows/**)",
+      "Read(./.takt/steps/**)"
     ]
   },
   "statusLine": {
