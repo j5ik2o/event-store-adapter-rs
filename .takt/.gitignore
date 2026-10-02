@@ -1,5 +1,6 @@
 # Ignore everything by default
 *
+tools/
 
 # This file itself
 !.gitignore
@@ -9,10 +10,7 @@
 !runtime.yaml
 !.takt-workflows
 
-# Facets, workflows and tools (version-controlled)
-!tools/
-!tools/**
-tools/**/target/
+# Facets and workflows (version-controlled)
 !workflows/
 !workflows/**
 !steps/
