@@ -9,6 +9,21 @@ on:
 env:
   CARGO_TERM_COLOR: always
 jobs:
+  release-control:
+    timeout-minutes: 5
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.14'
+      - run: python3 -m unittest discover -s .github -p 'test_semver_level.py' -v
+      - uses: actions/setup-go@v6
+        with:
+          go-version: '1.25'
+          cache: false
+      - run: go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+      - run: actionlint -shellcheck=''
   lint:
     timeout-minutes: 5
     runs-on: ubuntu-latest
@@ -137,18 +152,20 @@ jobs:
     timeout-minutes: 2
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, test-lib, feature-matrix, clippy]
+    needs: [lint, test-lib, feature-matrix, clippy, release-control]
     if: always()
     steps:
       - name: Check CI results
         env:
+          RELEASE_CONTROL_RESULT: ${{ needs.release-control.result }}
           LINT_RESULT: ${{ needs.lint.result }}
           TEST_LIB_RESULT: ${{ needs.test-lib.result }}
           FEATURE_MATRIX_RESULT: ${{ needs.feature-matrix.result }}
           CLIPPY_RESULT: ${{ needs.clippy.result }}
         run: |
           if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
-                "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" ]]; then
-            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT"
+                "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" || \
+                "$RELEASE_CONTROL_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT"
             exit 1
           fi
