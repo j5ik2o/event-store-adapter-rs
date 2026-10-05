@@ -33,6 +33,10 @@ Notes:
 - Because there is no default feature, existing users must add an explicit `features = [...]` entry when upgrading (see [Migration from 1.x](#migration-from-1x)).
 - If both `sqlite` and `sqlite-system` are enabled, the **bundled** SQLite wins. This is a consequence of Cargo feature additivity: `sqlite` turns on `rusqlite/bundled`, and features can only be added, never subtracted. Enable only `sqlite-system` if you want to link against the system SQLite.
 
+### Bigtable write limitation in v3
+
+The v3 Bigtable backend updates the snapshot row with `CheckAndMutateRow`, then writes the event in a separate call. If the event write fails after the snapshot update succeeds, the snapshot remains advanced and the event history can contain a sequence gap. The current storage layout cannot make these writes atomic; resolving this requires the new storage layout planned for the next major version.
+
 ## Usage
 
 You can easily implement an Event Sourcing-enabled repository using an event store. The following uses the SQLite backend (`features = ["sqlite"]`):
