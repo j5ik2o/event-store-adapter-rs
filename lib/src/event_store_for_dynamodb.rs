@@ -511,12 +511,12 @@ where
     }
   }
 
-  /// 剪定対象候補のスナップショット項目キーを seq_nr 降順で `limit` 件返す。
+  /// 剪定対象候補のスナップショット項目キーを seq_nr 昇順で `limit` 件返す。
   ///
   /// BR2.4 で current 項目の seq_nr 属性が実値化されたため、旧実装の「seq_nr > 0」条件では
   /// current 項目を候補から除外できない。候補を 1 件余分に取得し、current 項目
-  /// （skey マーカー 0）をコードで除外してから limit 件に切り詰める（走査順は現行維持 —
-  /// seq_nr 降順。BR3.1 の件数意味論は不変）。
+  /// （skey マーカー 0）をコードで除外してから limit 件に切り詰める。
+  /// 古い履歴から剪定することで、新しい履歴を保持する。
   async fn get_last_snapshot_keys(
     &self,
     aid: &AID,
@@ -532,7 +532,7 @@ where
       .expression_attribute_names("#aid", "aid")
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
       .limit((limit + 1) as i32)
-      .scan_index_forward(false)
+      .scan_index_forward(true)
       .send()
       .await;
     match response {
@@ -602,28 +602,30 @@ where
     aid: &AID,
     seq_nr: usize,
   ) -> Result<Vec<EventEnvelope<AID, P>>, EventStoreReadError> {
-    let response = self
-      .client
-      .query()
-      .table_name(self.journal_table_name.clone())
-      .index_name(self.journal_aid_index_name.clone())
-      .key_condition_expression("#aid = :aid AND #seq_nr >= :seq_nr")
-      .expression_attribute_names("#aid", "aid")
-      .expression_attribute_names("#seq_nr", "seq_nr")
-      .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
-      .expression_attribute_values(":seq_nr", AttributeValue::N(seq_nr.to_string()))
-      .send()
-      .await;
-    match response {
-      Err(err) => Err(EventStoreReadError::IOError(err.into())),
-      Ok(response) => {
-        let items = response.items.unwrap_or_default();
-        let mut events = Vec::with_capacity(items.len());
-        for item in items {
-          // BR2.2: 各アイテムの属性群から封筒を再構成する（属性欠落は読取エラー）
-          events.push(self.event_envelope_from_item(aid, &item)?);
-        }
-        Ok(events)
+    let mut events = Vec::new();
+    let mut last_evaluated_key = None;
+    loop {
+      let response = self
+        .client
+        .query()
+        .table_name(self.journal_table_name.clone())
+        .index_name(self.journal_aid_index_name.clone())
+        .key_condition_expression("#aid = :aid AND #seq_nr >= :seq_nr")
+        .expression_attribute_names("#aid", "aid")
+        .expression_attribute_names("#seq_nr", "seq_nr")
+        .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
+        .expression_attribute_values(":seq_nr", AttributeValue::N(seq_nr.to_string()))
+        .set_exclusive_start_key(last_evaluated_key)
+        .send()
+        .await
+        .map_err(|err| EventStoreReadError::IOError(err.into()))?;
+      for item in response.items.unwrap_or_default() {
+        // BR2.2: 各アイテムの属性群から封筒を再構成する（属性欠落は読取エラー）
+        events.push(self.event_envelope_from_item(aid, &item)?);
+      }
+      last_evaluated_key = response.last_evaluated_key.filter(|key| !key.is_empty());
+      if last_evaluated_key.is_none() {
+        return Ok(events);
       }
     }
   }
