@@ -33,6 +33,10 @@ event-store-adapter-rs = { version = "<latest>", features = ["sqlite"] }
 - デフォルトfeatureがないため、既存の利用者はアップグレード時に明示的な `features = [...]` の指定が必要です（[1.x からの移行](#1x-からの移行)を参照）。
 - `sqlite` と `sqlite-system` を併用した場合は**バンドル版**が優先されます。これはCargo featureの加算性の帰結です（`sqlite` が `rusqlite/bundled` を有効化し、featureは追加のみで打ち消せないため）。システムSQLiteへリンクしたい場合は `sqlite-system` のみを有効にしてください。
 
+### v3 の Bigtable 書き込みの制約
+
+v3 の Bigtable バックエンドは、`CheckAndMutateRow` でスナップショット行を更新した後、別の呼び出しでイベントを書き込みます。スナップショットの更新に成功しても、その後のイベントの書き込みに失敗すると、スナップショットだけが先に進み、イベント履歴に欠番が残る可能性があります。現在の保存配置では、この二つの書き込みを原子的に実行できません。次のメジャーバージョンで導入する新しい仕様の保存配置で解消する予定です。
+
 ## 使い方
 
 イベントストアを使えば、Event Sourcing対応リポジトリを簡単に実装できます。以下はSQLiteバックエンド（`features = ["sqlite"]`）を使う例です:

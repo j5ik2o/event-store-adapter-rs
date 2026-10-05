@@ -113,6 +113,42 @@ fn renamed_envelope(
   EventEnvelope::new(id.clone(), seq_nr, Utc::now(), payload).with_manifest(RENAMED_MANIFEST)
 }
 
+#[tokio::test]
+async fn should_read_all_dynamodb_events_across_query_pages() {
+  let node = dynamodb_local().await;
+  let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
+  let (_client, mut store) = connect_store(port).await;
+  let id = UserAccountId::new(id_generate().to_string());
+  let (account, created) = UserAccount::new(id.clone(), "initial".to_string());
+  store
+    .persist_event_and_snapshot(EventEnvelope::new(id.clone(), 1, Utc::now(), created), account, 0)
+    .await
+    .expect("creation failed");
+
+  // 25 件 × 100 KiB のイベントで、DynamoDB Query の 1 MiB 制限を複数回超える。
+  let name = "x".repeat(100 * 1024);
+  for seq_nr in 2..=26 {
+    store
+      .persist_event(
+        renamed_envelope(&id, seq_nr, UserAccountEvent::Renamed { name: name.clone() }),
+        seq_nr - 1,
+      )
+      .await
+      .expect("event write failed");
+  }
+
+  let events = store.get_events_by_id_since_seq_nr(&id, 2).await.expect("read failed");
+  assert_eq!(events.len(), 25, "all events must be returned across Query pages");
+  assert_eq!(
+    events.iter().map(|event| event.seq_nr()).collect::<Vec<_>>(),
+    (2..=26).collect::<Vec<_>>()
+  );
+  for event in events {
+    assert_eq!(event.payload(), &UserAccountEvent::Renamed { name: name.clone() });
+  }
+  assert!(store.get_events_by_id_since_seq_nr(&id, 27).await.unwrap().is_empty());
+}
+
 // FR7.1 / C3 / AC5.1.1: 共有シナリオ（8 手順・封筒メタデータ往復 assert 含む）を無改変で green にする。
 // keep_snapshot_count + delete_ttl の組み合わせで ttl 更新方式の剪定経路も同時に通す（現行構成維持）
 #[tokio::test]
@@ -248,7 +284,7 @@ async fn test_event_store_on_dynamodb_unreachable_endpoint_returns_io_error() {
 // FR6.3 / AC2.3.4 / BR3.1 / BR4.1: keep_snapshot_count = Some(n) でスナップショット付き更新を
 // 繰り返すと履歴項目が同一トランザクションで書かれ、保持フックが n 件残して剪定する
 // （delete_ttl なし → 削除方式 = FR6.5 で .unwrap() を除去した DeleteRequest 経路を通す）。
-// 現行の剪定走査（seq_nr 降順・超過分削除）では旧い側の履歴（seq_nr = 1, 2）が残る。
+// 古い履歴から削除し、新しい履歴（seq_nr = 3, 4）を残す。
 // AC2.3.3 / BR2.3: 現行・履歴項目の payload は純ドメイン内容のみ（JSON 完全一致 — U3 同型）
 #[tokio::test]
 async fn test_event_store_on_dynamodb_prunes_snapshot_history() {
@@ -284,7 +320,7 @@ async fn test_event_store_on_dynamodb_prunes_snapshot_history() {
       .expect("update failed");
   }
 
-  // 剪定後は current 1 件 + 履歴 2 件（現行走査順では旧い側 seq_nr = 1, 2 が残る）
+  // 剪定後は current 1 件 + 最新の履歴 2 件。
   let items = scan_snapshot_items(&client, &id).await;
   let mut history_skeys: Vec<String> = items
     .keys()
@@ -292,7 +328,7 @@ async fn test_event_store_on_dynamodb_prunes_snapshot_history() {
     .cloned()
     .collect();
   history_skeys.sort();
-  assert_eq!(history_skeys, vec![snapshot_skey(&id, 1), snapshot_skey(&id, 2)]);
+  assert_eq!(history_skeys, vec![snapshot_skey(&id, 3), snapshot_skey(&id, 4)]);
 
   // current 項目は最新状態のまま（剪定は履歴項目のみに作用する）
   let snapshot = store
@@ -315,14 +351,238 @@ async fn test_event_store_on_dynamodb_prunes_snapshot_history() {
   };
   assert_eq!(current_json, serde_json::to_value(&expected_current).unwrap());
 
-  // 履歴項目（seq_nr = 2 のスナップショット付き更新の後像）の payload も純ドメイン内容のみ
-  let history_payload = items.get(&snapshot_skey(&id, 2)).expect("history payload must exist");
+  // 履歴項目（seq_nr = 3 のスナップショット付き更新の後像）の payload も純ドメイン内容のみ
+  let history_payload = items.get(&snapshot_skey(&id, 3)).expect("history payload must exist");
   let history_json: serde_json::Value = serde_json::from_slice(history_payload).unwrap();
   let expected_history = UserAccount {
     id: id.clone(),
-    name: "history-1".to_string(),
+    name: "history-2".to_string(),
   };
   assert_eq!(history_json, serde_json::to_value(&expected_history).unwrap());
+}
+
+#[tokio::test]
+async fn should_mark_only_old_dynamodb_snapshot_history_for_expiration() {
+  let node = dynamodb_local().await;
+  let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
+  let (client, store) = connect_store(port).await;
+  let mut store = store
+    .with_keep_snapshot_count(Some(2))
+    .expect("Some(2) is valid")
+    .with_delete_ttl(Some(chrono::Duration::hours(1)));
+  let id = UserAccountId::new(id_generate().to_string());
+  let (mut account, created) = UserAccount::new(id.clone(), "initial".to_string());
+  store
+    .persist_event_and_snapshot(
+      EventEnvelope::new(id.clone(), 1, Utc::now(), created),
+      account.clone(),
+      0,
+    )
+    .await
+    .expect("creation failed");
+  for seq_nr in 2..=4 {
+    let event = account.rename(&format!("history-{seq_nr}")).unwrap();
+    store
+      .persist_event_and_snapshot(renamed_envelope(&id, seq_nr, event), account.clone(), seq_nr - 1)
+      .await
+      .expect("update failed");
+  }
+
+  let response = client
+    .query()
+    .table_name(SNAPSHOT_TABLE)
+    .index_name(SNAPSHOT_AID_INDEX)
+    .key_condition_expression("#aid = :aid")
+    .expression_attribute_names("#aid", "aid")
+    .expression_attribute_values(":aid", AttributeValue::S(id.to_string()))
+    .send()
+    .await
+    .expect("query failed");
+  let items = response.items.unwrap_or_default();
+  assert_eq!(
+    items.len(),
+    5,
+    "TTL must leave current and history rows until expiration"
+  );
+  let mut expiring_keys: Vec<_> = items
+    .iter()
+    .filter(|item| item.get("ttl").unwrap().as_n().unwrap().parse::<i64>().unwrap() > 0)
+    .map(|item| item.get("skey").unwrap().as_s().unwrap().clone())
+    .collect();
+  expiring_keys.sort();
+  assert_eq!(expiring_keys, vec![snapshot_skey(&id, 1), snapshot_skey(&id, 2)]);
+}
+
+#[tokio::test]
+async fn should_preserve_unmarked_history_and_existing_dynamodb_expiration() {
+  let node = dynamodb_local().await;
+  let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
+  let (client, store) = connect_store(port).await;
+  let mut store = store
+    .with_keep_snapshot_count(Some(3))
+    .unwrap()
+    .with_delete_ttl(Some(chrono::Duration::hours(1)));
+  let id = UserAccountId::new(id_generate().to_string());
+  let (mut account, created) = UserAccount::new(id.clone(), "initial".to_string());
+  store
+    .persist_event_and_snapshot(
+      EventEnvelope::new(id.clone(), 1, Utc::now(), created),
+      account.clone(),
+      0,
+    )
+    .await
+    .unwrap();
+  for seq_nr in 2..=3 {
+    let event = account.rename(&format!("history-{seq_nr}")).unwrap();
+    store
+      .persist_event_and_snapshot(renamed_envelope(&id, seq_nr, event), account.clone(), seq_nr - 1)
+      .await
+      .unwrap();
+  }
+  let existing_ttl = (Utc::now() + chrono::Duration::days(7)).timestamp().to_string();
+  client
+    .update_item()
+    .table_name(SNAPSHOT_TABLE)
+    .key(
+      "pkey",
+      AttributeValue::S(DefaultKeyResolver::default().resolve_partition_key(&id, SHARD_COUNT)),
+    )
+    .key("skey", AttributeValue::S(snapshot_skey(&id, 3)))
+    .update_expression("SET #ttl = :ttl")
+    .expression_attribute_names("#ttl", "ttl")
+    .expression_attribute_values(":ttl", AttributeValue::N(existing_ttl.clone()))
+    .send()
+    .await
+    .unwrap();
+  store = store.with_keep_snapshot_count(Some(2)).unwrap();
+  let event = account.rename("history-4").unwrap();
+  store
+    .persist_event_and_snapshot(renamed_envelope(&id, 4, event), account, 3)
+    .await
+    .unwrap();
+  for seq_nr in 0..=4 {
+    let item = client
+      .get_item()
+      .table_name(SNAPSHOT_TABLE)
+      .key(
+        "pkey",
+        AttributeValue::S(DefaultKeyResolver::default().resolve_partition_key(&id, SHARD_COUNT)),
+      )
+      .key("skey", AttributeValue::S(snapshot_skey(&id, seq_nr)))
+      .consistent_read(true)
+      .send()
+      .await
+      .unwrap()
+      .item
+      .unwrap();
+    let ttl = item.get("ttl").unwrap().as_n().unwrap();
+    match seq_nr {
+      1 => assert!(ttl.parse::<i64>().unwrap() > 0),
+      3 => assert_eq!(ttl, &existing_ttl, "existing expiration must remain unchanged"),
+      _ => assert_eq!(ttl, "0", "current and newest unmarked history must be retained"),
+    }
+  }
+}
+
+#[tokio::test]
+async fn should_mark_unmarked_dynamodb_history_across_filtered_query_pages() {
+  exercise_snapshot_retention_across_query_pages(true).await;
+}
+
+#[tokio::test]
+async fn should_delete_excess_dynamodb_history_across_query_pages() {
+  exercise_snapshot_retention_across_query_pages(false).await;
+}
+
+async fn exercise_snapshot_retention_across_query_pages(use_ttl: bool) {
+  let node = dynamodb_local().await;
+  let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
+  let (client, store) = connect_store(port).await;
+  let mut store = store.with_keep_snapshot_count(Some(20)).unwrap();
+  if use_ttl {
+    store = store.with_delete_ttl(Some(chrono::Duration::hours(1)));
+  }
+  let id = UserAccountId::new(id_generate().to_string());
+  let pkey = DefaultKeyResolver::default().resolve_partition_key(&id, SHARD_COUNT);
+  let (mut account, created) = UserAccount::new(id.clone(), "x".repeat(100 * 1024));
+  store
+    .persist_event_and_snapshot(
+      EventEnvelope::new(id.clone(), 1, Utc::now(), created),
+      account.clone(),
+      0,
+    )
+    .await
+    .unwrap();
+  for seq_nr in 2..=16 {
+    let event = account.rename(&format!("{seq_nr}-{}", "x".repeat(100 * 1024))).unwrap();
+    store
+      .persist_event_and_snapshot(renamed_envelope(&id, seq_nr, event), account.clone(), seq_nr - 1)
+      .await
+      .unwrap();
+  }
+  let existing_ttl = (Utc::now() + chrono::Duration::days(7)).timestamp().to_string();
+  if use_ttl {
+    for seq_nr in 1..=12 {
+      client
+        .update_item()
+        .table_name(SNAPSHOT_TABLE)
+        .key("pkey", AttributeValue::S(pkey.clone()))
+        .key("skey", AttributeValue::S(snapshot_skey(&id, seq_nr)))
+        .update_expression("SET #ttl = :ttl")
+        .expression_attribute_names("#ttl", "ttl")
+        .expression_attribute_values(":ttl", AttributeValue::N(existing_ttl.clone()))
+        .send()
+        .await
+        .unwrap();
+    }
+  }
+  let first_page = client
+    .query()
+    .table_name(SNAPSHOT_TABLE)
+    .index_name(SNAPSHOT_AID_INDEX)
+    .key_condition_expression("#aid = :aid")
+    .expression_attribute_names("#aid", "aid")
+    .expression_attribute_values(":aid", AttributeValue::S(id.to_string()))
+    .send()
+    .await
+    .unwrap();
+  assert!(
+    first_page.last_evaluated_key.is_some(),
+    "fixture must exceed a Query page"
+  );
+  store = store.with_keep_snapshot_count(Some(2)).unwrap();
+  let event = account.rename("last").unwrap();
+  store
+    .persist_event_and_snapshot(renamed_envelope(&id, 17, event), account, 16)
+    .await
+    .unwrap();
+  for seq_nr in 0..=17 {
+    let item = client
+      .get_item()
+      .table_name(SNAPSHOT_TABLE)
+      .key("pkey", AttributeValue::S(pkey.clone()))
+      .key("skey", AttributeValue::S(snapshot_skey(&id, seq_nr)))
+      .consistent_read(true)
+      .send()
+      .await
+      .unwrap()
+      .item;
+    if use_ttl {
+      let item = item.expect("TTL must not delete a history row immediately");
+      let ttl = item.get("ttl").unwrap().as_n().unwrap();
+      match seq_nr {
+        1..=12 => assert_eq!(ttl, &existing_ttl, "marked history must not be selected again"),
+        13..=15 => assert!(ttl.parse::<i64>().unwrap() > 0),
+        _ => assert_eq!(ttl, "0", "current and newest unmarked history must be retained"),
+      }
+    } else {
+      assert_eq!(
+        item.is_some(),
+        seq_nr == 0 || seq_nr >= 16,
+        "only newest history must remain"
+      );
+    }
+  }
 }
 
 // BR3.1 / AC2.3.4: keep_snapshot_count = None（既定）は履歴項目を書かず剪定もしない

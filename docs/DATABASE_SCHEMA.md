@@ -13,18 +13,14 @@ column holds **pure domain content only** — the library no longer injects `ver
 > rows written by v2 is not supported; see
 > [MIGRATION_GUIDE_v3.md](MIGRATION_GUIDE_v3.md) for the migration stance.
 
-### Snapshot-retention asymmetry across backends
+### Snapshot retention across backends
 
-When `with_keep_snapshot_count(Some(n))` is enabled, every backend bounds the
-*number* of history snapshots to `n`, but **which** rows survive differs:
+When `with_keep_snapshot_count(Some(n))` is enabled, **DynamoDB / Bigtable / SQLite**
+all keep the **newest `n`** history snapshots and remove the oldest excess.
 
-- **DynamoDB** prunes the excess from the **newest** history items (descending
-  `seq_nr` query), so the **oldest** history items remain.
-- **Bigtable / SQLite** keep the **newest `n`** history rows and delete the oldest
-  excess.
-
-The count semantics are identical; only the residual selection is asymmetric
-(kept as-is from the pre-v3 behavior of each backend).
+DynamoDB deletes the oldest excess items or, when `with_delete_ttl` is configured,
+sets a future `ttl` value so DynamoDB expires them. Bigtable and SQLite delete the
+oldest excess rows.
 
 ## DynamoDB table schema used by EventStore
 
@@ -70,10 +66,10 @@ This table is used to store aggregate state and to speed up replay of aggregates
 - History items (skey = event seq_nr) are written **only when
   `with_keep_snapshot_count(Some(n))` is enabled**, inside the same transaction as the
   current item and the journal item.
-- The GSI on `(aid, seq_nr)` is used by the retention query; the excess above
-  `n` history items is either deleted or, when `with_delete_ttl` is configured, given a
-  future `ttl` value so DynamoDB expires the items (see the asymmetry note above:
-  the pruned excess is taken from the newest side).
+- The GSI on `(aid, seq_nr)` is used by the retention query; the newest `n` history
+  items are retained, and the oldest excess is either deleted or, when
+  `with_delete_ttl` is configured, given a future `ttl` value so DynamoDB expires
+  the items.
 
 ### Writing events and snapshots
 
