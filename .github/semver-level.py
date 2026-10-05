@@ -1,31 +1,33 @@
-#! /usr/bin/env python3
-# -*- coding: utf-8 -*-
-import sys
-import csv
+#!/usr/bin/env python3
+"""Determine the highest version bump from git log subjects and bodies."""
+
 import re
+import sys
 
-commit_messages = {'BREAKING CHANGE': 0, 'build': 0, 'ci': 0, 'feat': 0, 'fix': 0, 'docs': 0, 'style': 0, 'refactor': 0, 'perf': 0, 'test': 0, 'revert': 0, 'chore': 0}
+SUBJECT = re.compile(r"^([a-z]+)(?:\([^\r\n]*\))?(!)?:")
+BREAKING = re.compile(r"^(?:BREAKING CHANGE|BREAKING-CHANGE):", re.MULTILINE)
 
-rules = {'major': ['perf', 'BREAKING CHANGE'], 'minor': ['feat', 'revert'], 'patch': ['build', 'ci', 'fix', 'docs', 'style', 'refactor', 'chore', 'test']}
 
-cin = csv.reader(sys.stdin, delimiter="\t")
+def semver_level(log):
+    level = None
+    for record in log.split("\x1e"):
+        record = record.lstrip("\n")
+        if not record:
+            continue
+        subject, body = record.split("\x1f", 1)
+        match = SUBJECT.match(subject)
+        if BREAKING.search(body) or (match and match.group(2)):
+            return "major"
+        if match:
+            if match.group(1) in {"feat", "revert"}:
+                level = "minor"
+            elif level is None:
+                level = "patch"
+    return level
 
-def match_append(key, row):
-    r = re.match(f"^{key}(.*)?\: (.*)", row[2])
-    if r:
-        commit_messages[key]+=1
 
-for row in cin:
-    for key in commit_messages.keys():
-        match_append(key, row)
-
-if sum(commit_messages.values()) > 0:
-    for k,v in rules.items():
-        sum = 0
-        for t in v:
-            sum += commit_messages[t]
-        if sum > 0:
-            print(k)
-            break
-else:
-    sys.exit(-1)
+if __name__ == "__main__":
+    level = semver_level(sys.stdin.read())
+    if level is None:
+        sys.exit(1)
+    print(level)
