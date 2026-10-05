@@ -412,7 +412,7 @@ where
   ) -> Result<(), EventStoreWriteError> {
     // BR3.1: excess = 件数 −（keep + 1）の現行意味論を維持する（current 1 + 履歴 n 件）
     let snapshot_count = self
-      .get_snapshot_count(aggregate_id)
+      .get_snapshot_count(aggregate_id, false)
       .await
       .map_err(|err| EventStoreWriteError::OtherError(err.to_string()))?;
     let excess_count = snapshot_count.saturating_sub(keep_snapshot_count + 1);
@@ -420,7 +420,7 @@ where
       return Ok(());
     }
     let keys = self
-      .get_last_snapshot_keys(aggregate_id, excess_count)
+      .get_last_snapshot_keys(aggregate_id, excess_count, false)
       .await
       .map_err(|err| EventStoreWriteError::OtherError(err.to_string()))?;
     if keys.is_empty() {
@@ -459,15 +459,15 @@ where
     delete_ttl: Duration,
   ) -> Result<(), EventStoreWriteError> {
     let snapshot_count = self
-      .get_snapshot_count(aggregate_id)
+      .get_snapshot_count(aggregate_id, true)
       .await
       .map_err(|err| EventStoreWriteError::OtherError(err.to_string()))?;
-    let excess_count = snapshot_count.saturating_sub(keep_snapshot_count + 1);
+    let excess_count = snapshot_count.saturating_sub(keep_snapshot_count);
     if excess_count == 0 {
       return Ok(());
     }
     let keys = self
-      .get_last_snapshot_keys(aggregate_id, excess_count)
+      .get_last_snapshot_keys(aggregate_id, excess_count, true)
       .await
       .map_err(|err| EventStoreWriteError::OtherError(err.to_string()))?;
     if keys.is_empty() {
@@ -493,8 +493,8 @@ where
     Ok(())
   }
 
-  async fn get_snapshot_count(&self, aid: &AID) -> Result<usize, EventStoreReadError> {
-    let response = self
+  async fn get_snapshot_count(&self, aid: &AID, unmarked_only: bool) -> Result<usize, EventStoreReadError> {
+    let mut query = self
       .client
       .query()
       .table_name(self.snapshot_table_name.clone())
@@ -502,28 +502,42 @@ where
       .key_condition_expression("#aid = :aid")
       .expression_attribute_names("#aid", "aid")
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
-      .select(Select::Count)
-      .send()
-      .await;
-    match response {
-      Err(err) => Err(EventStoreReadError::IOError(Box::new(err.into_service_error()))),
-      Ok(response) => Ok(response.count as usize),
+      .select(Select::Count);
+    if unmarked_only {
+      query = query
+        .filter_expression("#skey <> :current AND (attribute_not_exists(#ttl) OR #ttl = :zero)")
+        .expression_attribute_names("#skey", "skey")
+        .expression_attribute_names("#ttl", "ttl")
+        .expression_attribute_values(":current", AttributeValue::S(self.current_snapshot_skey(aid)))
+        .expression_attribute_values(":zero", AttributeValue::N("0".to_string()));
+    }
+    let mut count = 0;
+    let mut last_evaluated_key = None;
+    loop {
+      let response = query
+        .clone()
+        .set_exclusive_start_key(last_evaluated_key)
+        .send()
+        .await
+        .map_err(|err| EventStoreReadError::IOError(Box::new(err.into_service_error())))?;
+      count += response.count as usize;
+      last_evaluated_key = response.last_evaluated_key.filter(|key| !key.is_empty());
+      if last_evaluated_key.is_none() {
+        return Ok(count);
+      }
     }
   }
 
-  /// 剪定対象候補のスナップショット項目キーを seq_nr 昇順で `limit` 件返す。
-  ///
-  /// BR2.4 で current 項目の seq_nr 属性が実値化されたため、旧実装の「seq_nr > 0」条件では
-  /// current 項目を候補から除外できない。候補を 1 件余分に取得し、current 項目
-  /// （skey マーカー 0）をコードで除外してから limit 件に切り詰める。
-  /// 古い履歴から剪定することで、新しい履歴を保持する。
+  /// 古い履歴から `limit` 件の剪定対象キーを返す。
+  /// TTL 方式では期限未設定の履歴だけを選び、必要件数までページを読む。
   async fn get_last_snapshot_keys(
     &self,
     aid: &AID,
     limit: usize,
+    unmarked_only: bool,
   ) -> Result<Vec<(String, String)>, EventStoreReadError> {
     let current_skey = self.current_snapshot_skey(aid);
-    let response = self
+    let mut query = self
       .client
       .query()
       .table_name(self.snapshot_table_name.clone())
@@ -531,29 +545,43 @@ where
       .key_condition_expression("#aid = :aid")
       .expression_attribute_names("#aid", "aid")
       .expression_attribute_values(":aid", AttributeValue::S(aid.to_string()))
-      .limit((limit + 1) as i32)
-      .scan_index_forward(true)
-      .send()
-      .await;
-    match response {
-      Err(err) => Err(EventStoreReadError::IOError(Box::new(err.into_service_error()))),
-      Ok(response) => {
-        let mut keys = Vec::new();
-        if let Some(items) = response.items {
-          for item in items {
-            let pkey = item.get("pkey").and_then(|v| v.as_s().ok()).cloned();
-            let skey = item.get("skey").and_then(|v| v.as_s().ok()).cloned();
-            if let (Some(pkey), Some(skey)) = (pkey, skey) {
-              if skey != current_skey {
-                keys.push((pkey, skey));
-              }
-            }
+      .scan_index_forward(true);
+    if unmarked_only {
+      query = query
+        .filter_expression("#skey <> :current AND (attribute_not_exists(#ttl) OR #ttl = :zero)")
+        .expression_attribute_names("#skey", "skey")
+        .expression_attribute_names("#ttl", "ttl")
+        .expression_attribute_values(":current", AttributeValue::S(current_skey.clone()))
+        .expression_attribute_values(":zero", AttributeValue::N("0".to_string()));
+    }
+    let mut keys = Vec::new();
+    let mut last_evaluated_key = None;
+    while keys.len() < limit {
+      // FilterExpression は Limit 適用後に評価されるため、空のページでも継続する。
+      let page_limit = (limit - keys.len()).saturating_add(1).min(i32::MAX as usize) as i32;
+      let response = query
+        .clone()
+        .limit(page_limit)
+        .set_exclusive_start_key(last_evaluated_key)
+        .send()
+        .await
+        .map_err(|err| EventStoreReadError::IOError(Box::new(err.into_service_error())))?;
+      for item in response.items.unwrap_or_default() {
+        let pkey = item.get("pkey").and_then(|v| v.as_s().ok()).cloned();
+        let skey = item.get("skey").and_then(|v| v.as_s().ok()).cloned();
+        if let (Some(pkey), Some(skey)) = (pkey, skey) {
+          if skey != current_skey {
+            keys.push((pkey, skey));
           }
         }
-        keys.truncate(limit);
-        Ok(keys)
+      }
+      last_evaluated_key = response.last_evaluated_key.filter(|key| !key.is_empty());
+      if last_evaluated_key.is_none() {
+        break;
       }
     }
+    keys.truncate(limit);
+    Ok(keys)
   }
 }
 
