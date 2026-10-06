@@ -153,11 +153,59 @@ jobs:
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses
+  conformance:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # The runner does not connect to a backend yet, so the dynamodb leg starts no container.
+        backend: [memory, dynamodb]
+    name: conformance (${{ matrix.backend }})
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - run: python3 tools/conformance/manifest.py verify
+      - run: cargo run -p event-store-adapter-conformance-rs --release -- --backend ${{ matrix.backend }} --data conformance --report conformance-report-${{ matrix.backend }}.json
+      - name: Upload the conformance report
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: conformance-${{ matrix.backend }}
+          path: conformance-report-${{ matrix.backend }}.json
+          if-no-files-found: warn
+      - name: Summarize the conformance report
+        if: always()
+        env:
+          BACKEND: ${{ matrix.backend }}
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json
+          import os
+          from collections import Counter
+
+          backend = os.environ["BACKEND"]
+          print(f"### conformance ({backend})")
+          try:
+              with open(f"conformance-report-{backend}.json", encoding="utf-8") as report_file:
+                  cases = json.load(report_file)["cases"]
+          except FileNotFoundError:
+              print("No report was written.")
+          else:
+              counts = Counter(case["status"] for case in cases)
+              print("| status | cases |")
+              print("|---|---|")
+              for status in ("passed", "failed", "not-applicable", "unverified"):
+                  print(f"| {status} | {counts[status]} |")
+              print(f"| total | {len(cases)} |")
+          PY
   ci-success:
     timeout-minutes: 2
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, test-lib, feature-matrix, clippy, release-control]
+    needs: [lint, test-lib, feature-matrix, clippy, release-control, conformance]
     if: always()
     steps:
       - name: Check CI results
@@ -167,10 +215,11 @@ jobs:
           TEST_LIB_RESULT: ${{ needs.test-lib.result }}
           FEATURE_MATRIX_RESULT: ${{ needs.feature-matrix.result }}
           CLIPPY_RESULT: ${{ needs.clippy.result }}
+          CONFORMANCE_RESULT: ${{ needs.conformance.result }}
         run: |
           if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
                 "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" || \
-                "$RELEASE_CONTROL_RESULT" != "success" ]]; then
-            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT"
+                "$RELEASE_CONTROL_RESULT" != "success" || "$CONFORMANCE_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT"
             exit 1
           fi
