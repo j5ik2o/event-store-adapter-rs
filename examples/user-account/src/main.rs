@@ -5,7 +5,7 @@ use std::time::Duration;
 use chrono::Utc;
 use event_store_adapter_rs::event_envelope::EventEnvelope;
 use event_store_adapter_rs::EventStoreForDynamoDB;
-use event_store_adapter_test_utils_rs::docker::dynamodb_local;
+use event_store_adapter_test_utils_rs::docker::localstack;
 use event_store_adapter_test_utils_rs::dynamodb::{create_client, create_journal_table, create_snapshot_table};
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 
@@ -33,7 +33,7 @@ async fn main() {
     .finish();
   tracing::subscriber::set_global_default(subscriber).expect("setting default subscriber failed");
 
-  let dynamodb_node = dynamodb_local().await;
+  let dynamodb_node = localstack().await;
   let port = dynamodb_node
     .get_host_port_ipv4(4566)
     .await

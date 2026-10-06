@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::types::AttributeValue;
 use aws_sdk_dynamodb::Client;
 use chrono::Utc;
-use event_store_adapter_test_utils_rs::docker::dynamodb_local;
+use event_store_adapter_test_utils_rs::docker::localstack;
 use event_store_adapter_test_utils_rs::dynamodb::{
   create_client, create_journal_table, create_snapshot_table, wait_table,
 };
@@ -115,7 +115,7 @@ fn renamed_envelope(
 
 #[tokio::test]
 async fn should_read_all_dynamodb_events_across_query_pages() {
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (_client, mut store) = connect_store(port).await;
   let id = UserAccountId::new(id_generate().to_string());
@@ -155,7 +155,7 @@ async fn should_read_all_dynamodb_events_across_query_pages() {
 async fn test_event_store_on_dynamodb() {
   init_tracing();
 
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (_client, store) = connect_store(port).await;
   let mut event_store = store
@@ -177,7 +177,7 @@ async fn test_event_store_on_dynamodb() {
 async fn test_event_store_on_dynamodb_concurrent_conflict_yields_optimistic_lock_error() {
   init_tracing();
 
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (_client, store) = connect_store(port).await;
 
@@ -290,7 +290,7 @@ async fn test_event_store_on_dynamodb_unreachable_endpoint_returns_io_error() {
 async fn test_event_store_on_dynamodb_prunes_snapshot_history() {
   init_tracing();
 
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (client, store) = connect_store(port).await;
   let mut store = store.with_keep_snapshot_count(Some(2)).expect("Some(2) is valid");
@@ -363,7 +363,7 @@ async fn test_event_store_on_dynamodb_prunes_snapshot_history() {
 
 #[tokio::test]
 async fn should_mark_only_old_dynamodb_snapshot_history_for_expiration() {
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (client, store) = connect_store(port).await;
   let mut store = store
@@ -415,7 +415,7 @@ async fn should_mark_only_old_dynamodb_snapshot_history_for_expiration() {
 
 #[tokio::test]
 async fn should_preserve_unmarked_history_and_existing_dynamodb_expiration() {
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (client, store) = connect_store(port).await;
   let mut store = store
@@ -495,7 +495,7 @@ async fn should_delete_excess_dynamodb_history_across_query_pages() {
 }
 
 async fn exercise_snapshot_retention_across_query_pages(use_ttl: bool) {
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (client, store) = connect_store(port).await;
   let mut store = store.with_keep_snapshot_count(Some(20)).unwrap();
@@ -591,7 +591,7 @@ async fn exercise_snapshot_retention_across_query_pages(use_ttl: bool) {
 async fn test_event_store_on_dynamodb_without_keep_snapshot_count_writes_no_history() {
   init_tracing();
 
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (client, mut store) = connect_store(port).await;
 
@@ -637,7 +637,7 @@ async fn test_event_store_on_dynamodb_without_keep_snapshot_count_writes_no_hist
 async fn test_event_store_on_dynamodb_update_on_absent_aggregate_yields_optimistic_lock_error() {
   init_tracing();
 
-  let node = dynamodb_local().await;
+  let node = localstack().await;
   let port = node.get_host_port_ipv4(4566).await.expect("Failed to get port");
   let (_client, mut store) = connect_store(port).await;
 
