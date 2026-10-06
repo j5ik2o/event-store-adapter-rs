@@ -228,11 +228,32 @@ fn test_load_verifies_real_manifest_and_exposes_its_fixed_sha256() {
   assert_eq!(data.manifest_version.as_deref(), Some("1.0.0"));
 }
 
+#[test]
+fn test_load_skips_an_unlisted_case_file_and_reports_it_as_unlisted() {
+  let dir = TempDir::new("data-load-unlisted");
+  copy_dir_all(&conformance_dir(), dir.path());
+  fs::write(dir.path().join("values").join("unlisted.json"), "{").expect("一覧にないファイルを書ける");
+
+  let data = load(dir.path()).expect("一覧にないファイルが壊れていても、ケースの読み込みは続ける");
+
+  assert_eq!(data.cases.len(), 116);
+  assert!(
+    data
+      .manifest
+      .problems
+      .iter()
+      .any(|problem| matches!(problem, ManifestProblem::Unlisted(path) if path == "values/unlisted.json")),
+    "problems: {:?}",
+    data.manifest.problems
+  );
+}
+
 // ---------------------------------------------------------------------------
 // format と version の確認（合成した一時ディレクトリ）
 // ---------------------------------------------------------------------------
 
-const MANIFEST_JSON: &str = r#"{"format":"manifest","version":"1.0.0","files":[]}"#;
+// 合成したケースのファイルを一覧に載せる（ハッシュは合わないが、一覧に載ったファイルだけをケースとして読むため）
+const MANIFEST_JSON: &str = r#"{"format":"manifest","version":"1.0.0","files":[{"path":"values/synthetic.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]}"#;
 const COVERAGE_JSON: &str =
   r#"{"format":"coverage","version":"1.0.0","required_rules":["T-1"],"exclusions":[],"notes":[]}"#;
 

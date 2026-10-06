@@ -501,13 +501,24 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
     )?,
   };
 
+  // 一覧にないファイルは manifest の照合が不一致として報告するので、ケースとしては読まない
+  let listed_paths: HashSet<&str> = manifest_value
+    .get("files")
+    .and_then(Value::as_array)
+    .map(|listed| {
+      listed
+        .iter()
+        .filter_map(|file| file.get("path").and_then(Value::as_str))
+        .collect()
+    })
+    .unwrap_or_default();
   let mut cases = Vec::new();
   let mut ids = HashSet::new();
   for entry in &files {
     let in_case_directory = ["values/", "scenarios/", "dynamodb/"]
       .iter()
       .any(|directory| entry.path.starts_with(directory));
-    if !in_case_directory || !entry.path.ends_with(".json") {
+    if !in_case_directory || !entry.path.ends_with(".json") || !listed_paths.contains(entry.path.as_str()) {
       continue;
     }
     let value = parse_file(&entry.path, &entry.bytes)?;
