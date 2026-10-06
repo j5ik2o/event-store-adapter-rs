@@ -56,7 +56,7 @@ fn register_error(case: &Value) -> FaultError {
 }
 
 #[test]
-fn test_register_rejects_count_of_zero_so_that_an_unapplied_fault_is_never_counted_as_fired() {
+fn should_register_rejects_count_of_zero_so_that_an_unapplied_fault_is_never_counted_as_fired() {
   let error = register_error(&case(
     1,
     vec![fault(1, "commit", count(1)), fault(1, "commit", count(0))],
@@ -66,14 +66,14 @@ fn test_register_rejects_count_of_zero_so_that_an_unapplied_fault_is_never_count
 }
 
 #[test]
-fn test_register_rejects_operation_beyond_the_number_of_steps() {
+fn should_register_rejects_operation_beyond_the_number_of_steps() {
   let error = register_error(&case(1, vec![fault(2, "commit", count(1))]));
 
   assert_eq!(error.index, 0);
 }
 
 #[test]
-fn test_register_rejects_unknown_phase() {
+fn should_register_rejects_unknown_phase() {
   let error = register_error(&case(
     1,
     vec![fault(1, "commit", count(1)), fault(1, "no-such-phase", count(1))],
@@ -83,7 +83,7 @@ fn test_register_rejects_unknown_phase() {
 }
 
 #[test]
-fn test_register_rejects_details_that_is_not_an_object() {
+fn should_register_rejects_details_that_is_not_an_object() {
   let mut declared = fault(1, "commit", count(1));
   declared["details"] = json!("INJECTED");
 
@@ -93,7 +93,7 @@ fn test_register_rejects_details_that_is_not_an_object() {
 }
 
 #[test]
-fn test_count_one_fault_fires_after_one_application() {
+fn should_count_one_fault_fires_after_one_application() {
   let plan = register(&case(1, vec![fault(1, "commit", count(1))]));
   let mut operation = plan.begin_operation(1);
 
@@ -104,7 +104,7 @@ fn test_count_one_fault_fires_after_one_application() {
 }
 
 #[test]
-fn test_count_two_fault_does_not_fire_after_one_application() {
+fn should_count_two_fault_does_not_fire_after_one_application() {
   let plan = register(&case(1, vec![fault(1, "commit", count(2))]));
   let mut operation = plan.begin_operation(1);
 
@@ -117,7 +117,7 @@ fn test_count_two_fault_does_not_fire_after_one_application() {
 }
 
 #[test]
-fn test_count_two_fault_fires_after_two_applications() {
+fn should_count_two_fault_fires_after_two_applications() {
   let plan = register(&case(1, vec![fault(1, "commit", count(2))]));
   let mut operation = plan.begin_operation(1);
 
@@ -128,7 +128,7 @@ fn test_count_two_fault_fires_after_two_applications() {
 }
 
 #[test]
-fn test_fault_without_any_application_is_unfired() {
+fn should_fault_without_any_application_is_unfired() {
   let plan = register(&case(1, vec![fault(1, "commit", count(1))]));
   let operation = plan.begin_operation(1);
 
@@ -139,7 +139,7 @@ fn test_fault_without_any_application_is_unfired() {
 }
 
 #[test]
-fn test_unfired_fault_serializes_declared_and_applied_counts() {
+fn should_unfired_fault_serializes_declared_and_applied_counts() {
   let unfired_fault = unfired(0, 1, Phase::Commit, Repeat::Count { count: 2 }, 1);
 
   let value = serde_json::to_value(&unfired_fault).expect("直列化できる");
@@ -149,7 +149,7 @@ fn test_unfired_fault_serializes_declared_and_applied_counts() {
 }
 
 #[test]
-fn test_until_operation_finishes_fault_fires_after_one_application() {
+fn should_until_operation_finishes_fault_fires_after_one_application() {
   let plan = register(&case(1, vec![fault(1, "retention-delete", until_operation_finishes())]));
   let mut operation = plan.begin_operation(1);
 
@@ -159,7 +159,7 @@ fn test_until_operation_finishes_fault_fires_after_one_application() {
 }
 
 #[test]
-fn test_until_operation_finishes_fault_applies_to_every_request_of_the_operation() {
+fn should_until_operation_finishes_fault_applies_to_every_request_of_the_operation() {
   let plan = register(&case(1, vec![fault(1, "retention-delete", until_operation_finishes())]));
   let mut operation = plan.begin_operation(1);
 
@@ -176,7 +176,7 @@ fn test_until_operation_finishes_fault_applies_to_every_request_of_the_operation
 }
 
 #[test]
-fn test_until_operation_finishes_fault_without_any_application_is_unfired() {
+fn should_until_operation_finishes_fault_without_any_application_is_unfired() {
   let plan = register(&case(1, vec![fault(1, "retention-delete", until_operation_finishes())]));
   let operation = plan.begin_operation(1);
 
@@ -193,7 +193,7 @@ fn test_until_operation_finishes_fault_without_any_application_is_unfired() {
 }
 
 #[test]
-fn test_same_phase_faults_are_consumed_in_array_order_after_exhausting_each_count() {
+fn should_same_phase_faults_are_consumed_in_array_order_after_exhausting_each_count() {
   let plan = register(&case(
     1,
     vec![fault(1, "commit", count(2)), fault(1, "commit", count(1))],
@@ -209,7 +209,7 @@ fn test_same_phase_faults_are_consumed_in_array_order_after_exhausting_each_coun
 }
 
 #[test]
-fn test_faults_of_different_phases_are_all_registered_and_consumed_independently() {
+fn should_faults_of_different_phases_are_all_registered_and_consumed_independently() {
   let plan = register(&case(
     1,
     vec![fault(1, "commit", count(1)), fault(1, "retention-delete", count(1))],
@@ -228,7 +228,7 @@ fn test_faults_of_different_phases_are_all_registered_and_consumed_independently
 }
 
 #[test]
-fn test_application_of_one_phase_does_not_consume_fault_of_another_phase() {
+fn should_application_of_one_phase_does_not_consume_fault_of_another_phase() {
   let plan = register(&case(
     1,
     vec![fault(1, "commit", count(1)), fault(1, "retention-delete", count(1))],
@@ -244,7 +244,7 @@ fn test_application_of_one_phase_does_not_consume_fault_of_another_phase() {
 }
 
 #[test]
-fn test_fault_of_one_operation_is_not_applied_in_another_operation() {
+fn should_fault_of_one_operation_is_not_applied_in_another_operation() {
   let plan = register(&case(2, vec![fault(1, "commit", count(1))]));
   let mut other_operation = plan.begin_operation(2);
 
@@ -255,7 +255,7 @@ fn test_fault_of_one_operation_is_not_applied_in_another_operation() {
 }
 
 #[test]
-fn test_application_counts_are_not_carried_over_to_the_next_operation() {
+fn should_application_counts_are_not_carried_over_to_the_next_operation() {
   let plan = register(&case(
     2,
     vec![fault(1, "commit", count(2)), fault(2, "commit", count(2))],
@@ -276,7 +276,7 @@ fn test_application_counts_are_not_carried_over_to_the_next_operation() {
 }
 
 #[test]
-fn test_operation_zero_fault_for_store_creation_can_be_registered_and_applied() {
+fn should_operation_zero_fault_for_store_creation_can_be_registered_and_applied() {
   let plan = register(&case(0, vec![fault(0, "configuration-create", count(1))]));
   let mut creation = plan.begin_operation(0);
 
@@ -291,7 +291,7 @@ fn test_operation_zero_fault_for_store_creation_can_be_registered_and_applied() 
 }
 
 #[test]
-fn test_register_reads_faults_of_real_retention_failure_case() {
+fn should_register_reads_faults_of_real_retention_failure_case() {
   let data = load(&conformance_dir()).expect("実データを読める");
   let body = &data
     .cases
@@ -318,7 +318,7 @@ fn test_register_reads_faults_of_real_retention_failure_case() {
 }
 
 #[test]
-fn test_real_retention_failure_case_consumes_faults_per_operation() {
+fn should_real_retention_failure_case_consumes_faults_per_operation() {
   let data = load(&conformance_dir()).expect("実データを読める");
   let body = &data
     .cases
@@ -372,7 +372,7 @@ fn case_with_spelled_fault(operation: &str, repeat: &str) -> Value {
 }
 
 #[test]
-fn test_register_accepts_operation_and_count_written_as_whole_numbers_in_any_spelling() {
+fn should_register_accepts_operation_and_count_written_as_whole_numbers_in_any_spelling() {
   for (operation, count) in [
     ("1", "2"),
     ("1.0", "2.0"),
@@ -392,7 +392,7 @@ fn test_register_accepts_operation_and_count_written_as_whole_numbers_in_any_spe
 }
 
 #[test]
-fn test_register_accepts_operation_zero_written_with_a_fraction() {
+fn should_register_accepts_operation_zero_written_with_a_fraction() {
   let plan = register(&case_with_spelled_fault(
     "0.0",
     r#"{"mode": "until-operation-finishes"}"#,
@@ -402,7 +402,7 @@ fn test_register_accepts_operation_zero_written_with_a_fraction() {
 }
 
 #[test]
-fn test_register_rejects_operation_with_a_non_zero_fraction() {
+fn should_register_rejects_operation_with_a_non_zero_fraction() {
   for operation in ["1.5", "0.5", "1e-1"] {
     let error = register_error(&case_with_spelled_fault(
       operation,
@@ -415,7 +415,7 @@ fn test_register_rejects_operation_with_a_non_zero_fraction() {
 }
 
 #[test]
-fn test_register_rejects_count_with_a_non_zero_fraction_or_below_one() {
+fn should_register_rejects_count_with_a_non_zero_fraction_or_below_one() {
   for count in ["1.5", "2.5", "1e-1", "0.0", "0e3", "-1.0"] {
     let error = register_error(&case_with_spelled_fault(
       "1",
@@ -428,7 +428,7 @@ fn test_register_rejects_count_with_a_non_zero_fraction_or_below_one() {
 }
 
 #[test]
-fn test_register_still_rejects_operation_beyond_the_number_of_steps_when_written_with_a_fraction() {
+fn should_register_still_rejects_operation_beyond_the_number_of_steps_when_written_with_a_fraction() {
   let error = register_error(&case_with_spelled_fault(
     "2.0",
     r#"{"mode": "until-operation-finishes"}"#,

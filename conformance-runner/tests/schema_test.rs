@@ -40,7 +40,7 @@ fn valid_coverage() -> Value {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_schema_format_maps_each_kind_of_data_file_to_its_schema() {
+fn should_schema_format_maps_each_kind_of_data_file_to_its_schema() {
   let expected = [
     ("coverage.json", Some("coverage")),
     ("dynamodb/layout.json", Some("layout")),
@@ -65,14 +65,14 @@ fn test_schema_format_maps_each_kind_of_data_file_to_its_schema() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_schema_set_builds_every_shipped_format_and_accepts_valid_data() {
+fn should_schema_set_builds_every_shipped_format_and_accepts_valid_data() {
   let schemas = shipped_schemas();
 
   assert_eq!(schemas.validate("coverage", &valid_coverage()), Ok(()));
 }
 
 #[test]
-fn test_schema_set_reports_the_violating_location() {
+fn should_schema_set_reports_the_violating_location() {
   let schemas = shipped_schemas();
   let mut coverage = valid_coverage();
   coverage["required_rules"] = json!([]);
@@ -83,7 +83,7 @@ fn test_schema_set_reports_the_violating_location() {
 }
 
 #[test]
-fn test_schema_set_reports_at_most_five_distinct_violations() {
+fn should_schema_set_reports_at_most_five_distinct_violations() {
   let schemas = shipped_schemas();
   let coverage = json!({
     "format": "other", "version": "9", "required_rules": [], "exclusions": 1, "notes": 2, "a": 1, "b": 2, "c": 3
@@ -100,14 +100,14 @@ fn test_schema_set_reports_at_most_five_distinct_violations() {
 }
 
 #[test]
-fn test_schema_set_rejects_a_format_it_did_not_build() {
+fn should_schema_set_rejects_a_format_it_did_not_build() {
   let schemas = SchemaSet::new(&shipped_documents(), &["coverage"]).expect("組み立てられる");
 
   assert!(schemas.validate("values", &json!({})).is_err());
 }
 
 #[test]
-fn test_schema_set_requires_a_schema_file_for_each_format() {
+fn should_schema_set_requires_a_schema_file_for_each_format() {
   let documents: Vec<(String, Value)> = shipped_documents()
     .into_iter()
     .filter(|(path, _)| path != "layout.schema.json")
@@ -123,7 +123,7 @@ fn test_schema_set_requires_a_schema_file_for_each_format() {
 }
 
 #[test]
-fn test_schema_set_requires_every_document_to_have_an_id() {
+fn should_schema_set_requires_every_document_to_have_an_id() {
   let mut documents = shipped_documents();
   documents.push(("extra.schema.json".to_string(), json!({"type": "object"})));
 
@@ -137,7 +137,7 @@ fn test_schema_set_requires_every_document_to_have_an_id() {
 }
 
 #[test]
-fn test_schema_set_reports_a_schema_that_cannot_be_built() {
+fn should_schema_set_reports_a_schema_that_cannot_be_built() {
   let mut documents = shipped_documents();
   for (path, document) in &mut documents {
     if path == "coverage.schema.json" {
@@ -159,7 +159,7 @@ fn test_schema_set_reports_a_schema_that_cannot_be_built() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_schema_set_treats_a_whole_number_with_a_zero_fraction_as_an_integer() {
+fn should_schema_set_treats_a_whole_number_with_a_zero_fraction_as_an_integer() {
   let schemas = shipped_schemas();
   let values = |seq_nr: &str| {
     serde_json::from_str::<Value>(&format!(

@@ -9,7 +9,7 @@ fn json(text: &str) -> Value {
 }
 
 #[test]
-fn test_json_equal_ignores_object_key_order() {
+fn should_json_equal_ignores_object_key_order() {
   assert!(json_equal(
     &json(r#"{"a":1,"b":[1,2],"c":{"x":null,"y":"s"}}"#),
     &json(r#"{"c":{"y":"s","x":null},"b":[1,2],"a":1}"#)
@@ -17,18 +17,18 @@ fn test_json_equal_ignores_object_key_order() {
 }
 
 #[test]
-fn test_json_equal_distinguishes_array_order() {
+fn should_json_equal_distinguishes_array_order() {
   assert!(!json_equal(&json("[1,2,3]"), &json("[3,2,1]")));
 }
 
 #[test]
-fn test_json_equal_distinguishes_boolean_from_number() {
+fn should_json_equal_distinguishes_boolean_from_number() {
   assert!(!json_equal(&json("true"), &json("1")));
   assert!(!json_equal(&json("false"), &json("0")));
 }
 
 #[test]
-fn test_json_equal_treats_numbers_with_different_notation_as_equal() {
+fn should_json_equal_treats_numbers_with_different_notation_as_equal() {
   let one = json("1");
 
   assert!(json_equal(&one, &json("1.0")));
@@ -38,18 +38,18 @@ fn test_json_equal_treats_numbers_with_different_notation_as_equal() {
 }
 
 #[test]
-fn test_json_equal_treats_zero_and_negative_zero_as_equal() {
+fn should_json_equal_treats_zero_and_negative_zero_as_equal() {
   assert!(json_equal(&json("0"), &json("-0")));
 }
 
 #[test]
-fn test_json_equal_distinguishes_composed_and_decomposed_unicode() {
+fn should_json_equal_distinguishes_composed_and_decomposed_unicode() {
   // U+00E9 と、e + U+0301。正規化しないので別の文字列として扱う。
   assert!(!json_equal(&json(r#""é""#), &json(r#""é""#)));
 }
 
 #[test]
-fn test_json_equal_distinguishes_integers_beyond_128_bits_by_exact_value() {
+fn should_json_equal_distinguishes_integers_beyond_128_bits_by_exact_value() {
   let maximum = json("170141183460469231731687303715884105727");
   let last_digit_changed = json("170141183460469231731687303715884105728");
 
@@ -91,7 +91,7 @@ fn assert_different_in_both_directions(left: &str, right: &str) {
 }
 
 #[test]
-fn test_json_equal_treats_equal_values_with_exponent_beyond_i128_as_equal() {
+fn should_json_equal_treats_equal_values_with_exponent_beyond_i128_as_equal() {
   // 数字列と指数の分け方が違っても、同じ値。
   assert_equal_in_both_directions(&format!("1e{BEYOND_I128}"), &format!("10e{I128_MAX}"));
   assert_equal_in_both_directions(&format!("1e{BEYOND_I128}"), &format!("1E+{BEYOND_I128}"));
@@ -99,14 +99,14 @@ fn test_json_equal_treats_equal_values_with_exponent_beyond_i128_as_equal() {
 }
 
 #[test]
-fn test_json_equal_treats_values_across_the_i128_boundary_as_equal() {
+fn should_json_equal_treats_values_across_the_i128_boundary_as_equal() {
   // 小数点の位置の調整で、指数が i128 の境界をまたぐ組。
   assert_equal_in_both_directions(&format!("0.1e{BEYOND_I128}"), &format!("1e{I128_MAX}"));
   assert_equal_in_both_directions(&format!("1.0e{BEYOND_I128}"), &format!("0.1e{BEYOND_I128_PLUS_ONE}"));
 }
 
 #[test]
-fn test_json_equal_borrows_across_every_digit_of_a_huge_exponent() {
+fn should_json_equal_borrows_across_every_digit_of_a_huge_exponent() {
   // 10^42 と 10^42 − 1 の間の、繰り下がり。
   let power = power_of_ten(42);
   let below = nines(42);
@@ -116,7 +116,7 @@ fn test_json_equal_borrows_across_every_digit_of_a_huge_exponent() {
 }
 
 #[test]
-fn test_json_equal_carries_across_every_digit_of_a_huge_exponent() {
+fn should_json_equal_carries_across_every_digit_of_a_huge_exponent() {
   // 10^42 − 3 に、末尾の 0 の 3 個を足すと、10^42 になる。
   let below_by_three = format!("{}7", nines(41));
 
@@ -124,7 +124,7 @@ fn test_json_equal_carries_across_every_digit_of_a_huge_exponent() {
 }
 
 #[test]
-fn test_json_equal_treats_negative_exponents_beyond_i128_as_equal() {
+fn should_json_equal_treats_negative_exponents_beyond_i128_as_equal() {
   assert_equal_in_both_directions(
     "1e-170141183460469231731687303715884105729",
     "10e-170141183460469231731687303715884105730",
@@ -136,13 +136,13 @@ fn test_json_equal_treats_negative_exponents_beyond_i128_as_equal() {
 }
 
 #[test]
-fn test_json_equal_ignores_leading_zeros_of_an_exponent() {
+fn should_json_equal_ignores_leading_zeros_of_an_exponent() {
   assert_equal_in_both_directions("1e0005", "100000");
   assert_equal_in_both_directions(&format!("1e0000{BEYOND_I128}"), &format!("1e{BEYOND_I128}"));
 }
 
 #[test]
-fn test_json_equal_treats_zero_with_a_huge_exponent_as_zero() {
+fn should_json_equal_treats_zero_with_a_huge_exponent_as_zero() {
   let huge = "99999999999999999999999999999999999999999";
 
   assert_equal_in_both_directions(&format!("0e{huge}"), "0");
@@ -152,7 +152,7 @@ fn test_json_equal_treats_zero_with_a_huge_exponent_as_zero() {
 }
 
 #[test]
-fn test_json_equal_distinguishes_different_values_with_exponent_beyond_i128() {
+fn should_json_equal_distinguishes_different_values_with_exponent_beyond_i128() {
   // 指数が 1 違う。
   assert_different_in_both_directions(&format!("1e{BEYOND_I128}"), &format!("1e{BEYOND_I128_PLUS_ONE}"));
   // 指数が同じで、数字列が違う。
@@ -166,7 +166,7 @@ fn test_json_equal_distinguishes_different_values_with_exponent_beyond_i128() {
 }
 
 #[test]
-fn test_json_equal_compares_numbers_with_a_huge_exponent_inside_composite_values() {
+fn should_json_equal_compares_numbers_with_a_huge_exponent_inside_composite_values() {
   assert!(json_equal(
     &json(&format!(r#"{{"n":[1e{BEYOND_I128}]}}"#)),
     &json(&format!(r#"{{"n":[10e{I128_MAX}]}}"#))
@@ -178,7 +178,7 @@ fn test_json_equal_compares_numbers_with_a_huge_exponent_inside_composite_values
 }
 
 #[test]
-fn test_json_equal_distinguishes_different_values() {
+fn should_json_equal_distinguishes_different_values() {
   assert!(!json_equal(&json("1"), &json("2")));
   assert!(!json_equal(&json("null"), &json("false")));
   assert!(!json_equal(&json(r#""a""#), &json(r#""b""#)));

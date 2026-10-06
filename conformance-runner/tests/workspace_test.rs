@@ -34,7 +34,7 @@ fn runner_package(metadata: &Value) -> Value {
 }
 
 #[test]
-fn test_runner_is_an_unpublished_workspace_member() {
+fn should_runner_is_an_unpublished_workspace_member() {
   let metadata = workspace_metadata();
 
   let package = runner_package(&metadata);
@@ -62,7 +62,7 @@ fn requested_features(package: &Value, dependency_name: &str) -> Vec<String> {
 }
 
 #[test]
-fn test_runner_does_not_depend_on_the_library_under_test() {
+fn should_runner_does_not_depend_on_the_library_under_test() {
   let metadata = workspace_metadata();
 
   let package = runner_package(&metadata);
@@ -77,7 +77,7 @@ fn test_runner_does_not_depend_on_the_library_under_test() {
 }
 
 #[test]
-fn test_runner_does_not_enable_test_hooks_of_the_library_under_test() {
+fn should_runner_does_not_enable_test_hooks_of_the_library_under_test() {
   let metadata = workspace_metadata();
 
   let package = runner_package(&metadata);
@@ -90,7 +90,7 @@ fn test_runner_does_not_enable_test_hooks_of_the_library_under_test() {
 }
 
 #[test]
-fn test_requested_features_reads_the_features_that_cargo_metadata_lists_for_a_dependency() {
+fn should_requested_features_reads_the_features_that_cargo_metadata_lists_for_a_dependency() {
   let metadata = workspace_metadata();
 
   let package = runner_package(&metadata);
@@ -105,7 +105,7 @@ fn test_requested_features_reads_the_features_that_cargo_metadata_lists_for_a_de
 }
 
 #[test]
-fn test_runner_pins_the_schema_crate_and_leaves_its_network_features_off() {
+fn should_runner_pins_the_schema_crate_and_leaves_its_network_features_off() {
   let metadata = workspace_metadata();
 
   let package = runner_package(&metadata);

@@ -232,6 +232,34 @@ fn describe(value: Option<&Value>) -> String {
   value.map(Value::to_string).unwrap_or_else(|| "なし".to_string())
 }
 
+/// `files` の項目 1 つが正しい形で載っているかを判定し、正しければ `(path, sha256)` を返す。
+///
+/// `path` と `sha256` がどちらも文字列なら正しい形。`manifest` の照合（`verify_manifest`）と、スキーマ・
+/// ケースとして読むファイルの決定（`listed_paths`）が、この 1 つの判定を共有する。
+fn listed_entry(file: &Value) -> Option<(&str, &str)> {
+  Some((
+    file.get("path").and_then(Value::as_str)?,
+    file.get("sha256").and_then(Value::as_str)?,
+  ))
+}
+
+/// `manifest` の `files` に正しい形で載ったファイルの相対パスの集合を返す。
+///
+/// `files` が配列でなければ空。形の誤った項目は含めない（`listed_entry`）。スキーマとケースは、この集合の
+/// ファイルだけを読む。載っていないファイルと形の誤った項目は、`verify_manifest` が問題として報告する。
+fn listed_paths(manifest: &Value) -> HashSet<&str> {
+  manifest
+    .get("files")
+    .and_then(Value::as_array)
+    .map(|files| {
+      files
+        .iter()
+        .filter_map(|file| listed_entry(file).map(|(path, _)| path))
+        .collect()
+    })
+    .unwrap_or_default()
+}
+
 /// `manifest` の版、ファイル集合、ファイルごとの SHA-256 を、実ファイルと照合する。
 ///
 /// `manifest` は作り直さない。ファイルの並び順は検査しない。最上位と各項目の未知のフィールド
@@ -263,12 +291,9 @@ pub fn verify_manifest(manifest: &Value, inventory: &[InventoryEntry]) -> Manife
             problems.push(ManifestProblem::UnknownField(format!("files[{index}].{key}")));
           }
         }
-        match (
-          file.get("path").and_then(Value::as_str),
-          file.get("sha256").and_then(Value::as_str),
-        ) {
-          (Some(path), Some(sha256)) => listed.push((path, sha256)),
-          _ => problems.push(ManifestProblem::Malformed(file.to_string())),
+        match listed_entry(file) {
+          Some(entry) => listed.push(entry),
+          None => problems.push(ManifestProblem::Malformed(file.to_string())),
         }
       }
     }
@@ -413,14 +438,18 @@ fn read_exclusions(path: &str, value: &Value) -> Result<Vec<CoverageExclusion>, 
     .collect()
 }
 
-/// 配布物の `schema/` のスキーマを全部読んで登録し、データのファイルの形式ごとに組み立てる。
-fn load_schemas(files: &[InventoryEntry]) -> Result<SchemaSet, DataError> {
+/// 配布物の `schema/` のスキーマのうち、`listed` に載ったものを読んで登録し、データのファイルの形式ごとに
+/// 組み立てる。
+///
+/// 載っていないファイルは解析せず登録しない（`manifest` の照合が `Unlisted` として報告する）。必須のスキーマが
+/// 載っていなければ、スキーマのファイルがないときと同じく `DataError::Missing` にする。
+fn load_schemas(files: &[InventoryEntry], listed: &HashSet<&str>) -> Result<SchemaSet, DataError> {
   let mut documents = Vec::new();
   for entry in files {
     if let Some(relative) = entry
       .path
       .strip_prefix("schema/")
-      .filter(|_| entry.path.ends_with(".json"))
+      .filter(|_| entry.path.ends_with(".json") && listed.contains(entry.path.as_str()))
     {
       documents.push((relative.to_string(), parse_file(&entry.path, &entry.bytes)?));
     }
@@ -450,13 +479,14 @@ fn check_schema(schemas: &SchemaSet, path: &str, value: &Value) -> Result<(), Da
 
 /// `root` の適合テストデータを全部読む。
 ///
-/// 読む順は、`schema/` のスキーマの登録、`manifest.json`、`coverage.json`、ケースのファイル。データの
+/// 読む順は、`manifest.json`、`schema/` のスキーマの登録、`coverage.json`、ケースのファイル。スキーマと
+/// ケースは、`manifest.json` に正しい形で載ったファイルだけを読む（`listed_paths`）。載っていないファイルと
+/// 形の誤った項目は、`manifest` の照合が問題として報告するだけで、読み込みの失敗にしない。データの
 /// ファイルは、`format` と `version` を確かめた後、generators の展開の前に、対応するスキーマで検査する。
 /// スキーマの違反は読み込みの失敗にする。`manifest.json` はスキーマで検査せず、`manifest` の照合の失敗は
 /// 読み込みの失敗にしない。結果を `DataSet::manifest` に載せる。
 pub fn load(root: &Path) -> Result<DataSet, DataError> {
   let files = inventory(root)?;
-  let schemas = load_schemas(&files)?;
 
   let manifest_path = root.join("manifest.json");
   let manifest_bytes = fs::read(&manifest_path).map_err(|source| {
@@ -480,6 +510,11 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
     .and_then(Value::as_array)
     .map_or(0, Vec::len);
 
+  // 一覧に正しい形で載っていないファイルは manifest の照合が問題として報告するので、スキーマとしても
+  // ケースとしても読まない
+  let listed = listed_paths(&manifest_value);
+  let schemas = load_schemas(&files, &listed)?;
+
   let coverage_entry = files
     .iter()
     .find(|entry| entry.path == "coverage.json")
@@ -501,24 +536,13 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
     )?,
   };
 
-  // 一覧にないファイルは manifest の照合が不一致として報告するので、ケースとしては読まない
-  let listed_paths: HashSet<&str> = manifest_value
-    .get("files")
-    .and_then(Value::as_array)
-    .map(|listed| {
-      listed
-        .iter()
-        .filter_map(|file| file.get("path").and_then(Value::as_str))
-        .collect()
-    })
-    .unwrap_or_default();
   let mut cases = Vec::new();
   let mut ids = HashSet::new();
   for entry in &files {
     let in_case_directory = ["values/", "scenarios/", "dynamodb/"]
       .iter()
       .any(|directory| entry.path.starts_with(directory));
-    if !in_case_directory || !entry.path.ends_with(".json") || !listed_paths.contains(entry.path.as_str()) {
+    if !in_case_directory || !entry.path.ends_with(".json") || !listed.contains(entry.path.as_str()) {
       continue;
     }
     let value = parse_file(&entry.path, &entry.bytes)?;

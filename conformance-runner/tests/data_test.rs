@@ -38,7 +38,7 @@ fn manifest_value(version: &str, files: &[(&str, &str)]) -> Value {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_parse_strict_json_keeps_same_keys_in_strings_and_sibling_objects() {
+fn should_parse_strict_json_keeps_same_keys_in_strings_and_sibling_objects() {
   let input = br#"{"x":"{\"a\":1,\"a\":2}","l":[{"k":1},{"k":1}],"o":{"a":{"k":1},"b":{"k":2}}}"#;
 
   let value = parse_strict_json(input).expect("文字列の中や別のオブジェクトの同じキーは重複ではない");
@@ -47,7 +47,7 @@ fn test_parse_strict_json_keeps_same_keys_in_strings_and_sibling_objects() {
 }
 
 #[test]
-fn test_parse_strict_json_rejects_duplicate_key_in_same_object() {
+fn should_parse_strict_json_rejects_duplicate_key_in_same_object() {
   let input = br#"{"o":{"k":1,"k":2}}"#;
 
   let error = parse_strict_json(input).expect_err("同じオブジェクトの重複キーは拒否する");
@@ -56,25 +56,25 @@ fn test_parse_strict_json_rejects_duplicate_key_in_same_object() {
 }
 
 #[test]
-fn test_parse_strict_json_rejects_nan() {
+fn should_parse_strict_json_rejects_nan() {
   assert!(parse_strict_json(br#"{"n":NaN}"#).is_err());
 }
 
 #[test]
-fn test_parse_strict_json_rejects_infinity() {
+fn should_parse_strict_json_rejects_infinity() {
   assert!(parse_strict_json(br#"{"n":Infinity}"#).is_err());
   assert!(parse_strict_json(br#"{"n":-Infinity}"#).is_err());
 }
 
 #[test]
-fn test_parse_strict_json_rejects_input_that_is_not_utf8() {
+fn should_parse_strict_json_rejects_input_that_is_not_utf8() {
   let input = b"{\"a\":\"\xff\"}";
 
   assert!(parse_strict_json(input).is_err());
 }
 
 #[test]
-fn test_parse_strict_json_keeps_integer_beyond_128_bits_exactly() {
+fn should_parse_strict_json_keeps_integer_beyond_128_bits_exactly() {
   let digits = "170141183460469231731687303715884105727";
   let input = format!(r#"{{"n":{digits}}}"#);
 
@@ -84,7 +84,7 @@ fn test_parse_strict_json_keeps_integer_beyond_128_bits_exactly() {
 }
 
 #[test]
-fn test_parse_strict_json_keeps_key_and_string_text_unchanged() {
+fn should_parse_strict_json_keeps_key_and_string_text_unchanged() {
   // 合成済みの é をキーに、分解した é と大文字小文字の混在を値に持つ。
   let input = r#"{"é":"é","Key":"MiXed"}"#;
 
@@ -99,7 +99,7 @@ fn test_parse_strict_json_keeps_key_and_string_text_unchanged() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_load_reads_every_case_of_real_data_once() {
+fn should_load_reads_every_case_of_real_data_once() {
   let data = load(&conformance_dir()).expect("実データを読める");
 
   let ids: HashSet<&str> = data.cases.iter().map(|case| case.id.as_str()).collect();
@@ -108,7 +108,7 @@ fn test_load_reads_every_case_of_real_data_once() {
 }
 
 #[test]
-fn test_load_reads_value_tables_scenarios_and_layout() {
+fn should_load_reads_value_tables_scenarios_and_layout() {
   let data = load(&conformance_dir()).expect("実データを読める");
 
   let count = |wanted: fn(&CaseKind) -> bool| data.cases.iter().filter(|case| wanted(&case.kind)).count();
@@ -118,7 +118,7 @@ fn test_load_reads_value_tables_scenarios_and_layout() {
 }
 
 #[test]
-fn test_load_reads_coverage_rules_and_exclusions() {
+fn should_load_reads_coverage_rules_and_exclusions() {
   let data = load(&conformance_dir()).expect("実データを読める");
 
   let exclusions: Vec<(&str, &str)> = data
@@ -132,7 +132,7 @@ fn test_load_reads_coverage_rules_and_exclusions() {
 }
 
 #[test]
-fn test_inventory_lists_the_22_files_covered_by_manifest_without_manifest_itself() {
+fn should_inventory_lists_the_22_files_covered_by_manifest_without_manifest_itself() {
   let entries = inventory(&conformance_dir()).expect("実データの一覧を作れる");
 
   let paths: Vec<&str> = entries.iter().map(|entry| entry.path.as_str()).collect();
@@ -147,7 +147,7 @@ fn test_inventory_lists_the_22_files_covered_by_manifest_without_manifest_itself
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_inventory_path_joins_utf8_components_with_slash() {
+fn should_inventory_path_joins_utf8_components_with_slash() {
   assert_eq!(
     inventory_path(Path::new("scenarios/core/write-read.json")).expect("UTF-8 のパス"),
     "scenarios/core/write-read.json"
@@ -174,7 +174,7 @@ fn non_utf8_path(components: &[&[u8]]) -> std::path::PathBuf {
 
 #[cfg(unix)]
 #[test]
-fn test_inventory_path_rejects_a_component_that_is_not_utf8() {
+fn should_inventory_path_rejects_a_component_that_is_not_utf8() {
   let paths: [&[&[u8]]; 3] = [
     &[b"values", b"bad\xff.json"],
     &[b"values", b"bad\xfe.json"],
@@ -198,7 +198,7 @@ fn test_inventory_path_rejects_a_component_that_is_not_utf8() {
 
 #[cfg(target_os = "linux")]
 #[test]
-fn test_inventory_rejects_files_whose_non_utf8_names_would_collapse_into_one_path() {
+fn should_inventory_rejects_files_whose_non_utf8_names_would_collapse_into_one_path() {
   use std::os::unix::ffi::OsStrExt;
   // 内容が同じで、不正なバイトだけが異なる 2 つのファイル。置換文字に潰すと、同じパスになる。
   let dir = TempDir::new("data-inventory-non-utf8");
@@ -219,7 +219,7 @@ fn test_inventory_rejects_files_whose_non_utf8_names_would_collapse_into_one_pat
 }
 
 #[test]
-fn test_load_verifies_real_manifest_and_exposes_its_fixed_sha256() {
+fn should_load_verifies_real_manifest_and_exposes_its_fixed_sha256() {
   let data = load(&conformance_dir()).expect("実データを読める");
 
   assert!(data.manifest.passed(), "problems: {:?}", data.manifest.problems);
@@ -229,7 +229,7 @@ fn test_load_verifies_real_manifest_and_exposes_its_fixed_sha256() {
 }
 
 #[test]
-fn test_load_skips_an_unlisted_case_file_and_reports_it_as_unlisted() {
+fn should_load_skips_an_unlisted_case_file_and_reports_it_as_unlisted() {
   let dir = TempDir::new("data-load-unlisted");
   copy_dir_all(&conformance_dir(), dir.path());
   fs::write(dir.path().join("values").join("unlisted.json"), "{").expect("一覧にないファイルを書ける");
@@ -248,12 +248,127 @@ fn test_load_skips_an_unlisted_case_file_and_reports_it_as_unlisted() {
   );
 }
 
+#[test]
+fn should_load_does_not_register_an_unlisted_schema_file_and_reports_it_as_unlisted() {
+  // 壊れた JSON と、`$id` のない JSON。登録していれば、読み込みが失敗する。
+  let contents = ["{", r#"{"title": "no id"}"#];
+
+  for (index, content) in contents.into_iter().enumerate() {
+    let copy = real_copy(&format!("data-load-unlisted-schema-{index}"));
+    fs::write(copy.path().join("schema").join("note.json"), content).expect("一覧にないスキーマを書ける");
+
+    let data = load(copy.path()).unwrap_or_else(|error| panic!("{content}: 一覧にないスキーマは読まない: {error}"));
+
+    assert_eq!(data.cases.len(), 116, "{content}");
+    assert!(
+      data
+        .manifest
+        .problems
+        .iter()
+        .any(|problem| matches!(problem, ManifestProblem::Unlisted(path) if path == "schema/note.json")),
+      "{content}: problems: {:?}",
+      data.manifest.problems
+    );
+  }
+}
+
+/// 写しの `manifest.json` の `files` に、項目 `entry` を足す。
+fn push_manifest_entry(root: &Path, entry: Value) {
+  edit_json(root, "manifest.json", |value| {
+    value["files"].as_array_mut().expect("files は配列").push(entry);
+  });
+}
+
+#[test]
+fn should_load_does_not_read_cases_of_an_entry_without_a_string_sha256() {
+  // `sha256` が文字列でない項目と、`sha256` のない項目。どちらも載っていない扱いにする。
+  let entries = [
+    json!({"path": "values/extra.json", "sha256": 42}),
+    json!({"path": "values/extra.json"}),
+  ];
+
+  for (index, entry) in entries.into_iter().enumerate() {
+    let copy = real_copy(&format!("data-load-malformed-case-entry-{index}"));
+    // 載っていれば読まれて、ケースの数が増える（ID は実データと重ならない）
+    fs::write(
+      copy.path().join("values").join("extra.json"),
+      values_file("values", "1.0.0"),
+    )
+    .expect("ケースのファイルを書ける");
+    push_manifest_entry(copy.path(), entry.clone());
+
+    let data =
+      load(copy.path()).unwrap_or_else(|error| panic!("{entry}: 形の誤った項目は読み込みを失敗にしない: {error}"));
+
+    assert_eq!(data.cases.len(), 116, "{entry}");
+    assert!(
+      data.cases.iter().all(|case| case.file != "values/extra.json"),
+      "{entry}"
+    );
+    assert!(!data.manifest.passed(), "{entry}");
+    assert!(
+      data
+        .manifest
+        .problems
+        .iter()
+        .any(|problem| matches!(problem, ManifestProblem::Malformed(_))),
+      "{entry}: problems: {:?}",
+      data.manifest.problems
+    );
+    assert!(
+      data
+        .manifest
+        .problems
+        .iter()
+        .any(|problem| matches!(problem, ManifestProblem::Unlisted(path) if path == "values/extra.json")),
+      "{entry}: problems: {:?}",
+      data.manifest.problems
+    );
+  }
+}
+
+#[test]
+fn should_load_does_not_register_a_schema_of_an_entry_without_a_string_sha256() {
+  let entries = [
+    json!({"path": "schema/note.json", "sha256": 42}),
+    json!({"path": "schema/note.json"}),
+  ];
+
+  for (index, entry) in entries.into_iter().enumerate() {
+    let copy = real_copy(&format!("data-load-malformed-schema-entry-{index}"));
+    // 登録していれば、壊れた JSON の読み込みが失敗する
+    fs::write(copy.path().join("schema").join("note.json"), "{").expect("スキーマを書ける");
+    push_manifest_entry(copy.path(), entry.clone());
+
+    let data =
+      load(copy.path()).unwrap_or_else(|error| panic!("{entry}: 形の誤った項目は読み込みを失敗にしない: {error}"));
+
+    assert_eq!(data.cases.len(), 116, "{entry}");
+    assert!(
+      data
+        .manifest
+        .problems
+        .iter()
+        .any(|problem| matches!(problem, ManifestProblem::Malformed(_))),
+      "{entry}: problems: {:?}",
+      data.manifest.problems
+    );
+    assert!(
+      data
+        .manifest
+        .problems
+        .iter()
+        .any(|problem| matches!(problem, ManifestProblem::Unlisted(path) if path == "schema/note.json")),
+      "{entry}: problems: {:?}",
+      data.manifest.problems
+    );
+  }
+}
+
 // ---------------------------------------------------------------------------
 // format と version の確認（合成した一時ディレクトリ）
 // ---------------------------------------------------------------------------
 
-// 合成したケースのファイルを一覧に載せる（ハッシュは合わないが、一覧に載ったファイルだけをケースとして読むため）
-const MANIFEST_JSON: &str = r#"{"format":"manifest","version":"1.0.0","files":[{"path":"values/synthetic.json","sha256":"0000000000000000000000000000000000000000000000000000000000000000"}]}"#;
 const COVERAGE_JSON: &str =
   r#"{"format":"coverage","version":"1.0.0","required_rules":["T-1"],"exclusions":[],"notes":[]}"#;
 
@@ -279,15 +394,26 @@ fn write_file(root: &Path, relative: &str, content: &str) {
   fs::write(path, content).expect("ファイルを書ける");
 }
 
+/// 合成したデータを書く。スキーマとケースのファイルは、一覧に載ったものだけを読むので、書いた全ファイルを
+/// 正しい SHA-256 で `manifest.json` に載せる。
 fn write_dataset(root: &Path, coverage: &str, values: &str) {
   copy_dir_all(&conformance_dir().join("schema"), &root.join("schema"));
-  write_file(root, "manifest.json", MANIFEST_JSON);
   write_file(root, "coverage.json", coverage);
   write_file(root, "values/synthetic.json", values);
+  let files: Vec<(String, String)> = inventory(root)
+    .expect("書いたファイルの一覧を作れる")
+    .into_iter()
+    .map(|entry| (entry.path, sha256_hex(&entry.bytes)))
+    .collect();
+  let files: Vec<(&str, &str)> = files
+    .iter()
+    .map(|(path, sha256)| (path.as_str(), sha256.as_str()))
+    .collect();
+  write_file(root, "manifest.json", &manifest_value("1.0.0", &files).to_string());
 }
 
 #[test]
-fn test_load_accepts_case_file_with_expected_format_and_version() {
+fn should_load_accepts_case_file_with_expected_format_and_version() {
   let dir = TempDir::new("data-load-valid");
   write_dataset(dir.path(), COVERAGE_JSON, &values_file("values", "1.0.0"));
 
@@ -300,7 +426,7 @@ fn test_load_accepts_case_file_with_expected_format_and_version() {
 }
 
 #[test]
-fn test_load_rejects_case_file_with_other_version() {
+fn should_load_rejects_case_file_with_other_version() {
   let dir = TempDir::new("data-load-version");
   write_dataset(dir.path(), COVERAGE_JSON, &values_file("values", "2.0.0"));
 
@@ -315,7 +441,7 @@ fn test_load_rejects_case_file_with_other_version() {
 }
 
 #[test]
-fn test_load_rejects_case_file_with_unknown_format() {
+fn should_load_rejects_case_file_with_unknown_format() {
   let dir = TempDir::new("data-load-format");
   write_dataset(dir.path(), COVERAGE_JSON, &values_file("tables", "1.0.0"));
 
@@ -330,7 +456,7 @@ fn test_load_rejects_case_file_with_unknown_format() {
 }
 
 #[test]
-fn test_load_rejects_coverage_file_with_other_version() {
+fn should_load_rejects_coverage_file_with_other_version() {
   let dir = TempDir::new("data-load-coverage-version");
   // `notes` もない（スキーマの違反でもある）。版の確認がスキーマの検査より先なので、誤りは `Invalid`。
   let coverage = r#"{"format":"coverage","version":"2.0.0","required_rules":["T-1"],"exclusions":[]}"#;
@@ -351,13 +477,13 @@ fn test_load_rejects_coverage_file_with_other_version() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_sha256_hex_matches_known_vectors() {
+fn should_sha256_hex_matches_known_vectors() {
   assert_eq!(sha256_hex(b"abc"), SHA256_OF_ABC);
   assert_eq!(sha256_hex(b""), SHA256_OF_EMPTY);
 }
 
 #[test]
-fn test_verify_manifest_accepts_consistent_inventory_in_any_order() {
+fn should_verify_manifest_accepts_consistent_inventory_in_any_order() {
   let manifest = manifest_value("1.0.0", &[("b.json", SHA256_OF_EMPTY), ("a.json", SHA256_OF_ABC)]);
   let inventory = [entry("a.json", b"abc"), entry("b.json", b"")];
 
@@ -368,7 +494,7 @@ fn test_verify_manifest_accepts_consistent_inventory_in_any_order() {
 }
 
 #[test]
-fn test_verify_manifest_reports_version_mismatch() {
+fn should_verify_manifest_reports_version_mismatch() {
   let manifest = manifest_value("2.0.0", &[("a.json", SHA256_OF_ABC)]);
   let inventory = [entry("a.json", b"abc")];
 
@@ -383,7 +509,7 @@ fn test_verify_manifest_reports_version_mismatch() {
 }
 
 #[test]
-fn test_verify_manifest_reports_unlisted_file() {
+fn should_verify_manifest_reports_unlisted_file() {
   let manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_ABC)]);
   let inventory = [entry("a.json", b"abc"), entry("b.json", b"")];
 
@@ -397,7 +523,7 @@ fn test_verify_manifest_reports_unlisted_file() {
 }
 
 #[test]
-fn test_verify_manifest_reports_missing_file() {
+fn should_verify_manifest_reports_missing_file() {
   let manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_ABC), ("b.json", SHA256_OF_EMPTY)]);
   let inventory = [entry("a.json", b"abc")];
 
@@ -411,7 +537,7 @@ fn test_verify_manifest_reports_missing_file() {
 }
 
 #[test]
-fn test_verify_manifest_reports_modified_file() {
+fn should_verify_manifest_reports_modified_file() {
   let manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_EMPTY)]);
   let inventory = [entry("a.json", b"abc")];
 
@@ -425,7 +551,7 @@ fn test_verify_manifest_reports_modified_file() {
 }
 
 #[test]
-fn test_verify_manifest_reports_duplicate_entry() {
+fn should_verify_manifest_reports_duplicate_entry() {
   let manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_ABC), ("a.json", SHA256_OF_ABC)]);
   let inventory = [entry("a.json", b"abc")];
 
@@ -439,7 +565,7 @@ fn test_verify_manifest_reports_duplicate_entry() {
 }
 
 #[test]
-fn test_verify_manifest_rejects_modified_copy_of_real_data() {
+fn should_verify_manifest_rejects_modified_copy_of_real_data() {
   let copy = TempDir::new("data-modified");
   copy_dir_all(&conformance_dir(), copy.path());
   let target = copy.path().join("values/aid.json");
@@ -459,7 +585,7 @@ fn test_verify_manifest_rejects_modified_copy_of_real_data() {
 }
 
 #[test]
-fn test_load_leaves_manifest_file_untouched_when_verification_fails() {
+fn should_load_leaves_manifest_file_untouched_when_verification_fails() {
   let copy = TempDir::new("data-manifest-untouched");
   copy_dir_all(&conformance_dir(), copy.path());
   let target = copy.path().join("values/aid.json");
@@ -496,7 +622,7 @@ fn is_generator_error(result: Result<(), DataError>) -> bool {
 }
 
 #[test]
-fn test_expand_generators_replaces_only_the_key_decoded_from_tilde_one() {
+fn should_expand_generators_replaces_only_the_key_decoded_from_tilde_one() {
   let mut case = case_with_generators(
     json!({"a/b": "", "a": {"b": ""}}),
     json!([{"target": "/fixtures/events/e1/payload/a~1b", "character": "x", "byte_length": 3}]),
@@ -510,7 +636,7 @@ fn test_expand_generators_replaces_only_the_key_decoded_from_tilde_one() {
 }
 
 #[test]
-fn test_expand_generators_resolves_slash_as_nesting_and_leaves_slash_key_alone() {
+fn should_expand_generators_resolves_slash_as_nesting_and_leaves_slash_key_alone() {
   let mut case = case_with_generators(
     json!({"a/b": "", "a": {"b": ""}}),
     json!([{"target": "/fixtures/events/e1/payload/a/b", "character": "x", "byte_length": 3}]),
@@ -524,7 +650,7 @@ fn test_expand_generators_resolves_slash_as_nesting_and_leaves_slash_key_alone()
 }
 
 #[test]
-fn test_expand_generators_decodes_tilde_zero_one_as_key_tilde_one_not_slash() {
+fn should_expand_generators_decodes_tilde_zero_one_as_key_tilde_one_not_slash() {
   let mut case = case_with_generators(
     json!({"~1": "", "/": ""}),
     json!([{"target": "/fixtures/events/e1/payload/~01", "character": "é", "byte_length": 4}]),
@@ -538,7 +664,7 @@ fn test_expand_generators_decodes_tilde_zero_one_as_key_tilde_one_not_slash() {
 }
 
 #[test]
-fn test_expand_generators_refuses_non_empty_target_outside_fixtures_duplicate_target_and_indivisible_length() {
+fn should_expand_generators_refuses_non_empty_target_outside_fixtures_duplicate_target_and_indivisible_length() {
   // 空でない文字列
   let mut non_empty = case_with_generators(
     json!({"k": "y"}),
@@ -575,7 +701,7 @@ fn test_expand_generators_refuses_non_empty_target_outside_fixtures_duplicate_ta
 }
 
 #[test]
-fn test_expand_generators_expands_item_size_event_of_real_data_to_420000_bytes() {
+fn should_expand_generators_expands_item_size_event_of_real_data_to_420000_bytes() {
   let data = load(&conformance_dir()).expect("実データを読める");
   let mut body = data
     .cases
@@ -595,7 +721,7 @@ fn test_expand_generators_expands_item_size_event_of_real_data_to_420000_bytes()
 }
 
 #[test]
-fn test_expand_generators_fills_every_declared_target_of_real_data_to_its_byte_length() {
+fn should_expand_generators_fills_every_declared_target_of_real_data_to_its_byte_length() {
   let data = load(&conformance_dir()).expect("実データを読める");
   let with_generators: Vec<_> = data
     .cases
@@ -688,7 +814,7 @@ fn remove_notes(value: &mut Value) {
 type Violation = fn(&mut Value);
 
 #[test]
-fn test_load_checks_each_kind_of_data_file_with_its_own_schema() {
+fn should_load_checks_each_kind_of_data_file_with_its_own_schema() {
   let violations: [(&str, Violation); 5] = [
     ("coverage.json", remove_notes),
     ("values/aid.json", empty_first_rules),
@@ -711,7 +837,7 @@ fn test_load_checks_each_kind_of_data_file_with_its_own_schema() {
 }
 
 #[test]
-fn test_load_names_the_violating_location_in_the_schema_error() {
+fn should_load_names_the_violating_location_in_the_schema_error() {
   let copy = real_copy("data-schema-location");
   edit_json(copy.path(), "values/aid.json", empty_first_rules);
 
@@ -723,7 +849,7 @@ fn test_load_names_the_violating_location_in_the_schema_error() {
 }
 
 #[test]
-fn test_load_rejects_synthetic_case_that_violates_the_values_schema() {
+fn should_load_rejects_synthetic_case_that_violates_the_values_schema() {
   let dir = TempDir::new("data-schema-synthetic");
   let violating = values_file("values", "1.0.0").replace("validateSeqNr", "notAnOperation");
   write_dataset(dir.path(), COVERAGE_JSON, &violating);
@@ -737,7 +863,7 @@ fn test_load_rejects_synthetic_case_that_violates_the_values_schema() {
 }
 
 #[test]
-fn test_load_checks_the_data_before_expanding_generators() {
+fn should_load_checks_the_data_before_expanding_generators() {
   let copy = real_copy("data-schema-before-expand");
   edit_json(copy.path(), "dynamodb/write-errors.json", |value| {
     value["cases"][5]["generators"][0]["character"] = json!("xy");
@@ -753,7 +879,7 @@ fn test_load_checks_the_data_before_expanding_generators() {
 }
 
 #[test]
-fn test_load_does_not_check_manifest_json_with_the_schema() {
+fn should_load_does_not_check_manifest_json_with_the_schema() {
   let copy = real_copy("data-schema-manifest");
   edit_json(copy.path(), "manifest.json", |value| {
     value["version"] = json!("9.9.9");
@@ -766,7 +892,7 @@ fn test_load_does_not_check_manifest_json_with_the_schema() {
 }
 
 #[test]
-fn test_load_uses_the_schemas_shipped_with_the_data() {
+fn should_load_uses_the_schemas_shipped_with_the_data() {
   let copy = real_copy("data-schema-shipped");
   edit_json(copy.path(), "schema/coverage.schema.json", |schema| {
     schema["required"] = json!(["format", "version", "required_rules", "exclusions", "notes", "added"]);
@@ -781,7 +907,7 @@ fn test_load_uses_the_schemas_shipped_with_the_data() {
 }
 
 #[test]
-fn test_load_fails_without_the_schema_directory() {
+fn should_load_fails_without_the_schema_directory() {
   let copy = real_copy("data-schema-absent");
   fs::remove_dir_all(copy.path().join("schema")).expect("schema/ を消せる");
 
@@ -794,7 +920,7 @@ fn test_load_fails_without_the_schema_directory() {
 }
 
 #[test]
-fn test_load_fails_without_fetching_a_schema_that_is_not_registered() {
+fn should_load_fails_without_fetching_a_schema_that_is_not_registered() {
   let copy = real_copy("data-schema-unresolved");
   fs::remove_file(copy.path().join("schema/common.schema.json")).expect("common.schema.json を消せる");
 
@@ -808,7 +934,7 @@ fn test_load_fails_without_fetching_a_schema_that_is_not_registered() {
 }
 
 #[test]
-fn test_load_fails_when_a_schema_has_no_id() {
+fn should_load_fails_when_a_schema_has_no_id() {
   let copy = real_copy("data-schema-no-id");
   edit_json(copy.path(), "schema/values.schema.json", |schema| {
     schema.as_object_mut().expect("オブジェクト").remove("$id");
@@ -823,7 +949,7 @@ fn test_load_fails_when_a_schema_has_no_id() {
 }
 
 #[test]
-fn test_load_accepts_integer_written_with_a_zero_fraction_in_the_schema_check() {
+fn should_load_accepts_integer_written_with_a_zero_fraction_in_the_schema_check() {
   let copy = real_copy("data-schema-integer-spelling");
   edit_json(copy.path(), "dynamodb/write-errors.json", |value| {
     value["cases"][5]["generators"][0]["byte_length"] = from_text("420000.0");
@@ -849,7 +975,7 @@ fn test_load_accepts_integer_written_with_a_zero_fraction_in_the_schema_check() 
 }
 
 #[test]
-fn test_load_rejects_byte_length_with_a_fraction_in_the_schema_check() {
+fn should_load_rejects_byte_length_with_a_fraction_in_the_schema_check() {
   let copy = real_copy("data-schema-integer-fraction");
   edit_json(copy.path(), "dynamodb/write-errors.json", |value| {
     value["cases"][5]["generators"][0]["byte_length"] = from_text("2.5");
@@ -875,7 +1001,7 @@ fn case_with_generator_text(generator: &str) -> Value {
 }
 
 #[test]
-fn test_expand_generators_accepts_byte_length_written_as_a_whole_number_in_any_spelling() {
+fn should_expand_generators_accepts_byte_length_written_as_a_whole_number_in_any_spelling() {
   for spelling in ["3", "3.0", "3e0", "3E0", "30e-1", "0.3e1"] {
     let mut case = case_with_generator_text(&format!(
       r#"{{"target":"/fixtures/events/e1/payload","character":"x","byte_length":{spelling}}}"#
@@ -888,7 +1014,7 @@ fn test_expand_generators_accepts_byte_length_written_as_a_whole_number_in_any_s
 }
 
 #[test]
-fn test_expand_generators_rejects_byte_length_with_a_non_zero_fraction() {
+fn should_expand_generators_rejects_byte_length_with_a_non_zero_fraction() {
   for spelling in ["2.5", "1e-1", "0.5", "3.0000000000000000000001"] {
     let mut case = case_with_generator_text(&format!(
       r#"{{"target":"/fixtures/events/e1/payload","character":"x","byte_length":{spelling}}}"#
@@ -902,7 +1028,7 @@ fn test_expand_generators_rejects_byte_length_with_a_non_zero_fraction() {
 }
 
 #[test]
-fn test_expand_generators_rejects_byte_length_below_one_or_not_a_number() {
+fn should_expand_generators_rejects_byte_length_below_one_or_not_a_number() {
   for spelling in ["0", "0.0", "-3", "-3.0", r#""3""#, "null", "true"] {
     let mut case = case_with_generator_text(&format!(
       r#"{{"target":"/fixtures/events/e1/payload","character":"x","byte_length":{spelling}}}"#
@@ -917,7 +1043,7 @@ fn test_expand_generators_rejects_byte_length_below_one_or_not_a_number() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_parse_strict_json_accepts_replacement_character_in_both_spellings() {
+fn should_parse_strict_json_accepts_replacement_character_in_both_spellings() {
   let raw = parse_strict_json("{\"c\":\"\u{fffd}\"}".as_bytes()).expect("生の U+FFFD は有効な UTF-8");
   let escaped = parse_strict_json(br#"{"c":"\ufffd"}"#).expect("エスケープした U+FFFD も有効");
 
@@ -926,7 +1052,7 @@ fn test_parse_strict_json_accepts_replacement_character_in_both_spellings() {
 }
 
 #[test]
-fn test_expand_generators_accepts_replacement_character_as_the_character() {
+fn should_expand_generators_accepts_replacement_character_as_the_character() {
   for text in ["\u{fffd}", r"\ufffd"] {
     let mut case = case_with_generator_text(&format!(
       r#"{{"target":"/fixtures/events/e1/payload","character":"{text}","byte_length":6}}"#
@@ -939,7 +1065,7 @@ fn test_expand_generators_accepts_replacement_character_as_the_character() {
 }
 
 #[test]
-fn test_expand_generators_rejects_replacement_character_byte_length_not_divisible_by_its_width() {
+fn should_expand_generators_rejects_replacement_character_byte_length_not_divisible_by_its_width() {
   let mut case =
     case_with_generator_text(r#"{"target":"/fixtures/events/e1/payload","character":"\ufffd","byte_length":4}"#);
 
@@ -947,7 +1073,7 @@ fn test_expand_generators_rejects_replacement_character_byte_length_not_divisibl
 }
 
 #[test]
-fn test_load_and_expand_accept_replacement_character_in_the_real_data_generator() {
+fn should_load_and_expand_accept_replacement_character_in_the_real_data_generator() {
   let copy = real_copy("data-fffd-real");
   edit_json(copy.path(), "dynamodb/write-errors.json", |value| {
     value["cases"][5]["generators"][0]["character"] = json!("\u{fffd}");
@@ -974,7 +1100,7 @@ fn test_load_and_expand_accept_replacement_character_in_the_real_data_generator(
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_load_exposes_the_version_that_manifest_json_actually_declares() {
+fn should_load_exposes_the_version_that_manifest_json_actually_declares() {
   let copy = real_copy("data-manifest-other-version");
   edit_json(copy.path(), "manifest.json", |value| value["version"] = json!("9.9.9"));
 
@@ -989,7 +1115,7 @@ fn test_load_exposes_the_version_that_manifest_json_actually_declares() {
 }
 
 #[test]
-fn test_load_has_no_manifest_version_when_manifest_json_version_is_not_a_string() {
+fn should_load_has_no_manifest_version_when_manifest_json_version_is_not_a_string() {
   let copy = real_copy("data-manifest-numeric-version");
   edit_json(copy.path(), "manifest.json", |value| value["version"] = json!(1));
 
@@ -1007,7 +1133,7 @@ fn test_load_has_no_manifest_version_when_manifest_json_version_is_not_a_string(
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_verify_manifest_reports_unknown_top_level_field() {
+fn should_verify_manifest_reports_unknown_top_level_field() {
   let mut manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_ABC)]);
   manifest["extra"] = json!(true);
   let inventory = [entry("a.json", b"abc")];
@@ -1022,7 +1148,7 @@ fn test_verify_manifest_reports_unknown_top_level_field() {
 }
 
 #[test]
-fn test_verify_manifest_reports_unknown_field_of_a_file_entry_and_keeps_verifying_it() {
+fn should_verify_manifest_reports_unknown_field_of_a_file_entry_and_keeps_verifying_it() {
   let mut manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_ABC), ("b.json", SHA256_OF_EMPTY)]);
   manifest["files"][1]["note"] = json!("x");
   let inventory = [entry("a.json", b"abc"), entry("b.json", b"")];
@@ -1037,7 +1163,7 @@ fn test_verify_manifest_reports_unknown_field_of_a_file_entry_and_keeps_verifyin
 }
 
 #[test]
-fn test_verify_manifest_still_reports_a_modified_file_whose_entry_has_an_unknown_field() {
+fn should_verify_manifest_still_reports_a_modified_file_whose_entry_has_an_unknown_field() {
   let mut manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_EMPTY)]);
   manifest["files"][0]["note"] = json!("x");
   let inventory = [entry("a.json", b"abc")];
@@ -1054,7 +1180,7 @@ fn test_verify_manifest_still_reports_a_modified_file_whose_entry_has_an_unknown
 }
 
 #[test]
-fn test_verify_manifest_reports_every_unknown_field() {
+fn should_verify_manifest_reports_every_unknown_field() {
   let mut manifest = manifest_value("1.0.0", &[("a.json", SHA256_OF_ABC)]);
   manifest["alpha"] = json!(1);
   manifest["beta"] = json!(2);
@@ -1076,14 +1202,14 @@ fn test_verify_manifest_reports_every_unknown_field() {
 }
 
 #[test]
-fn test_verify_manifest_describes_an_unknown_field_in_its_message() {
+fn should_verify_manifest_describes_an_unknown_field_in_its_message() {
   let problem = ManifestProblem::UnknownField("files[0].note".to_string());
 
   assert!(problem.to_string().contains("files[0].note"));
 }
 
 #[test]
-fn test_load_reports_unknown_manifest_fields_as_mismatch_not_as_a_load_failure() {
+fn should_load_reports_unknown_manifest_fields_as_mismatch_not_as_a_load_failure() {
   let copy = real_copy("data-manifest-unknown-fields");
   edit_json(copy.path(), "manifest.json", |value| {
     value["extra"] = json!(true);

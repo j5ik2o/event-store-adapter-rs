@@ -98,7 +98,7 @@ fn count_status(report: &Value, status: &str) -> usize {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_cli_exits_zero_and_passes_manifest_verification_for_memory_backend() {
+fn should_cli_exits_zero_and_passes_manifest_verification_for_memory_backend() {
   let execution = execute_on_real_data("cli-memory-exit", &["--backend", "memory"]);
 
   assert_eq!(
@@ -111,7 +111,7 @@ fn test_cli_exits_zero_and_passes_manifest_verification_for_memory_backend() {
 }
 
 #[test]
-fn test_cli_reports_every_case_of_memory_backend_without_any_success() {
+fn should_cli_reports_every_case_of_memory_backend_without_any_success() {
   let execution = execute_on_real_data("cli-memory-counts", &["--backend", "memory"]);
 
   let report = execution.report();
@@ -125,7 +125,7 @@ fn test_cli_reports_every_case_of_memory_backend_without_any_success() {
 }
 
 #[test]
-fn test_cli_gives_every_not_applicable_and_unverified_case_a_reason_of_a_known_kind() {
+fn should_cli_gives_every_not_applicable_and_unverified_case_a_reason_of_a_known_kind() {
   let execution = execute_on_real_data("cli-memory-reasons", &["--backend", "memory"]);
 
   let report = execution.report();
@@ -154,7 +154,7 @@ fn test_cli_gives_every_not_applicable_and_unverified_case_a_reason_of_a_known_k
 }
 
 #[test]
-fn test_cli_report_names_backend_data_version_and_implementation() {
+fn should_cli_report_names_backend_data_version_and_implementation() {
   let execution = execute_on_real_data("cli-memory-identity", &["--backend", "memory"]);
 
   let report = execution.report();
@@ -167,7 +167,7 @@ fn test_cli_report_names_backend_data_version_and_implementation() {
 }
 
 #[test]
-fn test_cli_accepts_dynamodb_backend_and_reports_without_connecting() {
+fn should_cli_accepts_dynamodb_backend_and_reports_without_connecting() {
   let execution = execute_on_real_data("cli-dynamodb", &["--backend", "dynamodb"]);
 
   assert_eq!(
@@ -190,7 +190,7 @@ fn test_cli_accepts_dynamodb_backend_and_reports_without_connecting() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_cli_with_require_all_exits_with_failure_because_cases_are_unverified() {
+fn should_cli_with_require_all_exits_with_failure_because_cases_are_unverified() {
   let execution = execute_on_real_data("cli-require-all", &["--backend", "memory", "--require-all"]);
 
   assert_eq!(execution.code(), Some(1));
@@ -198,7 +198,7 @@ fn test_cli_with_require_all_exits_with_failure_because_cases_are_unverified() {
 }
 
 #[test]
-fn test_cli_exits_with_failure_when_manifest_verification_fails() {
+fn should_cli_exits_with_failure_when_manifest_verification_fails() {
   let copy = TempDir::new("cli-modified-data");
   copy_dir_all(&conformance_dir(), copy.path());
   let target = copy.path().join("values/aid.json");
@@ -217,7 +217,7 @@ fn test_cli_exits_with_failure_when_manifest_verification_fails() {
 }
 
 #[test]
-fn test_cli_fails_when_report_cannot_be_written() {
+fn should_cli_fails_when_report_cannot_be_written() {
   let directory = TempDir::new("cli-unwritable-report");
   let report_path = directory.path().join("no-such-directory").join("report.json");
 
@@ -236,7 +236,7 @@ fn test_cli_fails_when_report_cannot_be_written() {
 }
 
 #[test]
-fn test_cli_fails_without_writing_report_when_data_cannot_be_read() {
+fn should_cli_fails_without_writing_report_when_data_cannot_be_read() {
   let missing = TempDir::new("cli-missing-data");
 
   let execution = execute(
@@ -254,7 +254,7 @@ fn test_cli_fails_without_writing_report_when_data_cannot_be_read() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_cli_rejects_missing_backend() {
+fn should_cli_rejects_missing_backend() {
   let data = conformance_dir();
   let directory = TempDir::new("cli-no-backend");
   let report = directory.path().join("report.json");
@@ -266,7 +266,7 @@ fn test_cli_rejects_missing_backend() {
 }
 
 #[test]
-fn test_cli_rejects_missing_data() {
+fn should_cli_rejects_missing_data() {
   let directory = TempDir::new("cli-no-data");
   let report = directory.path().join("report.json");
 
@@ -277,14 +277,14 @@ fn test_cli_rejects_missing_data() {
 }
 
 #[test]
-fn test_cli_rejects_missing_report() {
+fn should_cli_rejects_missing_report() {
   let output = launch(&["--backend", "memory", "--data", &conformance_dir().to_string_lossy()]);
 
   assert_eq!(output.status.code(), Some(2));
 }
 
 #[test]
-fn test_cli_rejects_option_without_value() {
+fn should_cli_rejects_option_without_value() {
   let output = launch(&[
     "--backend",
     "memory",
@@ -297,7 +297,7 @@ fn test_cli_rejects_option_without_value() {
 }
 
 #[test]
-fn test_cli_rejects_unknown_argument() {
+fn should_cli_rejects_unknown_argument() {
   let execution = execute_on_real_data("cli-unknown-argument", &["--backend", "memory", "--unknown-option"]);
 
   assert_eq!(execution.code(), Some(2));
@@ -305,7 +305,7 @@ fn test_cli_rejects_unknown_argument() {
 }
 
 #[test]
-fn test_cli_rejects_unknown_backend() {
+fn should_cli_rejects_unknown_backend() {
   let execution = execute_on_real_data("cli-unknown-backend", &["--backend", "sqlite"]);
 
   assert_eq!(execution.code(), Some(2));
@@ -317,7 +317,7 @@ fn test_cli_rejects_unknown_backend() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_cli_fails_without_writing_report_when_a_data_file_violates_its_schema() {
+fn should_cli_fails_without_writing_report_when_a_data_file_violates_its_schema() {
   let copy = TempDir::new("cli-schema-violation");
   copy_dir_all(&conformance_dir(), copy.path());
   let target = copy.path().join("coverage.json");
@@ -354,7 +354,7 @@ fn copy_with_manifest(label: &str, edit: impl FnOnce(&mut Value)) -> TempDir {
 }
 
 #[test]
-fn test_cli_reports_the_manifest_version_it_read_and_fails_the_comparison_separately() {
+fn should_cli_reports_the_manifest_version_it_read_and_fails_the_comparison_separately() {
   let copy = copy_with_manifest("cli-manifest-version", |manifest| {
     manifest["version"] = Value::from("9.9.9")
   });
@@ -369,7 +369,7 @@ fn test_cli_reports_the_manifest_version_it_read_and_fails_the_comparison_separa
 }
 
 #[test]
-fn test_cli_reports_unknown_manifest_field_as_a_failed_verification() {
+fn should_cli_reports_unknown_manifest_field_as_a_failed_verification() {
   let copy = copy_with_manifest("cli-manifest-unknown-field", |manifest| {
     manifest["extra"] = Value::from(true);
   });
@@ -386,6 +386,59 @@ fn test_cli_reports_unknown_manifest_field_as_a_failed_verification() {
     "{problems}"
   );
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
+}
+
+// ---------------------------------------------------------------------------
+// 一覧に正しい形で載っていないファイルは、読まずに照合の不一致として報告する
+// ---------------------------------------------------------------------------
+
+/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、116 ケースのどれも成功していないことを確かめる。
+fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &str) {
+  let stderr = String::from_utf8_lossy(&execution.output.stderr);
+  assert_eq!(
+    execution.code(),
+    Some(1),
+    "照合の失敗は報告を書いて終了コード 1: {stderr}"
+  );
+  assert!(execution.report_exists(), "報告を書く: {stderr}");
+  let report = execution.report();
+  assert_eq!(report["data"]["manifest"]["verification"], "failed");
+  let problems = report["data"]["manifest"]["problems"].to_string();
+  assert!(problems.contains(problem_path), "{problems}");
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
+  assert_eq!(count_status(&report, "passed"), 0);
+}
+
+#[test]
+fn should_cli_reports_an_unlisted_json_in_the_schema_directory_as_a_failed_verification() {
+  let copy = TempDir::new("cli-unlisted-schema");
+  copy_dir_all(&conformance_dir(), copy.path());
+  // `$id` がない。スキーマとして登録していれば、実行器のエラーになって報告が出ない。
+  fs::write(copy.path().join("schema").join("note.json"), r#"{"title": "no id"}"#).expect("一覧にないスキーマを書ける");
+
+  let execution = execute("cli-unlisted-schema-run", copy.path(), &["--backend", "memory"]);
+
+  assert_reported_as_failed_verification(&execution, "schema/note.json");
+}
+
+#[test]
+fn should_cli_reports_an_entry_without_a_string_sha256_as_a_failed_verification() {
+  let copy = copy_with_manifest("cli-manifest-non-string-sha256", |manifest| {
+    manifest["files"]
+      .as_array_mut()
+      .expect("files は配列")
+      .push(serde_json::json!({"path": "values/bad.json", "sha256": 42}));
+  });
+  // 壊れた JSON。ケースとして読んでいれば、実行器のエラーになって報告が出ない。
+  fs::write(copy.path().join("values").join("bad.json"), "{").expect("壊れたファイルを書ける");
+
+  let execution = execute(
+    "cli-manifest-non-string-sha256-run",
+    copy.path(),
+    &["--backend", "memory"],
+  );
+
+  assert_reported_as_failed_verification(&execution, "values/bad.json");
 }
 
 // ---------------------------------------------------------------------------
@@ -448,7 +501,7 @@ fn revision_of(execution: &Execution) -> Value {
 }
 
 #[test]
-fn test_cli_reports_the_git_commit_as_the_revision() {
+fn should_cli_reports_the_git_commit_as_the_revision() {
   let environment = Environment {
     removed: &["GITHUB_SHA"],
     ..Environment::default()
@@ -468,7 +521,7 @@ fn test_cli_reports_the_git_commit_as_the_revision() {
 }
 
 #[test]
-fn test_cli_prefers_the_git_commit_over_github_sha() {
+fn should_cli_prefers_the_git_commit_over_github_sha() {
   let environment = Environment {
     set: &[("GITHUB_SHA", CI_SHA)],
     ..Environment::default()
@@ -485,7 +538,7 @@ fn test_cli_prefers_the_git_commit_over_github_sha() {
 }
 
 #[test]
-fn test_cli_falls_back_to_github_sha_when_git_gives_no_commit() {
+fn should_cli_falls_back_to_github_sha_when_git_gives_no_commit() {
   let not_a_repository = TempDir::new("cli-revision-no-git-dir");
   let git_dir = not_a_repository.path().to_string_lossy().into_owned();
   let environment = Environment {
@@ -505,7 +558,7 @@ fn test_cli_falls_back_to_github_sha_when_git_gives_no_commit() {
 }
 
 #[test]
-fn test_cli_leaves_the_revision_null_without_git_and_github_sha() {
+fn should_cli_leaves_the_revision_null_without_git_and_github_sha() {
   let not_a_repository = TempDir::new("cli-revision-none-git-dir");
   let git_dir = not_a_repository.path().to_string_lossy().into_owned();
   let environment = Environment {
@@ -526,7 +579,7 @@ fn test_cli_leaves_the_revision_null_without_git_and_github_sha() {
 }
 
 #[test]
-fn test_cli_reports_the_implementation_commit_when_launched_inside_another_git_repository() {
+fn should_cli_reports_the_implementation_commit_when_launched_inside_another_git_repository() {
   let other_repository = TempDir::new("cli-revision-other-repository");
   init_repository_with_one_commit(other_repository.path());
   let other_head = git_head_of(other_repository.path());

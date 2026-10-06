@@ -114,7 +114,7 @@ fn counts_of(row: &Value) -> (u64, u64, u64, u64) {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_report_exposes_data_version_and_manifest_verification_result() {
+fn should_report_exposes_data_version_and_manifest_verification_result() {
   let report = Report::build(&data_set(vec![], &[], vec![]), "memory", vec![], implementation());
 
   let json = to_json(&report);
@@ -125,7 +125,7 @@ fn test_report_exposes_data_version_and_manifest_verification_result() {
 }
 
 #[test]
-fn test_report_exposes_the_manifest_version_that_was_actually_read() {
+fn should_report_exposes_the_manifest_version_that_was_actually_read() {
   let mut data = data_set(vec![ManifestProblem::Version("\"9.9.9\"".to_string())], &[], vec![]);
   data.manifest_version = Some("9.9.9".to_string());
 
@@ -139,7 +139,7 @@ fn test_report_exposes_the_manifest_version_that_was_actually_read() {
 }
 
 #[test]
-fn test_report_exposes_null_data_version_when_manifest_has_no_string_version() {
+fn should_report_exposes_null_data_version_when_manifest_has_no_string_version() {
   let mut data = data_set(vec![], &[], vec![]);
   data.manifest_version = None;
 
@@ -149,7 +149,7 @@ fn test_report_exposes_null_data_version_when_manifest_has_no_string_version() {
 }
 
 #[test]
-fn test_report_exposes_failed_manifest_verification_with_its_problems() {
+fn should_report_exposes_failed_manifest_verification_with_its_problems() {
   let problems = vec![ManifestProblem::Modified("values/aid.json".to_string())];
   let report = Report::build(&data_set(problems, &[], vec![]), "memory", vec![], implementation());
 
@@ -164,7 +164,7 @@ fn test_report_exposes_failed_manifest_verification_with_its_problems() {
 }
 
 #[test]
-fn test_report_exposes_implementation_and_backend() {
+fn should_report_exposes_implementation_and_backend() {
   let report = Report::build(&data_set(vec![], &[], vec![]), "dynamodb", vec![], implementation());
 
   let json = to_json(&report);
@@ -177,14 +177,14 @@ fn test_report_exposes_implementation_and_backend() {
 }
 
 #[test]
-fn test_report_case_entry_of_passed_case_carries_id_rules_and_status() {
+fn should_report_case_entry_of_passed_case_carries_id_rules_and_status() {
   let entry = serde_json::to_value(case_report("c1", &["T-1", "T-3"], CaseOutcome::Passed)).unwrap();
 
   assert_eq!(entry, json!({"id": "c1", "rules": ["T-1", "T-3"], "status": "passed"}));
 }
 
 #[test]
-fn test_report_case_entry_of_failed_case_carries_operation_values_and_unfired_faults() {
+fn should_report_case_entry_of_failed_case_carries_operation_values_and_unfired_faults() {
   let outcome = CaseOutcome::Failed {
     failed_operation: Some(3),
     detail: "期待と異なる".to_string(),
@@ -223,7 +223,7 @@ fn kind_name(reason: &NotApplicableReason) -> &'static str {
 }
 
 #[test]
-fn test_report_case_entry_of_not_applicable_case_carries_one_of_the_four_reasons() {
+fn should_report_case_entry_of_not_applicable_case_carries_one_of_the_four_reasons() {
   let reasons = vec![
     NotApplicableReason::BackendNotTargeted {
       detail: "保存先が対象外".to_string(),
@@ -253,7 +253,7 @@ fn test_report_case_entry_of_not_applicable_case_carries_one_of_the_four_reasons
 }
 
 #[test]
-fn test_report_case_entry_of_time_precision_choice_is_a_representation_reason() {
+fn should_report_case_entry_of_time_precision_choice_is_a_representation_reason() {
   let outcome = CaseOutcome::NotApplicable {
     reason: NotApplicableReason::Representation {
       representation: RepresentationGap::TimePrecision,
@@ -268,7 +268,7 @@ fn test_report_case_entry_of_time_precision_choice_is_a_representation_reason() 
 }
 
 #[test]
-fn test_report_case_entry_of_unverified_case_lists_unimplemented_constraint_words() {
+fn should_report_case_entry_of_unverified_case_lists_unimplemented_constraint_words() {
   let outcome = CaseOutcome::Unverified {
     reason: UnverifiedReason::UnimplementedConstraintWords {
       words: vec!["consistent_read_all_tables".to_string(), "keys".to_string()],
@@ -285,7 +285,7 @@ fn test_report_case_entry_of_unverified_case_lists_unimplemented_constraint_word
 }
 
 #[test]
-fn test_report_case_entry_of_unverified_case_explains_why_it_was_not_executed() {
+fn should_report_case_entry_of_unverified_case_explains_why_it_was_not_executed() {
   let entry = serde_json::to_value(case_report("c1", &["T-1"], unverified())).unwrap();
 
   assert_eq!(entry["status"], "unverified");
@@ -298,7 +298,7 @@ fn test_report_case_entry_of_unverified_case_explains_why_it_was_not_executed() 
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_report_counts_each_case_in_every_rule_it_names() {
+fn should_report_counts_each_case_in_every_rule_it_names() {
   let cases = vec![
     case_report("c1", &["T-1", "T-3"], CaseOutcome::Passed),
     case_report("c2", &["T-1"], failed()),
@@ -321,7 +321,7 @@ fn test_report_counts_each_case_in_every_rule_it_names() {
 }
 
 #[test]
-fn test_report_lists_required_rules_without_cases_with_zero_counts() {
+fn should_report_lists_required_rules_without_cases_with_zero_counts() {
   let report = Report::build(
     &data_set(vec![], &["T-1", "X-9"], vec![]),
     "memory",
@@ -336,7 +336,7 @@ fn test_report_lists_required_rules_without_cases_with_zero_counts() {
 }
 
 #[test]
-fn test_report_records_coverage_exclusion_reason_on_excluded_rules_only() {
+fn should_report_records_coverage_exclusion_reason_on_excluded_rules_only() {
   let exclusions = vec![
     CoverageExclusion {
       rule: "W-5".to_string(),
@@ -376,7 +376,7 @@ fn test_report_records_coverage_exclusion_reason_on_excluded_rules_only() {
 }
 
 #[test]
-fn test_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_case_once() {
+fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_case_once() {
   let data = load(&conformance_dir()).expect("実データを読める");
   let case_reports = run(&data, &target_memory::TARGET);
   let memberships: usize = case_reports.iter().map(|case| case.rules.len()).sum();
@@ -412,7 +412,7 @@ fn test_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_case_
 }
 
 #[test]
-fn test_status_counts_totals_each_state() {
+fn should_status_counts_totals_each_state() {
   let outcomes = vec![
     CaseOutcome::Passed,
     failed(),
@@ -443,21 +443,21 @@ fn test_status_counts_totals_each_state() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_should_fail_is_false_for_unverified_cases_without_require_all() {
+fn should_should_fail_is_false_for_unverified_cases_without_require_all() {
   let report = report_of(vec![], vec![unverified(), not_applicable()]);
 
   assert!(!report.should_fail(false));
 }
 
 #[test]
-fn test_should_fail_is_true_for_unverified_cases_with_require_all() {
+fn should_should_fail_is_true_for_unverified_cases_with_require_all() {
   let report = report_of(vec![], vec![unverified(), not_applicable()]);
 
   assert!(report.should_fail(true));
 }
 
 #[test]
-fn test_should_fail_is_true_for_failed_case_regardless_of_require_all() {
+fn should_should_fail_is_true_for_failed_case_regardless_of_require_all() {
   let report = report_of(vec![], vec![CaseOutcome::Passed, failed()]);
 
   assert!(report.should_fail(false));
@@ -465,7 +465,7 @@ fn test_should_fail_is_true_for_failed_case_regardless_of_require_all() {
 }
 
 #[test]
-fn test_should_fail_is_true_when_manifest_verification_failed_without_require_all() {
+fn should_should_fail_is_true_when_manifest_verification_failed_without_require_all() {
   let report = report_of(
     vec![ManifestProblem::Missing("values/aid.json".to_string())],
     vec![not_applicable()],
@@ -475,7 +475,7 @@ fn test_should_fail_is_true_when_manifest_verification_failed_without_require_al
 }
 
 #[test]
-fn test_should_fail_is_false_for_passed_and_not_applicable_cases_even_with_require_all() {
+fn should_should_fail_is_false_for_passed_and_not_applicable_cases_even_with_require_all() {
   let report = report_of(vec![], vec![CaseOutcome::Passed, not_applicable()]);
 
   assert!(!report.should_fail(false));
@@ -487,21 +487,21 @@ fn test_should_fail_is_false_for_passed_and_not_applicable_cases_even_with_requi
 // ---------------------------------------------------------------------------
 
 #[test]
-fn test_parse_package_version_reads_version_of_package_section_only() {
+fn should_parse_package_version_reads_version_of_package_section_only() {
   let manifest = "[dependencies]\nserde = { version = \"1.0.0\" }\n\n[package]\nname = \"sample\"\nversion = \"4.0.0-alpha.0\"\n\n[dev-dependencies]\nversion = \"9.9.9\"\n";
 
   assert_eq!(parse_package_version(manifest), Some("4.0.0-alpha.0".to_string()));
 }
 
 #[test]
-fn test_parse_package_version_ignores_version_outside_package_section() {
+fn should_parse_package_version_ignores_version_outside_package_section() {
   let manifest = "[package]\nname = \"sample\"\n\n[dependencies]\nversion = \"9.9.9\"\n";
 
   assert_eq!(parse_package_version(manifest), None);
 }
 
 #[test]
-fn test_parse_package_version_finds_a_version_in_real_library_manifest() {
+fn should_parse_package_version_finds_a_version_in_real_library_manifest() {
   let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../lib/Cargo.toml");
   let manifest = std::fs::read_to_string(path).expect("lib/Cargo.toml を読める");
 
@@ -519,21 +519,21 @@ const GIT_HEAD: &str = "1111111111111111111111111111111111111111";
 const CI_SHA: &str = "2222222222222222222222222222222222222222";
 
 #[test]
-fn test_resolve_revision_prefers_git_head_over_github_sha() {
+fn should_resolve_revision_prefers_git_head_over_github_sha() {
   let revision = resolve_revision(Some(GIT_HEAD.to_string()), Some(CI_SHA.to_string()));
 
   assert_eq!(revision, Some(GIT_HEAD.to_string()));
 }
 
 #[test]
-fn test_resolve_revision_falls_back_to_github_sha_when_git_is_unavailable() {
+fn should_resolve_revision_falls_back_to_github_sha_when_git_is_unavailable() {
   let revision = resolve_revision(None, Some(CI_SHA.to_string()));
 
   assert_eq!(revision, Some(CI_SHA.to_string()));
 }
 
 #[test]
-fn test_resolve_revision_ignores_blank_values_and_trims_whitespace() {
+fn should_resolve_revision_ignores_blank_values_and_trims_whitespace() {
   assert_eq!(
     resolve_revision(Some("\n".to_string()), Some(format!("{CI_SHA}\n"))),
     Some(CI_SHA.to_string())
@@ -546,12 +546,12 @@ fn test_resolve_revision_ignores_blank_values_and_trims_whitespace() {
 }
 
 #[test]
-fn test_resolve_revision_is_none_without_any_source() {
+fn should_resolve_revision_is_none_without_any_source() {
   assert_eq!(resolve_revision(None, None), None);
 }
 
 #[test]
-fn test_git_head_in_returns_the_commit_of_the_repository_that_contains_the_directory() {
+fn should_git_head_in_returns_the_commit_of_the_repository_that_contains_the_directory() {
   let head = git_head_in(Path::new(env!("CARGO_MANIFEST_DIR"))).expect("この crate は git の作業ツリーの中にある");
 
   let head = head.trim();
@@ -560,7 +560,7 @@ fn test_git_head_in_returns_the_commit_of_the_repository_that_contains_the_direc
 }
 
 #[test]
-fn test_git_head_in_is_none_when_the_directory_does_not_exist() {
+fn should_git_head_in_is_none_when_the_directory_does_not_exist() {
   // フォルダーがないときは `None` になり、呼び出し側は `GITHUB_SHA` に戻る。
   let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("no-such-directory");
 

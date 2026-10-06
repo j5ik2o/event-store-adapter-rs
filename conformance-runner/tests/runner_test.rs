@@ -116,7 +116,7 @@ fn scenario_body(backends: &[&str]) -> Value {
 }
 
 #[test]
-fn test_run_case_marks_scenario_not_targeting_the_backend_as_not_applicable() {
+fn should_run_case_marks_scenario_not_targeting_the_backend_as_not_applicable() {
   let case = scenario(&["T-1"], scenario_body(&["dynamodb"]));
 
   let outcome = run_case(&case, &target_memory::TARGET, &no_exclusions());
@@ -125,7 +125,7 @@ fn test_run_case_marks_scenario_not_targeting_the_backend_as_not_applicable() {
 }
 
 #[test]
-fn test_run_case_leaves_scenario_targeting_the_backend_unverified_when_nothing_ran() {
+fn should_run_case_leaves_scenario_targeting_the_backend_unverified_when_nothing_ran() {
   let case = scenario(&["T-1"], scenario_body(&["memory", "dynamodb"]));
 
   let on_memory = run_case(&case, &target_memory::TARGET, &no_exclusions());
@@ -136,7 +136,7 @@ fn test_run_case_leaves_scenario_targeting_the_backend_unverified_when_nothing_r
 }
 
 #[test]
-fn test_run_case_marks_case_requiring_ttl_as_not_applicable_on_memory() {
+fn should_run_case_marks_case_requiring_ttl_as_not_applicable_on_memory() {
   let mut body = scenario_body(&["memory", "dynamodb"]);
   body["requires"] = json!(["ttl"]);
   let case = scenario(&["T-1"], body);
@@ -147,7 +147,7 @@ fn test_run_case_marks_case_requiring_ttl_as_not_applicable_on_memory() {
 }
 
 #[test]
-fn test_run_case_leaves_case_requiring_ttl_unverified_on_dynamodb() {
+fn should_run_case_leaves_case_requiring_ttl_unverified_on_dynamodb() {
   let mut body = scenario_body(&["memory", "dynamodb"]);
   body["requires"] = json!(["ttl"]);
   let case = scenario(&["T-1"], body);
@@ -169,7 +169,7 @@ fn excluding_w5() -> Coverage {
 }
 
 #[test]
-fn test_run_case_marks_case_whose_rules_are_all_excluded_as_coverage_exclusion() {
+fn should_run_case_marks_case_whose_rules_are_all_excluded_as_coverage_exclusion() {
   let case = scenario(&["W-5"], scenario_body(&["memory"]));
 
   let outcome = run_case(&case, &target_memory::TARGET, &excluding_w5());
@@ -178,7 +178,7 @@ fn test_run_case_marks_case_whose_rules_are_all_excluded_as_coverage_exclusion()
 }
 
 #[test]
-fn test_run_case_keeps_case_with_a_non_excluded_rule_out_of_coverage_exclusion() {
+fn should_run_case_keeps_case_with_a_non_excluded_rule_out_of_coverage_exclusion() {
   let case = scenario(&["W-5", "T-1"], scenario_body(&["memory"]));
 
   let outcome = run_case(&case, &target_memory::TARGET, &excluding_w5());
@@ -187,7 +187,7 @@ fn test_run_case_keeps_case_with_a_non_excluded_rule_out_of_coverage_exclusion()
 }
 
 #[test]
-fn test_run_case_fails_case_whose_generator_cannot_be_expanded() {
+fn should_run_case_fails_case_whose_generator_cannot_be_expanded() {
   let mut body = scenario_body(&["memory"]);
   body["fixtures"] = json!({"events": {"e1": {"payload": "already set"}}, "snapshots": {}});
   body["generators"] = json!([{"target": "/fixtures/events/e1/payload", "character": "x", "byte_length": 3}]);
@@ -202,7 +202,7 @@ fn test_run_case_fails_case_whose_generator_cannot_be_expanded() {
 }
 
 #[test]
-fn test_run_case_fails_case_whose_fault_declaration_cannot_be_registered() {
+fn should_run_case_fails_case_whose_fault_declaration_cannot_be_registered() {
   let mut body = scenario_body(&["memory"]);
   body["faults"] = json!([{
     "operation": 1,
@@ -223,7 +223,7 @@ fn test_run_case_fails_case_whose_fault_declaration_cannot_be_registered() {
 }
 
 #[test]
-fn test_run_case_reports_unimplemented_constraint_words_as_unverified() {
+fn should_run_case_reports_unimplemented_constraint_words_as_unverified() {
   let mut body = scenario_body(&["dynamodb"]);
   body["steps"][0]["observe"] = json!({"requests": [{
     "api": "BatchGetItem",
@@ -245,7 +245,7 @@ fn test_run_case_reports_unimplemented_constraint_words_as_unverified() {
 }
 
 #[test]
-fn test_run_case_does_not_count_same_names_outside_request_constraints_as_words() {
+fn should_run_case_does_not_count_same_names_outside_request_constraints_as_words() {
   let mut body = scenario_body(&["dynamodb"]);
   body["store"]["layout_version"] = json!(1);
   body["steps"][0]["observe"] = json!({"items": [{"table": "journal", "attributes": {"aid": "S"}}]});
@@ -285,7 +285,7 @@ fn requiring_ttl(backends: &[&str]) -> Case {
 }
 
 #[test]
-fn test_target_constants_carry_the_capabilities_and_layout_of_each_backend() {
+fn should_target_constants_carry_the_capabilities_and_layout_of_each_backend() {
   assert_eq!(
     target_memory::TARGET,
     Target {
@@ -305,7 +305,7 @@ fn test_target_constants_carry_the_capabilities_and_layout_of_each_backend() {
 }
 
 #[test]
-fn test_run_case_decides_capability_from_the_given_target_not_from_its_name() {
+fn should_run_case_decides_capability_from_the_given_target_not_from_its_name() {
   let case = requiring_ttl(&["memory", "dynamodb"]);
   let memory_with_ttl = Target {
     name: "memory",
@@ -332,7 +332,7 @@ fn test_run_case_decides_capability_from_the_given_target_not_from_its_name() {
 }
 
 #[test]
-fn test_run_case_requires_every_capability_word_to_be_provided() {
+fn should_run_case_requires_every_capability_word_to_be_provided() {
   let mut body = scenario_body(&["x"]);
   body["requires"] = json!(["ttl", "other"]);
   let case = scenario(&["T-1"], body);
@@ -352,7 +352,7 @@ fn test_run_case_requires_every_capability_word_to_be_provided() {
 }
 
 #[test]
-fn test_run_case_decides_layout_from_has_layout_not_from_the_name() {
+fn should_run_case_decides_layout_from_has_layout_not_from_the_name() {
   let case = layout_case();
   let memory_with_layout = Target {
     name: "memory",
@@ -373,7 +373,7 @@ fn test_run_case_decides_layout_from_has_layout_not_from_the_name() {
 }
 
 #[test]
-fn test_run_case_classifies_a_target_the_runner_has_never_heard_of() {
+fn should_run_case_classifies_a_target_the_runner_has_never_heard_of() {
   let unknown = Target {
     name: "sqlite",
     capabilities: &[],
@@ -396,7 +396,7 @@ fn test_run_case_classifies_a_target_the_runner_has_never_heard_of() {
 }
 
 #[test]
-fn test_run_case_names_the_given_target_in_the_not_targeted_detail() {
+fn should_run_case_names_the_given_target_in_the_not_targeted_detail() {
   let outcome = run_case(
     &scenario(&["T-1"], scenario_body(&["dynamodb"])),
     &target_memory::TARGET,
@@ -419,7 +419,7 @@ fn test_run_case_names_the_given_target_in_the_not_targeted_detail() {
 const TARGETS: [&Target; 2] = [&target_memory::TARGET, &target_dynamodb::TARGET];
 
 #[test]
-fn test_run_marks_fnv1a64_cases_as_fnv1a64_decision_on_every_backend() {
+fn should_run_marks_fnv1a64_cases_as_fnv1a64_decision_on_every_backend() {
   let data = real_data();
   let ids: Vec<&str> = data
     .cases
@@ -439,7 +439,7 @@ fn test_run_marks_fnv1a64_cases_as_fnv1a64_decision_on_every_backend() {
 }
 
 #[test]
-fn test_run_marks_signed_seq_nr_cases_as_unrepresentable_on_every_backend() {
+fn should_run_marks_signed_seq_nr_cases_as_unrepresentable_on_every_backend() {
   let data = real_data();
   let mut ids: Vec<&str> = data
     .cases
@@ -464,7 +464,7 @@ fn test_run_marks_signed_seq_nr_cases_as_unrepresentable_on_every_backend() {
 }
 
 #[test]
-fn test_run_does_not_mark_seq_case_without_signed_flag_as_unrepresentable() {
+fn should_run_does_not_mark_seq_case_without_signed_flag_as_unrepresentable() {
   let data = real_data();
 
   for target in TARGETS {
@@ -475,7 +475,7 @@ fn test_run_does_not_mark_seq_case_without_signed_flag_as_unrepresentable() {
 }
 
 #[test]
-fn test_run_marks_millisecond_precision_cases_as_time_precision_on_every_backend() {
+fn should_run_marks_millisecond_precision_cases_as_time_precision_on_every_backend() {
   let data = real_data();
   let ids: Vec<&str> = data
     .cases
@@ -499,7 +499,7 @@ fn test_run_marks_millisecond_precision_cases_as_time_precision_on_every_backend
 }
 
 #[test]
-fn test_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory() {
+fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory() {
   let data = real_data();
   let reports = run(&data, &target_memory::TARGET);
   let dynamodb_only: Vec<&str> = data
@@ -517,7 +517,7 @@ fn test_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory() {
 }
 
 #[test]
-fn test_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
+fn should_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
   let data = real_data();
 
   let reports = run(&data, &target_dynamodb::TARGET);
@@ -531,7 +531,7 @@ fn test_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
 }
 
 #[test]
-fn test_run_reports_no_success_for_memory_and_leaves_the_rest_unverified() {
+fn should_run_reports_no_success_for_memory_and_leaves_the_rest_unverified() {
   let data = real_data();
 
   let reports = run(&data, &target_memory::TARGET);
@@ -541,7 +541,7 @@ fn test_run_reports_no_success_for_memory_and_leaves_the_rest_unverified() {
 }
 
 #[test]
-fn test_run_reports_no_success_for_dynamodb_and_leaves_the_rest_unverified() {
+fn should_run_reports_no_success_for_dynamodb_and_leaves_the_rest_unverified() {
   let data = real_data();
 
   let reports = run(&data, &target_dynamodb::TARGET);
@@ -551,7 +551,7 @@ fn test_run_reports_no_success_for_dynamodb_and_leaves_the_rest_unverified() {
 }
 
 #[test]
-fn test_run_reports_configuration_case_per_backend() {
+fn should_run_reports_configuration_case_per_backend() {
   let data = real_data();
 
   let on_memory = run(&data, &target_memory::TARGET);
@@ -570,7 +570,7 @@ fn test_run_reports_configuration_case_per_backend() {
 }
 
 #[test]
-fn test_run_reports_layout_case_per_backend() {
+fn should_run_reports_layout_case_per_backend() {
   let data = real_data();
 
   let on_memory = run(&data, &target_memory::TARGET);
@@ -581,7 +581,7 @@ fn test_run_reports_layout_case_per_backend() {
 }
 
 #[test]
-fn test_run_keeps_the_id_and_all_rules_of_each_case() {
+fn should_run_keeps_the_id_and_all_rules_of_each_case() {
   let data = real_data();
   let layout = data
     .cases

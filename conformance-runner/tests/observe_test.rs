@@ -16,7 +16,7 @@ fn words(list: &[&str]) -> BTreeSet<String> {
 }
 
 #[test]
-fn test_constraint_words_collects_keys_from_initialization_and_every_step() {
+fn should_constraint_words_collects_keys_from_initialization_and_every_step() {
   let case = json!({
     "initialization": {"observe": {"requests": [
       {"api": "BatchGetItem", "phase": "configuration-read", "constraints": {"keys": [], "same_store_id": true}}
@@ -39,7 +39,7 @@ fn test_constraint_words_collects_keys_from_initialization_and_every_step() {
 }
 
 #[test]
-fn test_constraint_words_ignores_same_names_outside_request_constraints() {
+fn should_constraint_words_ignores_same_names_outside_request_constraints() {
   let case = json!({
     "store": {"retention_count": null, "retention_mode": "delete", "layout_version": 1},
     "steps": [{
@@ -60,7 +60,7 @@ fn test_constraint_words_ignores_same_names_outside_request_constraints() {
 }
 
 #[test]
-fn test_constraint_words_of_real_configuration_case_are_top_level_constraint_keys_only() {
+fn should_constraint_words_of_real_configuration_case_are_top_level_constraint_keys_only() {
   let data = load(&conformance_dir()).expect("実データを読める");
   let body = &data
     .cases
