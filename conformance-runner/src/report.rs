@@ -1,6 +1,7 @@
 //! 報告の型、規則ごとの集計、状態ごとの件数、終了の判定。
 
 use std::collections::BTreeMap;
+use std::path::Path;
 
 use serde_json::Value;
 
@@ -113,22 +114,35 @@ pub struct Implementation {
 impl Implementation {
   /// 試験の対象の実装（`event-store-adapter-rs`）の版と、コミットの識別子を調べる。
   ///
-  /// 版は `lib/Cargo.toml` の `[package]` から取る。識別子は `git rev-parse HEAD` で取り、取れなければ
+  /// 版は `lib/Cargo.toml` の `[package]` から取る。識別子は、この crate のフォルダー（ビルド時の
+  /// `CARGO_MANIFEST_DIR`）で `git rev-parse HEAD` を動かして取る（`git_head_in`）。起動したフォルダーは
+  /// 使わないので、別の git リポジトリの中から起動しても、その HEAD を報告に載せない。取れなければ
   /// 環境変数 `GITHUB_SHA`（CI のコミット）を使う（`resolve_revision`）。
   pub fn detect() -> Implementation {
-    let git_head = std::process::Command::new("git")
-      .args(["rev-parse", "HEAD"])
-      .output()
-      .ok()
-      .filter(|output| output.status.success())
-      .map(|output| String::from_utf8_lossy(&output.stdout).into_owned());
     Implementation {
       language: "rust",
       crate_name: "event-store-adapter-rs",
       version: parse_package_version(include_str!("../../lib/Cargo.toml")),
-      revision: resolve_revision(git_head, std::env::var("GITHUB_SHA").ok()),
+      revision: resolve_revision(
+        git_head_in(Path::new(env!("CARGO_MANIFEST_DIR"))),
+        std::env::var("GITHUB_SHA").ok(),
+      ),
     }
   }
+}
+
+/// `directory` を作業フォルダーにして `git rev-parse HEAD` を動かし、標準出力を返す。
+///
+/// フォルダーがない、git を起動できない、git が失敗した（git のリポジトリではないなど）ときは `None` を
+/// 返す。前後の空白は除かない（`resolve_revision` が除く）。
+pub fn git_head_in(directory: &Path) -> Option<String> {
+  std::process::Command::new("git")
+    .current_dir(directory)
+    .args(["rev-parse", "HEAD"])
+    .output()
+    .ok()
+    .filter(|output| output.status.success())
+    .map(|output| String::from_utf8_lossy(&output.stdout).into_owned())
 }
 
 /// 報告の `implementation.revision` に載せるコミットの識別子を決める。

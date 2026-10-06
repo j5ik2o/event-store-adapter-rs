@@ -7,8 +7,8 @@ use std::fs;
 use std::path::Path;
 
 use event_store_adapter_conformance_rs::data::{
-  expand_generators, inventory, load, parse_strict_json, sha256_hex, verify_manifest, CaseKind, DataError,
-  InventoryEntry, ManifestProblem,
+  expand_generators, inventory, inventory_path, load, parse_strict_json, sha256_hex, verify_manifest, CaseKind,
+  DataError, InventoryEntry, ManifestProblem,
 };
 use serde_json::{json, Value};
 use support::{conformance_dir, copy_dir_all, TempDir};
@@ -140,6 +140,82 @@ fn test_inventory_lists_the_22_files_covered_by_manifest_without_manifest_itself
   assert!(!paths.contains(&"manifest.json"));
   assert!(paths.contains(&".gitattributes"));
   assert!(paths.contains(&"scenarios/core/write-read.json"));
+}
+
+// ---------------------------------------------------------------------------
+// 一覧の相対パス（UTF-8 でないパスは置換文字に潰さず、誤りにする）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_inventory_path_joins_utf8_components_with_slash() {
+  assert_eq!(
+    inventory_path(Path::new("scenarios/core/write-read.json")).expect("UTF-8 のパス"),
+    "scenarios/core/write-read.json"
+  );
+  assert_eq!(
+    inventory_path(Path::new("values/é.json")).expect("UTF-8 のパス"),
+    "values/é.json"
+  );
+  assert_eq!(
+    inventory_path(Path::new(".gitattributes")).expect("UTF-8 のパス"),
+    ".gitattributes"
+  );
+}
+
+/// UTF-8 でないバイトを含むパスを、ファイルを作らずに組み立てる。
+#[cfg(unix)]
+fn non_utf8_path(components: &[&[u8]]) -> std::path::PathBuf {
+  use std::os::unix::ffi::OsStrExt;
+  components
+    .iter()
+    .map(|component| std::ffi::OsStr::from_bytes(component))
+    .collect()
+}
+
+#[cfg(unix)]
+#[test]
+fn test_inventory_path_rejects_a_component_that_is_not_utf8() {
+  let paths: [&[&[u8]]; 3] = [
+    &[b"values", b"bad\xff.json"],
+    &[b"values", b"bad\xfe.json"],
+    &[b"bad\xff", b"a.json"],
+  ];
+
+  for components in paths {
+    let relative = non_utf8_path(components);
+
+    let Err(error) = inventory_path(&relative) else {
+      panic!("UTF-8 でないパスは誤りにする: {relative:?}");
+    };
+
+    assert!(
+      matches!(&error, DataError::NotUtf8Path { path } if path.contains("bad") || path.ends_with("a.json")),
+      "{error:?}"
+    );
+    assert!(error.to_string().contains("UTF-8"), "{error}");
+  }
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn test_inventory_rejects_files_whose_non_utf8_names_would_collapse_into_one_path() {
+  use std::os::unix::ffi::OsStrExt;
+  // 内容が同じで、不正なバイトだけが異なる 2 つのファイル。置換文字に潰すと、同じパスになる。
+  let dir = TempDir::new("data-inventory-non-utf8");
+  fs::create_dir_all(dir.path().join("values")).expect("ディレクトリを作れる");
+  for name in [&b"bad\xff.json"[..], &b"bad\xfe.json"[..]] {
+    fs::write(
+      dir.path().join("values").join(std::ffi::OsStr::from_bytes(name)),
+      b"same",
+    )
+    .expect("UTF-8 でない名前のファイルを作れる");
+  }
+
+  let Err(error) = inventory(dir.path()) else {
+    panic!("UTF-8 でない名前のファイルがあれば、一覧を作れない");
+  };
+
+  assert!(matches!(&error, DataError::NotUtf8Path { .. }), "{error:?}");
 }
 
 #[test]

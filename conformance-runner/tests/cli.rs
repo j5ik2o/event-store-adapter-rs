@@ -42,11 +42,13 @@ impl Execution {
   }
 }
 
-/// 実行器の起動時に渡す環境変数の指定を表す。
+/// 実行器の起動時に渡す環境変数と作業フォルダーの指定を表す。
 #[derive(Default)]
 struct Environment<'a> {
   set: &'a [(&'a str, &'a str)],
   removed: &'a [&'a str],
+  /// 実行器を起動するときの作業フォルダー。なければ、この試験を起動したフォルダーのまま。
+  current_dir: Option<&'a Path>,
 }
 
 fn execute(label: &str, data: &Path, extra_args: &[&str]) -> Execution {
@@ -67,6 +69,9 @@ fn execute_with_environment(label: &str, data: &Path, extra_args: &[&str], envir
   }
   for name in environment.removed {
     command.env_remove(name);
+  }
+  if let Some(directory) = environment.current_dir {
+    command.current_dir(directory);
   }
   Execution {
     output: command.output().expect("実行器を起動できる"),
@@ -389,14 +394,53 @@ fn test_cli_reports_unknown_manifest_field_as_a_failed_verification() {
 
 const CI_SHA: &str = "cafebabecafebabecafebabecafebabecafebabe";
 
-/// 作業ツリーの `git rev-parse HEAD` を返す。
+/// 実装（この crate）の作業ツリーの `git rev-parse HEAD` を返す。
+///
+/// 試験を起動したフォルダーに左右されないよう、この crate のフォルダーで動かす。
 fn git_head() -> String {
+  git_head_of(Path::new(env!("CARGO_MANIFEST_DIR")))
+}
+
+/// `directory` で動かした `git rev-parse HEAD` を返す。
+fn git_head_of(directory: &Path) -> String {
   let output = Command::new("git")
+    .current_dir(directory)
     .args(["rev-parse", "HEAD"])
     .output()
     .expect("git を起動できる");
-  assert!(output.status.success(), "試験は git の作業ツリーで動かす");
+  assert!(output.status.success(), "{} は git の作業ツリー", directory.display());
   String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// `directory` に、空のコミットを 1 つ持つ別の git リポジトリを作る。
+fn init_repository_with_one_commit(directory: &Path) {
+  let run = |args: &[&str]| {
+    let status = Command::new("git")
+      .current_dir(directory)
+      .args(args)
+      // 試験を起動した git の環境が、作ったリポジトリの操作へ入り込まないようにする。
+      .env_remove("GIT_DIR")
+      .env_remove("GIT_WORK_TREE")
+      .env_remove("GIT_INDEX_FILE")
+      .status()
+      .expect("git を起動できる");
+    assert!(status.success(), "git {args:?}");
+  };
+  run(&["init", "-q"]);
+  run(&[
+    "-c",
+    "user.name=conformance-runner-test",
+    "-c",
+    "user.email=conformance-runner-test@example.invalid",
+    "-c",
+    "commit.gpgsign=false",
+    "commit",
+    "-q",
+    "--allow-empty",
+    "--no-verify",
+    "-m",
+    "a commit of a repository that is not the implementation",
+  ]);
 }
 
 fn revision_of(execution: &Execution) -> Value {
@@ -467,6 +511,7 @@ fn test_cli_leaves_the_revision_null_without_git_and_github_sha() {
   let environment = Environment {
     set: &[("GIT_DIR", &git_dir)],
     removed: &["GITHUB_SHA"],
+    ..Environment::default()
   };
 
   let execution = execute_with_environment(
@@ -478,4 +523,28 @@ fn test_cli_leaves_the_revision_null_without_git_and_github_sha() {
 
   assert_eq!(execution.code(), Some(0));
   assert!(revision_of(&execution).is_null());
+}
+
+#[test]
+fn test_cli_reports_the_implementation_commit_when_launched_inside_another_git_repository() {
+  let other_repository = TempDir::new("cli-revision-other-repository");
+  init_repository_with_one_commit(other_repository.path());
+  let other_head = git_head_of(other_repository.path());
+  let environment = Environment {
+    removed: &["GITHUB_SHA"],
+    current_dir: Some(other_repository.path()),
+    ..Environment::default()
+  };
+
+  let execution = execute_with_environment(
+    "cli-revision-other-repository-run",
+    &conformance_dir(),
+    &["--backend", "memory"],
+    &environment,
+  );
+
+  assert_eq!(execution.code(), Some(0));
+  assert_ne!(git_head(), other_head, "試験の前提: 2 つのリポジトリの HEAD は異なる");
+  assert_ne!(revision_of(&execution), Value::from(other_head));
+  assert_eq!(revision_of(&execution), Value::from(git_head()));
 }

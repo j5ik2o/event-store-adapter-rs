@@ -7,8 +7,8 @@ use event_store_adapter_conformance_rs::data::{
 };
 use event_store_adapter_conformance_rs::fault::{Phase, Repeat, UnfiredFault};
 use event_store_adapter_conformance_rs::report::{
-  parse_package_version, resolve_revision, CaseOutcome, CaseReport, Implementation, NotApplicableReason, Report,
-  RepresentationGap, StatusCounts, UnverifiedReason,
+  git_head_in, parse_package_version, resolve_revision, CaseOutcome, CaseReport, Implementation, NotApplicableReason,
+  Report, RepresentationGap, StatusCounts, UnverifiedReason,
 };
 use event_store_adapter_conformance_rs::runner::run;
 use event_store_adapter_conformance_rs::target_memory;
@@ -548,4 +548,25 @@ fn test_resolve_revision_ignores_blank_values_and_trims_whitespace() {
 #[test]
 fn test_resolve_revision_is_none_without_any_source() {
   assert_eq!(resolve_revision(None, None), None);
+}
+
+#[test]
+fn test_git_head_in_returns_the_commit_of_the_repository_that_contains_the_directory() {
+  let head = git_head_in(Path::new(env!("CARGO_MANIFEST_DIR"))).expect("この crate は git の作業ツリーの中にある");
+
+  let head = head.trim();
+  assert_eq!(head.len(), 40, "{head}");
+  assert!(head.bytes().all(|byte| byte.is_ascii_hexdigit()), "{head}");
+}
+
+#[test]
+fn test_git_head_in_is_none_when_the_directory_does_not_exist() {
+  // フォルダーがないときは `None` になり、呼び出し側は `GITHUB_SHA` に戻る。
+  let missing = Path::new(env!("CARGO_MANIFEST_DIR")).join("no-such-directory");
+
+  assert_eq!(git_head_in(&missing), None);
+  assert_eq!(
+    resolve_revision(git_head_in(&missing), Some(CI_SHA.to_string())),
+    Some(CI_SHA.to_string())
+  );
 }

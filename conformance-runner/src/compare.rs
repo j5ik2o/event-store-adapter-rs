@@ -4,10 +4,12 @@ use serde_json::Value;
 
 use crate::number::normalize_decimal;
 
+/// 2 つの数値の書き方を、10 進の値で比べる。指数の桁数に上限はない。どちらかが数値の書き方として読めない
+/// ときは、値を比べられないので偽を返す。
 fn numbers_equal(expected: &str, actual: &str) -> bool {
   match (normalize_decimal(expected), normalize_decimal(actual)) {
     (Some(left), Some(right)) => left == right,
-    _ => expected == actual,
+    _ => false,
   }
 }
 

@@ -31,6 +31,9 @@ pub enum DataError {
   Io { path: String, source: std::io::Error },
   #[error("{path}: シンボリックリンクは配布できない")]
   Symlink { path: String },
+  /// 相対パスに UTF-8 でない部分がある。`path` は表示用で、不正なバイトは置換文字になる。
+  #[error("{path}: パスが UTF-8 ではない")]
+  NotUtf8Path { path: String },
   #[error("{path}: ファイルがない")]
   Missing { path: String },
   #[error("{path}: {source}")]
@@ -126,6 +129,21 @@ fn io_error(path: &Path, source: std::io::Error) -> DataError {
   }
 }
 
+/// `root` からの相対パスを、`/` でつないだ文字列にする。
+///
+/// UTF-8 でない部分があれば `DataError::NotUtf8Path` を返す。置換文字に潰すと、別々のファイル名が同じ
+/// パスになり、`manifest` の 1 つの項目が複数のファイルを覆えてしまうので、潰さない。
+pub fn inventory_path(relative: &Path) -> Result<String, DataError> {
+  let mut parts = Vec::new();
+  for component in relative.components() {
+    let part = component.as_os_str().to_str().ok_or_else(|| DataError::NotUtf8Path {
+      path: relative.display().to_string(),
+    })?;
+    parts.push(part);
+  }
+  Ok(parts.join("/"))
+}
+
 fn collect_files(root: &Path, directory: &Path, entries: &mut Vec<InventoryEntry>) -> Result<(), DataError> {
   for entry in fs::read_dir(directory).map_err(|source| io_error(directory, source))? {
     let path = entry.map_err(|source| io_error(directory, source))?.path();
@@ -138,13 +156,7 @@ fn collect_files(root: &Path, directory: &Path, entries: &mut Vec<InventoryEntry
     if metadata.is_dir() {
       collect_files(root, &path, entries)?;
     } else if metadata.is_file() {
-      let relative = path
-        .strip_prefix(root)
-        .expect("走査した path は root の下にある")
-        .components()
-        .map(|component| component.as_os_str().to_string_lossy().into_owned())
-        .collect::<Vec<_>>()
-        .join("/");
+      let relative = inventory_path(path.strip_prefix(root).expect("走査した path は root の下にある"))?;
       if relative == "manifest.json" {
         continue;
       }
@@ -157,7 +169,7 @@ fn collect_files(root: &Path, directory: &Path, entries: &mut Vec<InventoryEntry
 
 /// `root` の下の全ファイル（`manifest.json` を除く）を、相対パスの順に読む。
 ///
-/// ドットファイルを含む。シンボリックリンクは誤りにする。
+/// ドットファイルを含む。シンボリックリンクと、UTF-8 でない相対パス（`DataError::NotUtf8Path`）は誤りにする。
 pub fn inventory(root: &Path) -> Result<Vec<InventoryEntry>, DataError> {
   let mut entries = Vec::new();
   collect_files(root, root, &mut entries)?;

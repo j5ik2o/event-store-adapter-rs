@@ -64,12 +64,60 @@ fn test_to_integer_keeps_digits_beyond_what_a_float_can_hold() {
 fn test_to_integer_rejects_values_that_do_not_fit_in_i128() {
   for text in [
     "170141183460469231731687303715884105728",
+    "-170141183460469231731687303715884105729",
     "1e39",
+    "-1e39",
     "1e100",
     "1e1000000000",
   ] {
     assert_eq!(to_integer(&parse(text)), None, "{text}");
   }
+}
+
+#[test]
+fn test_to_integer_reads_the_lower_bound_of_i128() {
+  // `i128::MIN` の大きさ（2^127）は、正の `i128` には収まらない。負の値としては `i128` に収まる。
+  assert_eq!(
+    to_integer(&parse("-170141183460469231731687303715884105728")),
+    Some(i128::MIN)
+  );
+  assert_eq!(
+    to_integer(&parse("-170141183460469231731687303715884105727")),
+    Some(-i128::MAX)
+  );
+  // 書き方が違っても、同じ値。
+  for text in [
+    "-170141183460469231731687303715884105728.0",
+    "-1.70141183460469231731687303715884105728e38",
+    "-17014118346046923173168730371588410572.8e1",
+    "-1701411834604692317316873037158841057280e-1",
+  ] {
+    assert_eq!(to_integer(&parse(text)), Some(i128::MIN), "{text}");
+  }
+}
+
+#[test]
+fn test_to_integer_reads_zero_whatever_its_exponent() {
+  let huge = "1000000000000000000000000000000000000000";
+
+  for text in [format!("0e{huge}"), format!("0e-{huge}"), format!("-0.0e{huge}")] {
+    assert_eq!(to_integer(&parse(&text)), Some(0), "{text}");
+  }
+}
+
+#[test]
+fn test_to_integer_rejects_non_zero_values_whose_exponent_does_not_fit_in_i128() {
+  let huge = "1000000000000000000000000000000000000000";
+
+  for text in [format!("1e{huge}"), format!("1e-{huge}"), format!("-1e{huge}")] {
+    assert_eq!(to_integer(&parse(&text)), None, "{text}");
+  }
+}
+
+#[test]
+fn test_to_integer_reads_an_integer_written_with_a_leading_zero_exponent() {
+  assert_eq!(to_integer(&parse("1e0003")), Some(1000));
+  assert_eq!(to_integer(&parse("10e-0001")), Some(1));
 }
 
 #[test]
