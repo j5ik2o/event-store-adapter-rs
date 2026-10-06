@@ -9,6 +9,8 @@
 
 This library provides an Event Store for CQRS/Event Sourcing with multiple storage backends: DynamoDB, Google Cloud Bigtable, SQLite, and in-memory.
 
+> **Note:** `main` is developing the next major version, 4.0.0, which has not been published yet. For a stable release, use 3.x (the latest version on crates.io).
+
 [日本語](./README.ja.md)
 
 ## Backends and Cargo features

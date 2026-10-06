@@ -9,6 +9,8 @@
 
 このライブラリは、CQRS/Event Sourcing用のEvent Storeを複数のストレージバックエンド（DynamoDB・Google Cloud Bigtable・SQLite・インメモリ）で提供します。
 
+> **注意:** `main` ブランチでは次のメジャーバージョン 4.0.0 を開発中で、まだ公開していません。安定版は 3.x（crates.io の最新）を使ってください。
+
 [English](./README.md)
 
 ## バックエンドとCargo feature
