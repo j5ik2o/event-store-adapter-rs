@@ -1771,11 +1771,17 @@ pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<ReplayedUser
     Some(snapshot) => (snapshot.seq_nr() + 1, snapshot.seq_nr()),
     None => (1, 0),
   };
-  let events = self
-    .event_store
-    .get_events_by_id_since_seq_nr(id, from_seq_nr)
-    .await
-    .map_err(Self::to_repository_error)?;
+  // スナップショットがヘッドに届いていれば、読むイベントはない。番号が上限（SEQ_NR_MAX）のスナップショットで
+  // seq_nr + 1 を渡すと T-9 の範囲外になるので、読まない
+  let events = if snapshot_seq_nr < head_seq_nr {
+    self
+      .event_store
+      .get_events_by_id_since_seq_nr(id, from_seq_nr)
+      .await
+      .map_err(Self::to_repository_error)?
+  } else {
+    Vec::new()
+  };
   let last_seq_nr = events.last().map(|event| event.seq_nr()).unwrap_or(snapshot_seq_nr);
   if last_seq_nr < head_seq_nr {
     // 結果整合の遅れで、ヘッドに届いていない。呼び出し側が読み直す（R-7）
@@ -1809,6 +1815,7 @@ pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<ReplayedUser
 
 - v3.0.0 以降、journal 項目は `manifest` 属性を持つ（現行の `put_journal` と、`manifest` を追加したコミット `081ba72` が最初に含まれるタグが `v3.0.0` であることで確認した）。journal の属性は、キー以外は新しい配置と同じ形である。
 - v3 の journal 項目は、`pkey`・`skey`・`aid`（利用者の `to_string()` の値）・`seq_nr`・`payload`・`occurred_at`・`manifest` を持つ。
+- v3 の journal の `occurred_at` は、エポックからのナノ秒である（v3.0.0 以降の `format_occurred_at` が `timestamp_nanos_opt()` で書く）。新しい配置と同じ単位なので、変換せずに写す。ナノ秒が符号付き 64bit に収まる値だけが書かれているので、T-13 の範囲にも収まる。ミリ秒で書いているのは、snapshot の `last_updated_at` だけである。
 - v3 の snapshot 項目は、`pkey`・`skey`・`payload`・`aid`・`seq_nr`・`version`・`ttl`（期限がないときは 0 を書く）・`last_updated_at` を持つ。`manifest` はない。現在の項目の `skey` の末尾の数値は 0、履歴は履歴の `seq_nr` である（`lib/src/event_store_for_dynamodb.rs` で確認した）。
 
 手順は、`dynamodb.md` の 11 章の番号のとおりである。手順 3 の読み取りと集計、手順 4 の検査、手順 6 の読み取りを先に行い（検査の段）、その後に、手順 3・5・6 の書き込みを行う（書き込みの段）。この二段は設計案である（10 章 Q-12）。
@@ -1830,6 +1837,7 @@ pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<ReplayedUser
 | 旧 pkey・旧 skey が既定の形でない項目 | P-22 |
 | 型名に `-` を含み、対応表にない型名 | P-23 |
 | 欠番のある集約 | W-8、P-36 |
+| 最大の `seq_nr` が 2^53 − 1 を超える集約（v3 の `seq_nr` は `usize` で、上限の検査がなかった） | T-9 |
 | 型名を置き換えた後の aid が、UTF-8 で 1024 バイトを超える集約 | T-12 |
 | 最大の `seq_nr` のイベントを head に載せると、見積もり（4.4.3 節の上界）が 409600 バイトを超える集約。旧 journal の payload が大きいと、head は payload を載せるので journal より大きくなる | D-7 |
 | 孤立したスナップショット（旧 journal に集約のない、旧 snapshot の項目） | コーディネーターの決定（2026-10-06） |
