@@ -9,6 +9,9 @@ use serde::de::{self, Deserialize, Deserializer, MapAccess, SeqAccess, Visitor};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
+use crate::number::to_integer;
+use crate::schema::{schema_format, SchemaError, SchemaSet};
+
 /// 実行器が読めるデータの版を表す。
 pub const DATA_VERSION: &str = "1.0.0";
 
@@ -34,6 +37,8 @@ pub enum DataError {
   Json { path: String, source: JsonError },
   #[error("{path}: {message}")]
   Invalid { path: String, message: String },
+  #[error("{path}: スキーマでの検査に失敗: {message}")]
+  Schema { path: String, message: String },
   #[error("ケースの ID が重複: {id}")]
   DuplicateCaseId { id: String },
   #[error("generators の {target}: {message}")]
@@ -175,6 +180,8 @@ pub enum ManifestProblem {
   Missing(String),
   Unlisted(String),
   Modified(String),
+  /// `manifest.json` の最上位か、`files` の項目に、スキーマにないフィールドがある。
+  UnknownField(String),
 }
 
 impl fmt::Display for ManifestProblem {
@@ -187,6 +194,7 @@ impl fmt::Display for ManifestProblem {
       ManifestProblem::Missing(path) => write!(formatter, "一覧にあるファイルがない: {path}"),
       ManifestProblem::Unlisted(path) => write!(formatter, "一覧にないファイルがある: {path}"),
       ManifestProblem::Modified(path) => write!(formatter, "SHA-256 が一致しない（改変）: {path}"),
+      ManifestProblem::UnknownField(field) => write!(formatter, "未知のフィールドがある: {field}"),
     }
   }
 }
@@ -203,13 +211,19 @@ impl ManifestVerification {
   }
 }
 
+/// `manifest.json` の最上位に置けるフィールド。
+const MANIFEST_FIELDS: [&str; 3] = ["format", "version", "files"];
+/// `manifest.json` の `files` の項目に置けるフィールド。
+const MANIFEST_ENTRY_FIELDS: [&str; 2] = ["path", "sha256"];
+
 fn describe(value: Option<&Value>) -> String {
   value.map(Value::to_string).unwrap_or_else(|| "なし".to_string())
 }
 
 /// `manifest` の版、ファイル集合、ファイルごとの SHA-256 を、実ファイルと照合する。
 ///
-/// `manifest` は作り直さない。ファイルの並び順は検査しない。見つけた問題をすべて集める。
+/// `manifest` は作り直さない。ファイルの並び順は検査しない。最上位と各項目の未知のフィールド
+/// （スキーマの `additionalProperties: false`）も問題として報告する。見つけた問題をすべて集める。
 pub fn verify_manifest(manifest: &Value, inventory: &[InventoryEntry]) -> ManifestVerification {
   let mut problems = Vec::new();
   if manifest.get("format") != Some(&Value::String("manifest".to_string())) {
@@ -218,12 +232,25 @@ pub fn verify_manifest(manifest: &Value, inventory: &[InventoryEntry]) -> Manife
   if manifest.get("version") != Some(&Value::String(DATA_VERSION.to_string())) {
     problems.push(ManifestProblem::Version(describe(manifest.get("version"))));
   }
+  if let Some(object) = manifest.as_object() {
+    for key in object.keys().filter(|key| !MANIFEST_FIELDS.contains(&key.as_str())) {
+      problems.push(ManifestProblem::UnknownField(key.clone()));
+    }
+  }
 
   let mut listed: Vec<(&str, &str)> = Vec::new();
   match manifest.get("files").and_then(Value::as_array) {
     None => problems.push(ManifestProblem::Malformed("files が配列ではない".to_string())),
     Some(files) => {
-      for file in files {
+      for (index, file) in files.iter().enumerate() {
+        if let Some(object) = file.as_object() {
+          for key in object
+            .keys()
+            .filter(|key| !MANIFEST_ENTRY_FIELDS.contains(&key.as_str()))
+          {
+            problems.push(ManifestProblem::UnknownField(format!("files[{index}].{key}")));
+          }
+        }
         match (
           file.get("path").and_then(Value::as_str),
           file.get("sha256").and_then(Value::as_str),
@@ -293,7 +320,9 @@ pub struct Coverage {
 
 /// 読み込んだ適合テストデータの全体を表す。
 pub struct DataSet {
-  pub version: String,
+  /// 実際に読んだ `manifest.json` の `version`。文字列でなければ `None`。期待する版との比較は
+  /// `manifest` の照合が別に行う。
+  pub manifest_version: Option<String>,
   pub manifest_files: usize,
   pub manifest_sha256: String,
   pub manifest: ManifestVerification,
@@ -372,11 +401,50 @@ fn read_exclusions(path: &str, value: &Value) -> Result<Vec<CoverageExclusion>, 
     .collect()
 }
 
+/// 配布物の `schema/` のスキーマを全部読んで登録し、データのファイルの形式ごとに組み立てる。
+fn load_schemas(files: &[InventoryEntry]) -> Result<SchemaSet, DataError> {
+  let mut documents = Vec::new();
+  for entry in files {
+    if let Some(relative) = entry
+      .path
+      .strip_prefix("schema/")
+      .filter(|_| entry.path.ends_with(".json"))
+    {
+      documents.push((relative.to_string(), parse_file(&entry.path, &entry.bytes)?));
+    }
+  }
+  SchemaSet::new(&documents, &["coverage", "values", "scenarios", "layout"]).map_err(|error| match error {
+    SchemaError::MissingSchema { path } => DataError::Missing {
+      path: format!("schema/{path}"),
+    },
+    SchemaError::MissingId { path } => invalid(&format!("schema/{path}"), "`$id` が文字列ではない"),
+    SchemaError::Build { path, message } => invalid(
+      &format!("schema/{path}"),
+      format!("スキーマを組み立てられない: {message}"),
+    ),
+  })
+}
+
+/// データのファイル `path` を、対応するスキーマで検査する。対応するスキーマがないファイルは検査しない。
+fn check_schema(schemas: &SchemaSet, path: &str, value: &Value) -> Result<(), DataError> {
+  let Some(format) = schema_format(path) else {
+    return Ok(());
+  };
+  schemas.validate(format, value).map_err(|message| DataError::Schema {
+    path: path.to_string(),
+    message,
+  })
+}
+
 /// `root` の適合テストデータを全部読む。
 ///
-/// `manifest` の照合の失敗は、読み込みの失敗にしない。結果を `DataSet::manifest` に載せる。
+/// 読む順は、`schema/` のスキーマの登録、`manifest.json`、`coverage.json`、ケースのファイル。データの
+/// ファイルは、`format` と `version` を確かめた後、generators の展開の前に、対応するスキーマで検査する。
+/// スキーマの違反は読み込みの失敗にする。`manifest.json` はスキーマで検査せず、`manifest` の照合の失敗は
+/// 読み込みの失敗にしない。結果を `DataSet::manifest` に載せる。
 pub fn load(root: &Path) -> Result<DataSet, DataError> {
   let files = inventory(root)?;
+  let schemas = load_schemas(&files)?;
 
   let manifest_path = root.join("manifest.json");
   let manifest_bytes = fs::read(&manifest_path).map_err(|source| {
@@ -391,6 +459,10 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
   let manifest_sha256 = sha256_hex(&manifest_bytes);
   let manifest_value = parse_file("manifest.json", &manifest_bytes)?;
   let manifest = verify_manifest(&manifest_value, &files);
+  let manifest_version = manifest_value
+    .get("version")
+    .and_then(Value::as_str)
+    .map(str::to_string);
   let manifest_files = manifest_value
     .get("files")
     .and_then(Value::as_array)
@@ -404,6 +476,7 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
     })?;
   let coverage_value = parse_file("coverage.json", &coverage_entry.bytes)?;
   check_header("coverage.json", &coverage_value, &["coverage"])?;
+  check_schema(&schemas, "coverage.json", &coverage_value)?;
   let coverage = Coverage {
     required_rules: string_list(
       "coverage.json",
@@ -426,7 +499,9 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
       continue;
     }
     let value = parse_file(&entry.path, &entry.bytes)?;
-    let kind = match check_header(&entry.path, &value, &["values", "scenarios", "layout"])?.as_str() {
+    let format = check_header(&entry.path, &value, &["values", "scenarios", "layout"])?;
+    check_schema(&schemas, &entry.path, &value)?;
+    let kind = match format.as_str() {
       "values" => CaseKind::ValueTable,
       "scenarios" => CaseKind::Scenario,
       _ => CaseKind::Layout,
@@ -456,7 +531,7 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
   }
 
   Ok(DataSet {
-    version: DATA_VERSION.to_string(),
+    manifest_version,
     manifest_files,
     manifest_sha256,
     manifest,
@@ -508,7 +583,7 @@ pub fn expand_generators(case: &mut Value) -> Result<(), DataError> {
     }
     let byte_length = generator
       .get("byte_length")
-      .and_then(Value::as_u64)
+      .and_then(to_integer)
       .and_then(|length| usize::try_from(length).ok())
       .filter(|length| *length >= 1)
       .ok_or_else(|| generator_error(target, "byte_length は 1 以上の整数でなければならない"))?;

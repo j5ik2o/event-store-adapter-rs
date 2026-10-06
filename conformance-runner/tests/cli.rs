@@ -42,15 +42,34 @@ impl Execution {
   }
 }
 
+/// 実行器の起動時に渡す環境変数の指定を表す。
+#[derive(Default)]
+struct Environment<'a> {
+  set: &'a [(&'a str, &'a str)],
+  removed: &'a [&'a str],
+}
+
 fn execute(label: &str, data: &Path, extra_args: &[&str]) -> Execution {
+  execute_with_environment(label, data, extra_args, &Environment::default())
+}
+
+fn execute_with_environment(label: &str, data: &Path, extra_args: &[&str], environment: &Environment) -> Execution {
   let directory = TempDir::new(label);
   let report_path = directory.path().join("report.json");
   let data = data.to_string_lossy();
   let report = report_path.to_string_lossy();
   let mut args = vec!["--data", &data, "--report", &report];
   args.extend_from_slice(extra_args);
+  let mut command = Command::new(env!("CARGO_BIN_EXE_event-store-adapter-conformance-rs"));
+  command.args(&args);
+  for (name, value) in environment.set {
+    command.env(name, value);
+  }
+  for name in environment.removed {
+    command.env_remove(name);
+  }
   Execution {
-    output: launch(&args),
+    output: command.output().expect("実行器を起動できる"),
     report_path,
     _directory: directory,
   }
@@ -286,4 +305,177 @@ fn test_cli_rejects_unknown_backend() {
 
   assert_eq!(execution.code(), Some(2));
   assert!(!execution.report_exists());
+}
+
+// ---------------------------------------------------------------------------
+// スキーマの違反は実行器のエラー（終了コード 2・報告なし）
+// ---------------------------------------------------------------------------
+
+#[test]
+fn test_cli_fails_without_writing_report_when_a_data_file_violates_its_schema() {
+  let copy = TempDir::new("cli-schema-violation");
+  copy_dir_all(&conformance_dir(), copy.path());
+  let target = copy.path().join("coverage.json");
+  let text = fs::read_to_string(&target).expect("写した coverage.json を読める");
+  let mut value: Value = serde_json::from_str(&text).expect("JSON");
+  value.as_object_mut().expect("オブジェクト").remove("notes");
+  fs::write(&target, value.to_string()).expect("書き戻せる");
+
+  let execution = execute("cli-schema-violation-run", copy.path(), &["--backend", "memory"]);
+
+  assert_eq!(execution.code(), Some(2));
+  assert!(!execution.report_exists(), "スキーマの違反では報告を書かない");
+  let stderr = String::from_utf8_lossy(&execution.output.stderr);
+  assert!(
+    stderr.contains("coverage.json") && stderr.contains("スキーマ"),
+    "stderr: {stderr}"
+  );
+}
+
+// ---------------------------------------------------------------------------
+// manifest の版は読んだ値を報告し、期待する版との比較は別に行う
+// ---------------------------------------------------------------------------
+
+/// 配布データの写しの `manifest.json` を書き換える。
+fn copy_with_manifest(label: &str, edit: impl FnOnce(&mut Value)) -> TempDir {
+  let copy = TempDir::new(label);
+  copy_dir_all(&conformance_dir(), copy.path());
+  let target = copy.path().join("manifest.json");
+  let text = fs::read_to_string(&target).expect("写した manifest.json を読める");
+  let mut value: Value = serde_json::from_str(&text).expect("JSON");
+  edit(&mut value);
+  fs::write(&target, serde_json::to_string_pretty(&value).expect("書き戻せる")).expect("書き込める");
+  copy
+}
+
+#[test]
+fn test_cli_reports_the_manifest_version_it_read_and_fails_the_comparison_separately() {
+  let copy = copy_with_manifest("cli-manifest-version", |manifest| {
+    manifest["version"] = Value::from("9.9.9")
+  });
+
+  let execution = execute("cli-manifest-version-run", copy.path(), &["--backend", "memory"]);
+
+  assert_eq!(execution.code(), Some(1), "照合の失敗は報告を書いて終了コード 1");
+  let report = execution.report();
+  assert_eq!(report["data"]["version"], "9.9.9");
+  assert_eq!(report["data"]["manifest"]["verification"], "failed");
+  assert!(report["data"]["manifest"]["problems"].to_string().contains("9.9.9"));
+}
+
+#[test]
+fn test_cli_reports_unknown_manifest_field_as_a_failed_verification() {
+  let copy = copy_with_manifest("cli-manifest-unknown-field", |manifest| {
+    manifest["extra"] = Value::from(true);
+  });
+
+  let execution = execute("cli-manifest-unknown-field-run", copy.path(), &["--backend", "memory"]);
+
+  assert_eq!(execution.code(), Some(1), "照合の失敗は報告を書いて終了コード 1");
+  let report = execution.report();
+  assert_eq!(report["data"]["version"], "1.0.0");
+  assert_eq!(report["data"]["manifest"]["verification"], "failed");
+  let problems = report["data"]["manifest"]["problems"].to_string();
+  assert!(
+    problems.contains("未知のフィールド") && problems.contains("extra"),
+    "{problems}"
+  );
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
+}
+
+// ---------------------------------------------------------------------------
+// 実装のコミット（git が先、なければ GITHUB_SHA）
+// ---------------------------------------------------------------------------
+
+const CI_SHA: &str = "cafebabecafebabecafebabecafebabecafebabe";
+
+/// 作業ツリーの `git rev-parse HEAD` を返す。
+fn git_head() -> String {
+  let output = Command::new("git")
+    .args(["rev-parse", "HEAD"])
+    .output()
+    .expect("git を起動できる");
+  assert!(output.status.success(), "試験は git の作業ツリーで動かす");
+  String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+fn revision_of(execution: &Execution) -> Value {
+  execution.report()["implementation"]["revision"].clone()
+}
+
+#[test]
+fn test_cli_reports_the_git_commit_as_the_revision() {
+  let environment = Environment {
+    removed: &["GITHUB_SHA"],
+    ..Environment::default()
+  };
+
+  let execution = execute_with_environment(
+    "cli-revision-git",
+    &conformance_dir(),
+    &["--backend", "memory"],
+    &environment,
+  );
+
+  let head = git_head();
+  assert_eq!(head.len(), 40);
+  assert!(head.bytes().all(|byte| byte.is_ascii_hexdigit()));
+  assert_eq!(revision_of(&execution), Value::from(head));
+}
+
+#[test]
+fn test_cli_prefers_the_git_commit_over_github_sha() {
+  let environment = Environment {
+    set: &[("GITHUB_SHA", CI_SHA)],
+    ..Environment::default()
+  };
+
+  let execution = execute_with_environment(
+    "cli-revision-git-first",
+    &conformance_dir(),
+    &["--backend", "memory"],
+    &environment,
+  );
+
+  assert_eq!(revision_of(&execution), Value::from(git_head()));
+}
+
+#[test]
+fn test_cli_falls_back_to_github_sha_when_git_gives_no_commit() {
+  let not_a_repository = TempDir::new("cli-revision-no-git-dir");
+  let git_dir = not_a_repository.path().to_string_lossy().into_owned();
+  let environment = Environment {
+    set: &[("GIT_DIR", &git_dir), ("GITHUB_SHA", CI_SHA)],
+    ..Environment::default()
+  };
+
+  let execution = execute_with_environment(
+    "cli-revision-github-sha",
+    &conformance_dir(),
+    &["--backend", "memory"],
+    &environment,
+  );
+
+  assert_eq!(execution.code(), Some(0));
+  assert_eq!(revision_of(&execution), Value::from(CI_SHA));
+}
+
+#[test]
+fn test_cli_leaves_the_revision_null_without_git_and_github_sha() {
+  let not_a_repository = TempDir::new("cli-revision-none-git-dir");
+  let git_dir = not_a_repository.path().to_string_lossy().into_owned();
+  let environment = Environment {
+    set: &[("GIT_DIR", &git_dir)],
+    removed: &["GITHUB_SHA"],
+  };
+
+  let execution = execute_with_environment(
+    "cli-revision-none",
+    &conformance_dir(),
+    &["--backend", "memory"],
+    &environment,
+  );
+
+  assert_eq!(execution.code(), Some(0));
+  assert!(revision_of(&execution).is_null());
 }

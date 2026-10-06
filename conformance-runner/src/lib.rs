@@ -7,6 +7,10 @@
 pub mod compare;
 pub mod data;
 pub mod fault;
+pub mod number;
 pub mod observe;
 pub mod report;
 pub mod runner;
+pub mod schema;
+pub mod target_dynamodb;
+pub mod target_memory;

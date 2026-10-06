@@ -9,3 +9,5 @@ serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true, features = ["arbitrary_precision"] }
 sha2 = "0.10"
 thiserror = { workspace = true }
+# スキーマの検査。配布物の `schema/` を `$id` で手元に登録して参照を解決するので、HTTP・ファイルでの取得の機能は有効にしない。
+jsonschema = { version = "=0.20.0", default-features = false }

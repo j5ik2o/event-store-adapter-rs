@@ -6,6 +6,8 @@
 
 use serde_json::Value;
 
+use crate::number::to_integer;
+
 /// 障害を差し込む段階を表す。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -140,7 +142,7 @@ impl FaultPlan {
     for (index, fault) in declared.iter().enumerate() {
       let operation = fault
         .get("operation")
-        .and_then(Value::as_u64)
+        .and_then(to_integer)
         .and_then(|operation| u32::try_from(operation).ok())
         .filter(|operation| usize::try_from(*operation).is_ok_and(|operation| operation <= steps))
         .ok_or_else(|| fault_error(index, "operation が 0 以上で手順の数以下の整数ではない"))?;
@@ -163,7 +165,7 @@ impl FaultPlan {
         Some("count") => {
           let count = fault
             .pointer("/repeat/count")
-            .and_then(Value::as_u64)
+            .and_then(to_integer)
             .and_then(|count| u32::try_from(count).ok())
             .filter(|count| *count >= 1)
             .ok_or_else(|| fault_error(index, "repeat.count が 1 以上の整数ではない"))?;

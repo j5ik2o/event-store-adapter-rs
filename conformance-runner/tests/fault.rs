@@ -348,3 +348,91 @@ fn test_real_retention_failure_case_consumes_faults_per_operation() {
   assert_eq!(second_operation.finish(), Ok(()));
   assert_eq!(fifth_operation.finish(), Ok(()));
 }
+
+// ---------------------------------------------------------------------------
+// 整数の書き方（operation・repeat.count）。値は JSON の文字列から作る。
+// ---------------------------------------------------------------------------
+
+/// `operation` と `repeat` を、JSON の文字列のまま差し込んだ障害 1 つを持つ、手順が 1 つの場面を作る。
+fn case_with_spelled_fault(operation: &str, repeat: &str) -> Value {
+  serde_json::from_str(&format!(
+    r#"{{
+      "steps": [{{}}],
+      "faults": [{{
+        "operation": {operation},
+        "phase": "commit",
+        "kind": "storage-error",
+        "injection": "replace-request",
+        "repeat": {repeat},
+        "details": {{"message": "INJECTED"}}
+      }}]
+    }}"#
+  ))
+  .expect("JSON")
+}
+
+#[test]
+fn test_register_accepts_operation_and_count_written_as_whole_numbers_in_any_spelling() {
+  for (operation, count) in [
+    ("1", "2"),
+    ("1.0", "2.0"),
+    ("1e0", "2e0"),
+    ("10e-1", "20e-1"),
+    ("0.1e1", "0.2e1"),
+  ] {
+    let plan = register(&case_with_spelled_fault(
+      operation,
+      &format!(r#"{{"mode": "count", "count": {count}}}"#),
+    ));
+
+    let fault = &plan.faults()[0];
+    assert_eq!(fault.operation, 1, "operation: {operation}");
+    assert_eq!(fault.repeat, Repeat::Count { count: 2 }, "count: {count}");
+  }
+}
+
+#[test]
+fn test_register_accepts_operation_zero_written_with_a_fraction() {
+  let plan = register(&case_with_spelled_fault(
+    "0.0",
+    r#"{"mode": "until-operation-finishes"}"#,
+  ));
+
+  assert_eq!(plan.faults()[0].operation, 0);
+}
+
+#[test]
+fn test_register_rejects_operation_with_a_non_zero_fraction() {
+  for operation in ["1.5", "0.5", "1e-1"] {
+    let error = register_error(&case_with_spelled_fault(
+      operation,
+      r#"{"mode": "until-operation-finishes"}"#,
+    ));
+
+    assert_eq!(error.index, 0, "operation: {operation}");
+    assert!(error.message.contains("operation"), "{}", error.message);
+  }
+}
+
+#[test]
+fn test_register_rejects_count_with_a_non_zero_fraction_or_below_one() {
+  for count in ["1.5", "2.5", "1e-1", "0.0", "0e3", "-1.0"] {
+    let error = register_error(&case_with_spelled_fault(
+      "1",
+      &format!(r#"{{"mode": "count", "count": {count}}}"#),
+    ));
+
+    assert_eq!(error.index, 0, "count: {count}");
+    assert!(error.message.contains("repeat.count"), "{}", error.message);
+  }
+}
+
+#[test]
+fn test_register_still_rejects_operation_beyond_the_number_of_steps_when_written_with_a_fraction() {
+  let error = register_error(&case_with_spelled_fault(
+    "2.0",
+    r#"{"mode": "until-operation-finishes"}"#,
+  ));
+
+  assert_eq!(error.index, 0);
+}

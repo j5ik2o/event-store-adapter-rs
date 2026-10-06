@@ -7,7 +7,8 @@ use std::process::ExitCode;
 
 use event_store_adapter_conformance_rs::data;
 use event_store_adapter_conformance_rs::report::{Implementation, Report};
-use event_store_adapter_conformance_rs::runner::{self, Backend};
+use event_store_adapter_conformance_rs::runner::{self, Target};
+use event_store_adapter_conformance_rs::{target_dynamodb, target_memory};
 
 const USAGE: &str =
   "使い方: event-store-adapter-conformance-rs --backend <memory|dynamodb> --data <conformance のパス> --report <報告のパス> [--require-all]";
@@ -15,10 +16,19 @@ const USAGE: &str =
 /// コマンドの引数を解析した結果を表す。
 #[derive(Debug)]
 struct Args {
-  backend: Backend,
+  backend: Target,
   data: PathBuf,
   report: PathBuf,
   require_all: bool,
+}
+
+/// コマンドの引数の文字列から、保存先を作る。知らない文字列は `None` を返す。
+fn parse_target(value: &str) -> Option<Target> {
+  match value {
+    "memory" => Some(target_memory::TARGET),
+    "dynamodb" => Some(target_dynamodb::TARGET),
+    _ => None,
+  }
 }
 
 /// 引数を解析する。必須の欠落、値の欠落、不明な引数、不明な保存先は誤りにする。
@@ -32,7 +42,7 @@ fn parse_args<I: IntoIterator<Item = String>>(args: I) -> Result<Args, String> {
     match argument.as_str() {
       "--backend" => {
         let value = args.next().ok_or("--backend に値がない")?;
-        backend = Some(Backend::parse(&value).ok_or_else(|| format!("不明な保存先: {value}"))?);
+        backend = Some(parse_target(&value).ok_or_else(|| format!("不明な保存先: {value}"))?);
       }
       "--data" => data = Some(PathBuf::from(args.next().ok_or("--data に値がない")?)),
       "--report" => report = Some(PathBuf::from(args.next().ok_or("--report に値がない")?)),
@@ -63,8 +73,8 @@ fn main() -> ExitCode {
       return ExitCode::from(2);
     }
   };
-  let cases = runner::run(&data, args.backend);
-  let report = Report::build(&data, args.backend.as_str(), cases, Implementation::detect());
+  let cases = runner::run(&data, &args.backend);
+  let report = Report::build(&data, args.backend.name, cases, Implementation::detect());
   let mut text = match serde_json::to_string_pretty(&report) {
     Ok(text) => text,
     Err(error) => {
@@ -116,7 +126,7 @@ mod tests {
     ]))
     .expect("正しい引数");
 
-    assert_eq!(args.backend, Backend::DynamoDb);
+    assert_eq!(args.backend, target_dynamodb::TARGET);
     assert_eq!(args.data, PathBuf::from("conformance"));
     assert_eq!(args.report, PathBuf::from("report.json"));
     assert!(args.require_all);
@@ -134,7 +144,7 @@ mod tests {
     ]))
     .expect("正しい引数");
 
-    assert_eq!(args.backend, Backend::Memory);
+    assert_eq!(args.backend, target_memory::TARGET);
     assert!(!args.require_all);
   }
 

@@ -1,4 +1,4 @@
-//! workspace への組み込みと、公開しないこと、実行対象のライブラリに依存しないことの試験。
+//! workspace への組み込みと、公開しないこと、実行対象のライブラリに依存しない・その `test-hooks` を使わないことの試験。
 
 use std::path::Path;
 use std::process::Command;
@@ -49,6 +49,18 @@ fn test_runner_is_an_unpublished_workspace_member() {
   assert!(is_member, "{package_id} が workspace の members にある");
 }
 
+/// `package` が依存 `dependency_name` に対して有効にした feature の名前を返す。依存がなければ空を返す。
+fn requested_features(package: &Value, dependency_name: &str) -> Vec<String> {
+  package["dependencies"]
+    .as_array()
+    .expect("dependencies は配列")
+    .iter()
+    .filter(|dependency| dependency["name"] == dependency_name)
+    .flat_map(|dependency| dependency["features"].as_array().expect("features は配列"))
+    .map(|feature| feature.as_str().expect("feature は文字列").to_string())
+    .collect()
+}
+
 #[test]
 fn test_runner_does_not_depend_on_the_library_under_test() {
   let metadata = workspace_metadata();
@@ -62,5 +74,52 @@ fn test_runner_does_not_depend_on_the_library_under_test() {
     .map(|dependency| dependency["name"].as_str().expect("name は文字列"))
     .collect();
   assert!(!dependencies.contains(&"event-store-adapter-rs"), "{dependencies:?}");
-  assert!(package["features"].get("test-hooks").is_none(), "test-hooks を使わない");
+}
+
+#[test]
+fn test_runner_does_not_enable_test_hooks_of_the_library_under_test() {
+  let metadata = workspace_metadata();
+
+  let package = runner_package(&metadata);
+
+  let features = requested_features(&package, "event-store-adapter-rs");
+  assert!(
+    !features.iter().any(|feature| feature == "test-hooks"),
+    "骨格は test-hooks を使わない（PR 8 で足す）: {features:?}"
+  );
+}
+
+#[test]
+fn test_requested_features_reads_the_features_that_cargo_metadata_lists_for_a_dependency() {
+  let metadata = workspace_metadata();
+
+  let package = runner_package(&metadata);
+
+  // `Cargo.toml` が serde_json に有効にしている feature を、実際の `cargo metadata` から読めること。
+  assert!(
+    requested_features(&package, "serde_json").contains(&"arbitrary_precision".to_string()),
+    "{:?}",
+    requested_features(&package, "serde_json")
+  );
+  assert!(requested_features(&package, "no-such-dependency").is_empty());
+}
+
+#[test]
+fn test_runner_pins_the_schema_crate_and_leaves_its_network_features_off() {
+  let metadata = workspace_metadata();
+
+  let package = runner_package(&metadata);
+
+  let dependency = package["dependencies"]
+    .as_array()
+    .expect("dependencies は配列")
+    .iter()
+    .find(|dependency| dependency["name"] == "jsonschema")
+    .expect("jsonschema に依存する");
+  assert_eq!(dependency["req"], "=0.20.0", "版を固定する");
+  assert_eq!(
+    dependency["uses_default_features"], false,
+    "HTTP・ファイルでの取得の既定の機能を有効にしない"
+  );
+  assert_eq!(dependency["features"], json!([]));
 }

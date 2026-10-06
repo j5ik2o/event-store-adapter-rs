@@ -7,10 +7,11 @@ use event_store_adapter_conformance_rs::data::{
 };
 use event_store_adapter_conformance_rs::fault::{Phase, Repeat, UnfiredFault};
 use event_store_adapter_conformance_rs::report::{
-  parse_package_version, CaseOutcome, CaseReport, Implementation, NotApplicableReason, Report, RepresentationGap,
-  StatusCounts, UnverifiedReason,
+  parse_package_version, resolve_revision, CaseOutcome, CaseReport, Implementation, NotApplicableReason, Report,
+  RepresentationGap, StatusCounts, UnverifiedReason,
 };
-use event_store_adapter_conformance_rs::runner::{run, Backend};
+use event_store_adapter_conformance_rs::runner::run;
+use event_store_adapter_conformance_rs::target_memory;
 use serde_json::{json, Value};
 
 const FIXED_MANIFEST_SHA256: &str = "61c26614dbbfba88eebce72cc1d2b0220218839e74dcfb64c19268f7ee2302ce";
@@ -21,7 +22,7 @@ fn conformance_dir() -> PathBuf {
 
 fn data_set(problems: Vec<ManifestProblem>, required: &[&str], exclusions: Vec<CoverageExclusion>) -> DataSet {
   DataSet {
-    version: "1.0.0".to_string(),
+    manifest_version: Some("1.0.0".to_string()),
     manifest_files: 22,
     manifest_sha256: FIXED_MANIFEST_SHA256.to_string(),
     manifest: ManifestVerification { problems },
@@ -121,6 +122,30 @@ fn test_report_exposes_data_version_and_manifest_verification_result() {
   assert_eq!(json["data"]["version"], "1.0.0");
   assert_eq!(json["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(json["data"]["manifest"]["verification"], "passed");
+}
+
+#[test]
+fn test_report_exposes_the_manifest_version_that_was_actually_read() {
+  let mut data = data_set(vec![ManifestProblem::Version("\"9.9.9\"".to_string())], &[], vec![]);
+  data.manifest_version = Some("9.9.9".to_string());
+
+  let json = to_json(&Report::build(&data, "memory", vec![], implementation()));
+
+  assert_eq!(json["data"]["version"], "9.9.9", "期待する版ではなく、読んだ版を書く");
+  assert_eq!(
+    json["data"]["manifest"]["verification"], "failed",
+    "期待する版との比較は報告の版とは別に行う"
+  );
+}
+
+#[test]
+fn test_report_exposes_null_data_version_when_manifest_has_no_string_version() {
+  let mut data = data_set(vec![], &[], vec![]);
+  data.manifest_version = None;
+
+  let json = to_json(&Report::build(&data, "memory", vec![], implementation()));
+
+  assert!(json["data"]["version"].is_null());
 }
 
 #[test]
@@ -353,7 +378,7 @@ fn test_report_records_coverage_exclusion_reason_on_excluded_rules_only() {
 #[test]
 fn test_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_case_once() {
   let data = load(&conformance_dir()).expect("実データを読める");
-  let case_reports = run(&data, Backend::Memory);
+  let case_reports = run(&data, &target_memory::TARGET);
   let memberships: usize = case_reports.iter().map(|case| case.rules.len()).sum();
 
   let report = Report::build(&data, "memory", case_reports, implementation());
@@ -484,4 +509,43 @@ fn test_parse_package_version_finds_a_version_in_real_library_manifest() {
 
   assert!(version.starts_with(|c: char| c.is_ascii_digit()), "{version}");
   assert!(manifest.contains(&format!("version = \"{version}\"")));
+}
+
+// ---------------------------------------------------------------------------
+// 実装のコミットの識別子
+// ---------------------------------------------------------------------------
+
+const GIT_HEAD: &str = "1111111111111111111111111111111111111111";
+const CI_SHA: &str = "2222222222222222222222222222222222222222";
+
+#[test]
+fn test_resolve_revision_prefers_git_head_over_github_sha() {
+  let revision = resolve_revision(Some(GIT_HEAD.to_string()), Some(CI_SHA.to_string()));
+
+  assert_eq!(revision, Some(GIT_HEAD.to_string()));
+}
+
+#[test]
+fn test_resolve_revision_falls_back_to_github_sha_when_git_is_unavailable() {
+  let revision = resolve_revision(None, Some(CI_SHA.to_string()));
+
+  assert_eq!(revision, Some(CI_SHA.to_string()));
+}
+
+#[test]
+fn test_resolve_revision_ignores_blank_values_and_trims_whitespace() {
+  assert_eq!(
+    resolve_revision(Some("\n".to_string()), Some(format!("{CI_SHA}\n"))),
+    Some(CI_SHA.to_string())
+  );
+  assert_eq!(
+    resolve_revision(Some(format!("{GIT_HEAD}\n")), None),
+    Some(GIT_HEAD.to_string())
+  );
+  assert_eq!(resolve_revision(Some(String::new()), Some("  ".to_string())), None);
+}
+
+#[test]
+fn test_resolve_revision_is_none_without_any_source() {
+  assert_eq!(resolve_revision(None, None), None);
 }

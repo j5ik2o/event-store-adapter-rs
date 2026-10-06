@@ -111,23 +111,36 @@ pub struct Implementation {
 }
 
 impl Implementation {
-  /// 試験の対象の実装（`event-store-adapter-rs`）の版と、作業ツリーの git の識別子を調べる。
+  /// 試験の対象の実装（`event-store-adapter-rs`）の版と、コミットの識別子を調べる。
   ///
-  /// 版は `lib/Cargo.toml` の `[package]` から取る。識別子は `git rev-parse HEAD` で取り、失敗したら `None`。
+  /// 版は `lib/Cargo.toml` の `[package]` から取る。識別子は `git rev-parse HEAD` で取り、取れなければ
+  /// 環境変数 `GITHUB_SHA`（CI のコミット）を使う（`resolve_revision`）。
   pub fn detect() -> Implementation {
-    let revision = std::process::Command::new("git")
+    let git_head = std::process::Command::new("git")
       .args(["rev-parse", "HEAD"])
       .output()
       .ok()
       .filter(|output| output.status.success())
-      .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string());
+      .map(|output| String::from_utf8_lossy(&output.stdout).into_owned());
     Implementation {
       language: "rust",
       crate_name: "event-store-adapter-rs",
       version: parse_package_version(include_str!("../../lib/Cargo.toml")),
-      revision,
+      revision: resolve_revision(git_head, std::env::var("GITHUB_SHA").ok()),
     }
   }
+}
+
+/// 報告の `implementation.revision` に載せるコミットの識別子を決める。
+///
+/// 作業ツリーの git の識別子を先に使い、なければ CI の `GITHUB_SHA` を使う。前後の空白を除いて空になる
+/// 値は使わない。どちらもなければ `None` を返す。
+pub fn resolve_revision(git_head: Option<String>, github_sha: Option<String>) -> Option<String> {
+  [git_head, github_sha]
+    .into_iter()
+    .flatten()
+    .map(|revision| revision.trim().to_string())
+    .find(|revision| !revision.is_empty())
 }
 
 /// `Cargo.toml` の `[package]` の節にある `version` の値を返す。ほかの節の `version` は読まない。
@@ -163,7 +176,8 @@ pub struct ManifestReport {
 /// 報告の `data` を表す。
 #[derive(serde::Serialize)]
 pub struct DataReport {
-  pub version: String,
+  /// 実際に読んだ `manifest.json` の `version`。文字列でなければ `null`。
+  pub version: Option<String>,
   pub manifest: ManifestReport,
 }
 
@@ -224,7 +238,7 @@ impl Report {
     }
     Report {
       data: DataReport {
-        version: data.version.clone(),
+        version: data.manifest_version.clone(),
         manifest: ManifestReport {
           sha256: data.manifest_sha256.clone(),
           verification: if data.manifest.passed() { "passed" } else { "failed" },

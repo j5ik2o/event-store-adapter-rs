@@ -7,38 +7,18 @@ use crate::fault::FaultPlan;
 use crate::observe::unimplemented_constraint_words;
 use crate::report::{CaseOutcome, CaseReport, NotApplicableReason, RepresentationGap, UnverifiedReason};
 
-/// 実行する保存先を表す。
+/// 実行する保存先を、ケースの分類に必要な値だけで表す。
+///
+/// 保存先ごとの差は `target_*` に閉じる。入口（`main.rs`）が `target_*` の定数から選んで渡すので、
+/// このモジュールは保存先の種類を知らない。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Backend {
-  Memory,
-  DynamoDb,
-}
-
-impl Backend {
-  /// コマンドの引数の文字列から保存先を作る。知らない文字列は `None` を返す。
-  pub fn parse(value: &str) -> Option<Backend> {
-    match value {
-      "memory" => Some(Backend::Memory),
-      "dynamodb" => Some(Backend::DynamoDb),
-      _ => None,
-    }
-  }
-
-  /// 報告と引数で使う保存先の名前を返す。
-  pub fn as_str(&self) -> &'static str {
-    match self {
-      Backend::Memory => "memory",
-      Backend::DynamoDb => "dynamodb",
-    }
-  }
-
-  /// 保存先が任意の能力 `capability` を提供するなら真を返す。`ttl` は DynamoDB だけが提供する。
-  pub fn provides(&self, capability: &str) -> bool {
-    match self {
-      Backend::Memory => false,
-      Backend::DynamoDb => capability == "ttl",
-    }
-  }
+pub struct Target {
+  /// 報告と引数で使う保存先の名前。ケースの `backends` の要素と比べる。
+  pub name: &'static str,
+  /// 保存先が提供する任意の能力の語。ケースの `requires` の語と比べる。
+  pub capabilities: &'static [&'static str],
+  /// 3 テーブルの配置のケースの対象なら真。
+  pub has_layout: bool,
 }
 
 /// 準備（generators の展開と障害の登録）を通したケースを表す。
@@ -59,24 +39,25 @@ fn not_applicable(reason: NotApplicableReason) -> CaseOutcome {
   CaseOutcome::NotApplicable { reason }
 }
 
-fn targets_backend(case: &Case, backend: Backend) -> bool {
+fn targets_backend(case: &Case, target: &Target) -> bool {
   match case.kind {
-    // 配置は DynamoDB の 3 テーブルの表。メモリには配置がない。
-    CaseKind::Layout => backend == Backend::DynamoDb,
+    CaseKind::Layout => target.has_layout,
     CaseKind::Scenario => {
       let listed = case
         .body
         .get("backends")
         .and_then(Value::as_array)
-        .is_some_and(|backends| backends.iter().any(|name| name.as_str() == Some(backend.as_str())));
+        .is_some_and(|backends| backends.iter().any(|name| name.as_str() == Some(target.name)));
       let provided = case
         .body
         .get("requires")
         .and_then(Value::as_array)
         .is_none_or(|capabilities| {
-          capabilities
-            .iter()
-            .all(|capability| capability.as_str().is_some_and(|name| backend.provides(name)))
+          capabilities.iter().all(|capability| {
+            capability
+              .as_str()
+              .is_some_and(|name| target.capabilities.contains(&name))
+          })
         });
       listed && provided
     }
@@ -88,12 +69,12 @@ fn targets_backend(case: &Case, backend: Backend) -> bool {
 ///
 /// 判定の順は、保存先の対象、表現不能、精度の選択、FNV-1a 64 の決定、`coverage.json` の除外、準備の失敗、
 /// 実装していない条件の語、実行していない、の順。
-pub fn run_case(case: &Case, backend: Backend, coverage: &Coverage) -> CaseOutcome {
-  if !targets_backend(case, backend) {
+pub fn run_case(case: &Case, target: &Target, coverage: &Coverage) -> CaseOutcome {
+  if !targets_backend(case, target) {
     return not_applicable(NotApplicableReason::BackendNotTargeted {
       detail: format!(
         "ケースの backends・requires に、保存先 {} で実行できるものがない",
-        backend.as_str()
+        target.name
       ),
     });
   }
@@ -154,14 +135,14 @@ pub fn run_case(case: &Case, backend: Backend, coverage: &Coverage) -> CaseOutco
 }
 
 /// 全ケースを分類して、ケースごとの報告を返す。
-pub fn run(data: &DataSet, backend: Backend) -> Vec<CaseReport> {
+pub fn run(data: &DataSet, target: &Target) -> Vec<CaseReport> {
   data
     .cases
     .iter()
     .map(|case| CaseReport {
       id: case.id.clone(),
       rules: case.rules.clone(),
-      outcome: run_case(case, backend, &data.coverage),
+      outcome: run_case(case, target, &data.coverage),
     })
     .collect()
 }

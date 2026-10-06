@@ -2,32 +2,10 @@
 
 use serde_json::Value;
 
-/// 数値の 10 進の値を、符号・先頭と末尾の 0 を除いた数字列・10 の指数に正規化する。
-///
-/// 0 は符号を持たない。指数が `i128` に収まらないときは `None` を返す。
-fn normalize_number(text: &str) -> Option<(bool, String, i128)> {
-  let (negative, unsigned) = match text.strip_prefix('-') {
-    Some(rest) => (true, rest),
-    None => (false, text),
-  };
-  let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
-    Some(position) => (&unsigned[..position], unsigned[position + 1..].parse::<i128>().ok()?),
-    None => (unsigned, 0),
-  };
-  let (integer, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
-  let digits = format!("{integer}{fraction}");
-  let exponent = exponent.checked_sub(i128::try_from(fraction.len()).ok()?)?;
-  let without_leading_zeros = digits.trim_start_matches('0');
-  if without_leading_zeros.is_empty() {
-    return Some((false, String::new(), 0));
-  }
-  let trimmed = without_leading_zeros.trim_end_matches('0');
-  let exponent = exponent.checked_add(i128::try_from(without_leading_zeros.len() - trimmed.len()).ok()?)?;
-  Some((negative, trimmed.to_string(), exponent))
-}
+use crate::number::normalize_decimal;
 
 fn numbers_equal(expected: &str, actual: &str) -> bool {
-  match (normalize_number(expected), normalize_number(actual)) {
+  match (normalize_decimal(expected), normalize_decimal(actual)) {
     (Some(left), Some(right)) => left == right,
     _ => expected == actual,
   }
