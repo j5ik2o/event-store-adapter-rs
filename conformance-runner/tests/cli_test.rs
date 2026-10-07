@@ -116,7 +116,7 @@ fn should_cli_reports_every_case_of_memory_backend_with_the_build_aid_success() 
 
   let report = execution.report();
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
-  assert_eq!(count_status(&report, "passed"), 9);
+  assert_eq!(count_status(&report, "passed"), 54);
   assert_eq!(count_status(&report, "failed"), 0);
   assert_eq!(
     count_status(&report, "passed") + count_status(&report, "not-applicable") + count_status(&report, "unverified"),
@@ -203,7 +203,7 @@ fn should_cli_with_require_all_exits_with_failure_because_cases_are_unverified()
   let execution = execute_on_real_data("cli-require-all", &["--backend", "memory", "--require-all"]);
 
   assert_eq!(execution.code(), Some(1));
-  assert_eq!(count_status(&execution.report(), "passed"), 9);
+  assert_eq!(count_status(&execution.report(), "passed"), 54);
 }
 
 #[test]
@@ -401,7 +401,7 @@ fn should_cli_reports_unknown_manifest_field_as_a_failed_verification() {
 // 一覧に正しい形で載っていないファイルは、読まずに照合の不一致として報告する
 // ---------------------------------------------------------------------------
 
-/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、116 ケースのうち値の表の `buildAid` の 9 件だけが成功していることを確かめる。
+/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、116 ケースのうちメモリの対象 54 件が成功していることを確かめる。
 fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &str) {
   let stderr = String::from_utf8_lossy(&execution.output.stderr);
   assert_eq!(
@@ -415,7 +415,7 @@ fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &
   let problems = report["data"]["manifest"]["problems"].to_string();
   assert!(problems.contains(problem_path), "{problems}");
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
-  assert_eq!(count_status(&report, "passed"), 9);
+  assert_eq!(count_status(&report, "passed"), 54);
 }
 
 #[test]

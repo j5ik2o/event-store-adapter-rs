@@ -1,4 +1,4 @@
-//! workspace への組み込みと、公開しないこと、実行対象のライブラリに依存し・その `test-hooks` を使わないことの試験。
+//! workspace への組み込みと、公開しないこと、実行対象のライブラリに依存し・その `test-hooks` を有効にすることの試験。
 
 use std::path::Path;
 use std::process::Command;
@@ -77,15 +77,15 @@ fn should_runner_depends_on_the_library_under_test() {
 }
 
 #[test]
-fn should_runner_does_not_enable_test_hooks_of_the_library_under_test() {
+fn should_runner_enables_test_hooks_of_the_library_under_test() {
   let metadata = workspace_metadata();
 
   let package = runner_package(&metadata);
 
   let features = requested_features(&package, "event-store-adapter-rs");
   assert!(
-    !features.iter().any(|feature| feature == "test-hooks"),
-    "骨格は test-hooks を使わない（PR 8 で足す）: {features:?}"
+    features.iter().any(|feature| feature == "test-hooks"),
+    "実メモリの障害注入に test-hooks が必要: {features:?}"
   );
 }
 
@@ -122,4 +122,17 @@ fn should_runner_pins_the_schema_crate_and_leaves_its_network_features_off() {
     "HTTP・ファイルでの取得の既定の機能を有効にしない"
   );
   assert_eq!(dependency["features"], json!([]));
+}
+
+#[test]
+fn should_library_not_enable_test_hooks_by_default() {
+  let metadata = workspace_metadata();
+  let library = metadata["packages"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|package| package["name"] == "event-store-adapter-rs")
+    .unwrap();
+  let defaults = library["features"]["default"].as_array().unwrap();
+  assert!(!defaults.iter().any(|feature| feature == "test-hooks"));
 }

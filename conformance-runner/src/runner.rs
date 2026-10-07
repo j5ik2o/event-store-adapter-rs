@@ -1,5 +1,4 @@
-//! ケースの分類（対象外の判定、準備、未検証の理由）と、値の表の `buildAid` の実行。
-//! 保存先にはまだつながないので、値の表の `buildAid` 以外は `Passed` を返さない。
+//! ケースの分類と、実装済みの公開操作への接続。
 
 use serde_json::Value;
 
@@ -66,7 +65,7 @@ fn targets_backend(case: &Case, target: &Target) -> bool {
   }
 }
 
-/// ケース 1 つを分類する。保存先につながないので、値の表の `buildAid` 以外は `Passed` を返さない。
+/// ケース 1 つを分類し、実装済みの保存先へ渡す。
 ///
 /// 判定の順は、保存先の対象、表現不能、精度の選択、FNV-1a 64 の決定、`coverage.json` の除外、準備の失敗、
 /// 実装していない条件の語、値の表の `buildAid` の実行、実行していない、の順。
@@ -130,6 +129,9 @@ pub fn run_case(case: &Case, target: &Target, coverage: &Coverage) -> CaseOutcom
   }
   if crate::aid::is_build_aid(case) {
     return crate::aid::run_build_aid(&prepared.body);
+  }
+  if *target == crate::target_memory::TARGET {
+    return crate::target_memory::run_case(case, prepared);
   }
   CaseOutcome::Unverified {
     reason: UnverifiedReason::NotExecuted {

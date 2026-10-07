@@ -205,21 +205,22 @@ impl FaultPlan {
   /// 操作 `operation`（0 はストアの生成）の中で数える、障害と適用回数の組を作る。
   ///
   /// ほかの操作の障害は含めない。適用回数は、操作ごとに 0 から数え始める。
-  pub fn begin_operation(&self, operation: u32) -> OperationFaults<'_> {
+  pub fn begin_operation(&self, operation: u32) -> OperationFaults {
     OperationFaults {
       entries: self
         .faults
         .iter()
         .filter(|fault| fault.operation == operation)
-        .map(|fault| (fault, 0))
+        .map(|fault| (fault.clone(), 0))
         .collect(),
     }
   }
 }
 
 /// 1 つの操作の中の、障害ごとの適用回数を表す。操作が終わったら `finish` で消費する。
-pub struct OperationFaults<'a> {
-  entries: Vec<(&'a Fault, u32)>,
+#[derive(Debug)]
+pub struct OperationFaults {
+  entries: Vec<(Fault, u32)>,
 }
 
 fn is_fired(fault: &Fault, applied: u32) -> bool {
@@ -229,12 +230,12 @@ fn is_fired(fault: &Fault, applied: u32) -> bool {
   }
 }
 
-impl<'a> OperationFaults<'a> {
+impl OperationFaults {
   /// 段階 `phase` への適用を 1 回始め、適用する障害を返す。
   ///
   /// 同じ段階の障害は、配列の順に、回数を使い切ってから次を使う。`until-operation-finishes` は使い切り
   /// にならない。適用できる障害がなければ `None` を返す。
-  pub fn start_application(&mut self, phase: Phase) -> Option<&'a Fault> {
+  pub fn start_application(&mut self, phase: Phase) -> Option<&Fault> {
     let (fault, applied) = self.entries.iter_mut().find(|(fault, applied)| {
       fault.phase == phase
         && match fault.repeat {
@@ -243,7 +244,7 @@ impl<'a> OperationFaults<'a> {
         }
     })?;
     *applied += 1;
-    Some(*fault)
+    Some(fault)
   }
 
   /// 操作の終わりに、発火しなかった障害を返す。すべて発火していれば `Ok` を返す。

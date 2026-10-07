@@ -111,7 +111,7 @@ fn scenario_body(backends: &[&str]) -> Value {
     "backends": backends,
     "store": {"retention_count": null, "retention_mode": "delete"},
     "fixtures": {"events": {}, "snapshots": {}},
-    "steps": [{"op": "getLatestSnapshotById", "arguments": {}, "expect": {"result": "none"}}]
+    "steps": [{"op": "getLatestSnapshotById", "arguments": {"aggregate_id": {"type_name": "Account", "value": "1"}}, "expect": {"result": "none"}}]
   })
 }
 
@@ -125,13 +125,13 @@ fn should_run_case_marks_scenario_not_targeting_the_backend_as_not_applicable() 
 }
 
 #[test]
-fn should_run_case_leaves_scenario_targeting_the_backend_unverified_when_nothing_ran() {
+fn should_run_case_executes_memory_and_leaves_dynamodb_unverified() {
   let case = scenario(&["T-1"], scenario_body(&["memory", "dynamodb"]));
 
   let on_memory = run_case(&case, &target_memory::TARGET, &no_exclusions());
   let on_dynamodb = run_case(&case, &target_dynamodb::TARGET, &no_exclusions());
 
-  assert!(is_not_executed(&on_memory), "{on_memory:?}");
+  assert_eq!(on_memory, CaseOutcome::Passed);
   assert!(is_not_executed(&on_dynamodb), "{on_dynamodb:?}");
 }
 
@@ -183,7 +183,7 @@ fn should_run_case_keeps_case_with_a_non_excluded_rule_out_of_coverage_exclusion
 
   let outcome = run_case(&case, &target_memory::TARGET, &excluding_w5());
 
-  assert!(is_not_executed(&outcome), "{outcome:?}");
+  assert_eq!(outcome, CaseOutcome::Passed);
 }
 
 #[test]
@@ -470,7 +470,11 @@ fn should_run_does_not_mark_seq_case_without_signed_flag_as_unrepresentable() {
   for target in TARGETS {
     let reports = run(&data, target);
     let outcome = outcome_of(&reports, "core-seq-above-max");
-    assert!(is_not_executed(outcome), "{}: {outcome:?}", target.name);
+    if target.name == "memory" {
+      assert_eq!(outcome, &CaseOutcome::Passed);
+    } else {
+      assert!(is_not_executed(outcome), "{}: {outcome:?}", target.name);
+    }
   }
 }
 
@@ -531,13 +535,13 @@ fn should_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
 }
 
 #[test]
-fn should_run_reports_the_build_aid_success_for_memory_and_leaves_the_rest_unverified() {
+fn should_run_reports_memory_writes_and_reads_and_leaves_retention_unverified() {
   let data = real_data();
 
   let reports = run(&data, &target_memory::TARGET);
 
-  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。
-  assert_eq!(counts(&reports), (9, 0, 58, 49));
+  // (passed, failed, not-applicable, unverified)。保持・通知の4件を未検証に残す。
+  assert_eq!(counts(&reports), (54, 0, 58, 4));
 }
 
 #[test]

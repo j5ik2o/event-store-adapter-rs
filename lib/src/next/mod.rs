@@ -4,6 +4,7 @@ pub mod aggregate_id;
 pub mod error;
 pub mod event_envelope;
 pub mod event_store;
+pub mod memory;
 pub mod retention;
 pub mod seq_nr;
 pub mod serializer;
