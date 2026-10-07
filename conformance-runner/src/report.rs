@@ -47,11 +47,21 @@ pub enum UnverifiedReason {
   NotExecuted { detail: String },
 }
 
+/// 成功したケースの期待値と実取得値を一組で保持する。
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct ObservedValues {
+  pub expected: Value,
+  pub actual: Value,
+}
+
 /// ケース 1 つの結果を表す。
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 #[serde(tag = "status", rename_all = "kebab-case")]
 pub enum CaseOutcome {
-  Passed,
+  Passed {
+    #[serde(flatten, skip_serializing_if = "Option::is_none")]
+    values: Option<ObservedValues>,
+  },
   Failed {
     #[serde(skip_serializing_if = "Option::is_none")]
     failed_operation: Option<u32>,
@@ -243,7 +253,7 @@ impl Report {
       for rule in &case.rules {
         let row = rules.entry(rule.clone()).or_insert_with(|| empty_rule_report(rule));
         match case.outcome {
-          CaseOutcome::Passed => row.passed += 1,
+          CaseOutcome::Passed { .. } => row.passed += 1,
           CaseOutcome::Failed { .. } => row.failed += 1,
           CaseOutcome::NotApplicable { .. } => row.not_applicable += 1,
           CaseOutcome::Unverified { .. } => row.unverified += 1,
@@ -271,7 +281,7 @@ impl Report {
     let mut counts = StatusCounts::default();
     for case in &self.cases {
       match case.outcome {
-        CaseOutcome::Passed => counts.passed += 1,
+        CaseOutcome::Passed { .. } => counts.passed += 1,
         CaseOutcome::Failed { .. } => counts.failed += 1,
         CaseOutcome::NotApplicable { .. } => counts.not_applicable += 1,
         CaseOutcome::Unverified { .. } => counts.unverified += 1,

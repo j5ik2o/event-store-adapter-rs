@@ -1,5 +1,5 @@
 //! コマンドの入口（引数・報告の書き出し・終了コード）の試験。
-//! 実行ファイルを起動して、利用者から見える結果だけを確かめる。保存先には接続しない。
+//! 実行ファイルを起動し、メモリの実操作で54件、未接続のDynamoDBでbuildAidの9件が成功することを確かめる。
 
 mod support;
 
@@ -94,7 +94,7 @@ fn count_status(report: &Value, status: &str) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// 実データを、値の表の buildAid の成功と、ほかのケースの未検証か対象外で報告する
+// 実データを実行し、メモリ54件・DynamoDBのbuildAid9件の成功と、対象外・未検証を報告する
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -111,7 +111,7 @@ fn should_cli_exits_zero_and_passes_manifest_verification_for_memory_backend() {
 }
 
 #[test]
-fn should_cli_reports_every_case_of_memory_backend_with_the_build_aid_success() {
+fn should_cli_reports_every_case_of_memory_backend_with_54_successes() {
   let execution = execute_on_real_data("cli-memory-counts", &["--backend", "memory"]);
 
   let report = execution.report();
@@ -125,13 +125,33 @@ fn should_cli_reports_every_case_of_memory_backend_with_the_build_aid_success() 
 }
 
 #[test]
+fn should_cli_reports_converted_and_read_nanoseconds_for_successful_time_cases() {
+  let execution = execute_on_real_data("cli-memory-time-values", &["--backend", "memory"]);
+  assert_eq!(execution.code(), Some(0));
+  let report = execution.report();
+  let cases = report["cases"].as_array().expect("cases は配列");
+  for (id, nanos) in [
+    ("occurred-at-min", "-9223372036854775808"),
+    ("occurred-at-max", "9223372036854775807"),
+    ("occurred-at-nanoseconds", "123456789"),
+    ("occurred-at-before-epoch", "-1"),
+    ("occurred-at-epoch", "0"),
+  ] {
+    let case = cases.iter().find(|case| case["id"] == id).expect("時刻ケースがある");
+    assert_eq!(case["status"], "passed", "{id}: {case}");
+    assert_eq!(case["expected"]["value"], nanos, "{id}: {case}");
+    assert_eq!(case["actual"]["value"], nanos, "{id}: {case}");
+  }
+}
+
+#[test]
 fn should_cli_gives_every_not_applicable_and_unverified_case_a_reason_of_a_known_kind() {
   let execution = execute_on_real_data("cli-memory-reasons", &["--backend", "memory"]);
 
   let report = execution.report();
   for case in report["cases"].as_array().expect("cases は配列") {
     match case["status"].as_str().expect("status は文字列") {
-      // 値の表の buildAid は成功するので、理由を持たない。
+      // 成功ケースは理由を持たない。
       "passed" => continue,
       "not-applicable" => {
         let kind = case["reason"]["kind"]

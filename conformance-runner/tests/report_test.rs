@@ -8,7 +8,7 @@ use event_store_adapter_conformance_rs::data::{
 use event_store_adapter_conformance_rs::fault::{Phase, Repeat, UnfiredFault};
 use event_store_adapter_conformance_rs::report::{
   git_head_in, parse_package_version, resolve_revision, CaseOutcome, CaseReport, Implementation, NotApplicableReason,
-  Report, RepresentationGap, StatusCounts, UnverifiedReason,
+  ObservedValues, Report, RepresentationGap, StatusCounts, UnverifiedReason,
 };
 use event_store_adapter_conformance_rs::runner::run;
 use event_store_adapter_conformance_rs::target_memory;
@@ -178,9 +178,36 @@ fn should_report_exposes_implementation_and_backend() {
 
 #[test]
 fn should_report_case_entry_of_passed_case_carries_id_rules_and_status() {
-  let entry = serde_json::to_value(case_report("c1", &["T-1", "T-3"], CaseOutcome::Passed)).unwrap();
+  let entry = serde_json::to_value(case_report("c1", &["T-1", "T-3"], CaseOutcome::Passed { values: None })).unwrap();
 
   assert_eq!(entry, json!({"id": "c1", "rules": ["T-1", "T-3"], "status": "passed"}));
+}
+
+#[test]
+fn should_report_preserves_passed_values_and_counts_them_as_success() {
+  let outcomes = vec![
+    CaseOutcome::Passed { values: None },
+    CaseOutcome::Passed {
+      values: Some(ObservedValues {
+        expected: json!({"value": "-9223372036854775808"}),
+        actual: json!({"value": "-9223372036854775808"}),
+      }),
+    },
+  ];
+  let report = report_of(vec![], outcomes);
+
+  let json = to_json(&report);
+
+  assert_eq!(
+    json["cases"][1],
+    json!({
+      "id": "case-1", "rules": ["T-1"], "status": "passed",
+      "expected": {"value": "-9223372036854775808"}, "actual": {"value": "-9223372036854775808"}
+    })
+  );
+  assert_eq!(report.status_counts().passed, 2);
+  assert_eq!(counts_of(rule_row(&json, "T-1")), (2, 0, 0, 0));
+  assert!(!report.should_fail(true));
 }
 
 #[test]
@@ -300,7 +327,7 @@ fn should_report_case_entry_of_unverified_case_explains_why_it_was_not_executed(
 #[test]
 fn should_report_counts_each_case_in_every_rule_it_names() {
   let cases = vec![
-    case_report("c1", &["T-1", "T-3"], CaseOutcome::Passed),
+    case_report("c1", &["T-1", "T-3"], CaseOutcome::Passed { values: None }),
     case_report("c2", &["T-1"], failed()),
     case_report("c3", &["T-3", "T-9"], not_applicable()),
     case_report("c4", &["T-9"], unverified()),
@@ -378,7 +405,7 @@ fn should_report_records_coverage_exclusion_reason_on_excluded_rules_only() {
 #[test]
 fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_case_once() {
   let data = load(&conformance_dir()).expect("実データを読める");
-  let case_reports = run(&data, &target_memory::TARGET);
+  let case_reports = run(&data, &target_memory::TARGET, target_memory::run_case);
   let memberships: usize = case_reports.iter().map(|case| case.rules.len()).sum();
 
   let report = Report::build(&data, "memory", case_reports, implementation());
@@ -414,7 +441,7 @@ fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_cas
 #[test]
 fn should_status_counts_totals_each_state() {
   let outcomes = vec![
-    CaseOutcome::Passed,
+    CaseOutcome::Passed { values: None },
     failed(),
     failed(),
     not_applicable(),
@@ -458,7 +485,7 @@ fn should_should_fail_is_true_for_unverified_cases_with_require_all() {
 
 #[test]
 fn should_should_fail_is_true_for_failed_case_regardless_of_require_all() {
-  let report = report_of(vec![], vec![CaseOutcome::Passed, failed()]);
+  let report = report_of(vec![], vec![CaseOutcome::Passed { values: None }, failed()]);
 
   assert!(report.should_fail(false));
   assert!(report.should_fail(true));
@@ -476,7 +503,7 @@ fn should_should_fail_is_true_when_manifest_verification_failed_without_require_
 
 #[test]
 fn should_should_fail_is_false_for_passed_and_not_applicable_cases_even_with_require_all() {
-  let report = report_of(vec![], vec![CaseOutcome::Passed, not_applicable()]);
+  let report = report_of(vec![], vec![CaseOutcome::Passed { values: None }, not_applicable()]);
 
   assert!(!report.should_fail(false));
   assert!(!report.should_fail(true));

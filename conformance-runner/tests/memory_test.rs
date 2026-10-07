@@ -32,12 +32,13 @@ fn execute(case: &Case) -> CaseOutcome {
       required_rules: vec![],
       exclusions: vec![],
     },
+    target_memory::run_case,
   )
 }
 #[test]
 fn should_memory_execute_real_operations_with_null_payload() {
   let case = scenario();
-  assert_eq!(execute(&case), CaseOutcome::Passed);
+  assert_eq!(execute(&case), CaseOutcome::Passed { values: None });
 }
 #[test]
 fn should_memory_not_report_missing_payload_or_aggregate_as_success() {
@@ -93,7 +94,7 @@ fn should_faults_fire_through_real_commit_hook() {
     {"op":"getEventsByIdSinceSeqNr","arguments":{"aggregate_id":{"type_name":"Account","value":"1"},"seq_nr":0},"expect":{"result":"events","events":["e1"]}}
   ]);
   case.body["faults"] = json!([{"operation":1,"phase":"commit","kind":"storage-error","injection":"replace-request","repeat":{"mode":"count","count":1},"details":{"message":"INJECTED"}}]);
-  assert_eq!(execute(&case), CaseOutcome::Passed);
+  assert_eq!(execute(&case), CaseOutcome::Passed { values: None });
 }
 #[test]
 fn should_faults_fail_when_commit_hook_consumes_less_than_declared_count() {
@@ -120,7 +121,7 @@ fn should_faults_fail_when_declared_phase_is_never_called() {
 #[test]
 fn should_retention_cases_remain_unverified() {
   let data = load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")).unwrap();
-  let reports = run(&data, &target_memory::TARGET);
+  let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
   for id in [
     "core-retention-delete-1",
     "core-retention-delete-2",
@@ -139,15 +140,18 @@ fn should_retention_cases_remain_unverified() {
 #[test]
 fn should_dynamodb_not_inherit_memory_passed_cases() {
   let data = load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")).unwrap();
-  let reports = run(&data, &target_dynamodb::TARGET);
-  for report in reports.iter().filter(|report| report.outcome == CaseOutcome::Passed) {
+  let reports = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
+  for report in reports
+    .iter()
+    .filter(|report| matches!(report.outcome, CaseOutcome::Passed { .. }))
+  {
     let case = data.cases.iter().find(|case| case.id == report.id).unwrap();
     assert_eq!(case.body["operation"], "buildAid");
   }
   assert_eq!(
     reports
       .iter()
-      .filter(|report| report.outcome == CaseOutcome::Passed)
+      .filter(|report| matches!(report.outcome, CaseOutcome::Passed { .. }))
       .count(),
     9
   );

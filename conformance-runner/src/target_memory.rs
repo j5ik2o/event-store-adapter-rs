@@ -19,7 +19,7 @@ use crate::{
   data::{Case, CaseKind},
   fault::{FaultKind, Injection, OperationFaults, Phase},
   number::to_integer,
-  report::{CaseOutcome, UnverifiedReason},
+  report::{CaseOutcome, ObservedValues, UnverifiedReason},
   runner::{PreparedCase, Target},
 };
 
@@ -426,7 +426,7 @@ fn observe(storage: &MemoryStorage, step: &Value, id: Option<&CaseId>) -> Result
 }
 
 /// ケースごとに独立した保存先を作り、公開操作を順に実行する。
-pub(crate) fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
+pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
   let body = &prepared.body;
   if matches!(case.kind, CaseKind::Scenario)
     && body
@@ -478,7 +478,7 @@ pub(crate) fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
     Err(error) => {
       return match initialization {
         Some(expected) => match compare_result(expected, Err(error)) {
-          Ok(_) => CaseOutcome::Passed,
+          Ok(_) => CaseOutcome::Passed { values: None },
           Err(failure) => failed(Some(0), failure),
         },
         None => failed(
@@ -505,7 +505,7 @@ pub(crate) fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
   };
   if matches!(case.kind, CaseKind::ValueTable) {
     return match runtime.block_on(run_value(case, &store)) {
-      Ok(()) => CaseOutcome::Passed,
+      Ok(values) => CaseOutcome::Passed { values },
       Err(e) => failed(None, e),
     };
   }
@@ -544,10 +544,10 @@ pub(crate) fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
       Err(e) => return failed(Some(operation), e),
     }
   }
-  CaseOutcome::Passed
+  CaseOutcome::Passed { values: None }
 }
 
-async fn run_value(case: &Case, store: &Store) -> Result<(), ComparisonFailure> {
+async fn run_value(case: &Case, store: &Store) -> Result<Option<ObservedValues>, ComparisonFailure> {
   let input = required(&case.body, "input")?;
   let expected = required(&case.body, "expect")?;
   let id = CaseId {
@@ -618,10 +618,14 @@ async fn run_value(case: &Case, store: &Store) -> Result<(), ComparisonFailure> 
               actual: Some(json!({"value":actual})),
             });
           }
+          return Ok(Some(ObservedValues {
+            expected: json!({"value": converted_nanos.to_string()}),
+            actual: json!({"value": actual}),
+          }));
         }
       }
     }
     operation => return Err(format!("未対応の値の表の操作: {operation}").into()),
   }
-  Ok(())
+  Ok(None)
 }

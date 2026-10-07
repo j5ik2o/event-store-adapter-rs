@@ -27,6 +27,9 @@ pub struct PreparedCase {
   pub faults: FaultPlan,
 }
 
+/// 入口が選ぶ保存先のケース実行関数を表す。
+pub type CaseExecutor = fn(&Case, PreparedCase) -> CaseOutcome;
+
 /// ケースの本体を複製し、generators を展開して障害を登録する。誤りは、その説明を返す。
 pub fn prepare(case: &Case) -> Result<PreparedCase, String> {
   let mut body = case.body.clone();
@@ -68,8 +71,13 @@ fn targets_backend(case: &Case, target: &Target) -> bool {
 /// ケース 1 つを分類し、実装済みの保存先へ渡す。
 ///
 /// 判定の順は、保存先の対象、表現不能、精度の選択、FNV-1a 64 の決定、`coverage.json` の除外、準備の失敗、
-/// 実装していない条件の語、値の表の `buildAid` の実行、実行していない、の順。
-pub fn run_case(case: &Case, target: &Target, coverage: &Coverage) -> CaseOutcome {
+/// 実装していない条件の語、値の表の `buildAid` の実行、渡された保存先実行関数への委譲、の順。
+pub fn run_case(
+  case: &Case,
+  target: &Target,
+  coverage: &Coverage,
+  execute: impl Fn(&Case, PreparedCase) -> CaseOutcome,
+) -> CaseOutcome {
   if !targets_backend(case, target) {
     return not_applicable(NotApplicableReason::BackendNotTargeted {
       detail: format!(
@@ -130,25 +138,18 @@ pub fn run_case(case: &Case, target: &Target, coverage: &Coverage) -> CaseOutcom
   if crate::aid::is_build_aid(case) {
     return crate::aid::run_build_aid(&prepared.body);
   }
-  if *target == crate::target_memory::TARGET {
-    return crate::target_memory::run_case(case, prepared);
-  }
-  CaseOutcome::Unverified {
-    reason: UnverifiedReason::NotExecuted {
-      detail: "保存先が未接続（実行器の骨格）なので、実行していない".to_string(),
-    },
-  }
+  execute(case, prepared)
 }
 
 /// 全ケースを分類して、ケースごとの報告を返す。
-pub fn run(data: &DataSet, target: &Target) -> Vec<CaseReport> {
+pub fn run(data: &DataSet, target: &Target, execute: impl Fn(&Case, PreparedCase) -> CaseOutcome) -> Vec<CaseReport> {
   data
     .cases
     .iter()
     .map(|case| CaseReport {
       id: case.id.clone(),
       rules: case.rules.clone(),
-      outcome: run_case(case, target, &data.coverage),
+      outcome: run_case(case, target, &data.coverage, &execute),
     })
     .collect()
 }
