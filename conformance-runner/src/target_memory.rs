@@ -443,7 +443,7 @@ pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
       Phase::Commit | Phase::ReadEvents | Phase::ReadSnapshot => fault.kind == FaultKind::StorageError,
       _ => false,
     };
-    if !supported || fault.injection != Injection::ReplaceRequest {
+    if fault.operation == 0 || !supported || fault.injection != Injection::ReplaceRequest {
       return unverified("宣言された障害の段階・種類・方式へ未接続");
     }
   }

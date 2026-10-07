@@ -119,6 +119,29 @@ fn should_faults_fail_when_declared_phase_is_never_called() {
   assert!(matches!(execute(&case), CaseOutcome::Failed { unfired_faults, .. } if !unfired_faults.is_empty()));
 }
 #[test]
+fn should_generation_faults_without_connected_hooks_remain_unverified() {
+  for (phase, kind) in [
+    ("commit", "storage-error"),
+    ("read-events", "storage-error"),
+    ("read-snapshot", "storage-error"),
+    ("serialize-event", "serialization-error"),
+    ("serialize-snapshot", "serialization-error"),
+    ("deserialize-event", "serialization-error"),
+    ("deserialize-snapshot", "serialization-error"),
+  ] {
+    let mut case = scenario();
+    case.body["faults"] = json!([{
+      "operation": 0, "phase": phase, "kind": kind, "injection": "replace-request",
+      "repeat": {"mode": "count", "count": 1}, "details": {"message": "INJECTED"}
+    }]);
+    let outcome = execute(&case);
+    assert!(
+      matches!(outcome, CaseOutcome::Unverified { .. }),
+      "{phase}: {outcome:?}"
+    );
+  }
+}
+#[test]
 fn should_retention_cases_remain_unverified() {
   let data = load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")).unwrap();
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
