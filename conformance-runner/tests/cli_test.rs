@@ -1,5 +1,5 @@
 //! コマンドの入口（引数・報告の書き出し・終了コード）の試験。
-//! 実行ファイルを起動して、利用者から見える結果だけを確かめる。保存先には接続しない。
+//! 実行ファイルを起動し、メモリの実操作で54件、未接続のDynamoDBでbuildAidの9件が成功することを確かめる。
 
 mod support;
 
@@ -94,7 +94,7 @@ fn count_status(report: &Value, status: &str) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// 実データを、値の表の buildAid の成功と、ほかのケースの未検証か対象外で報告する
+// 実データを実行し、メモリ54件・DynamoDBのbuildAid9件の成功と、対象外・未検証を報告する
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -111,17 +111,37 @@ fn should_cli_exits_zero_and_passes_manifest_verification_for_memory_backend() {
 }
 
 #[test]
-fn should_cli_reports_every_case_of_memory_backend_with_the_build_aid_success() {
+fn should_cli_reports_every_case_of_memory_backend_with_54_successes() {
   let execution = execute_on_real_data("cli-memory-counts", &["--backend", "memory"]);
 
   let report = execution.report();
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
-  assert_eq!(count_status(&report, "passed"), 9);
+  assert_eq!(count_status(&report, "passed"), 54);
   assert_eq!(count_status(&report, "failed"), 0);
   assert_eq!(
     count_status(&report, "passed") + count_status(&report, "not-applicable") + count_status(&report, "unverified"),
     116
   );
+}
+
+#[test]
+fn should_cli_reports_converted_and_read_nanoseconds_for_successful_time_cases() {
+  let execution = execute_on_real_data("cli-memory-time-values", &["--backend", "memory"]);
+  assert_eq!(execution.code(), Some(0));
+  let report = execution.report();
+  let cases = report["cases"].as_array().expect("cases は配列");
+  for (id, nanos) in [
+    ("occurred-at-min", "-9223372036854775808"),
+    ("occurred-at-max", "9223372036854775807"),
+    ("occurred-at-nanoseconds", "123456789"),
+    ("occurred-at-before-epoch", "-1"),
+    ("occurred-at-epoch", "0"),
+  ] {
+    let case = cases.iter().find(|case| case["id"] == id).expect("時刻ケースがある");
+    assert_eq!(case["status"], "passed", "{id}: {case}");
+    assert_eq!(case["expected"]["value"], nanos, "{id}: {case}");
+    assert_eq!(case["actual"]["value"], nanos, "{id}: {case}");
+  }
 }
 
 #[test]
@@ -131,7 +151,7 @@ fn should_cli_gives_every_not_applicable_and_unverified_case_a_reason_of_a_known
   let report = execution.report();
   for case in report["cases"].as_array().expect("cases は配列") {
     match case["status"].as_str().expect("status は文字列") {
-      // 値の表の buildAid は成功するので、理由を持たない。
+      // 成功ケースは理由を持たない。
       "passed" => continue,
       "not-applicable" => {
         let kind = case["reason"]["kind"]
@@ -203,7 +223,7 @@ fn should_cli_with_require_all_exits_with_failure_because_cases_are_unverified()
   let execution = execute_on_real_data("cli-require-all", &["--backend", "memory", "--require-all"]);
 
   assert_eq!(execution.code(), Some(1));
-  assert_eq!(count_status(&execution.report(), "passed"), 9);
+  assert_eq!(count_status(&execution.report(), "passed"), 54);
 }
 
 #[test]
@@ -401,7 +421,7 @@ fn should_cli_reports_unknown_manifest_field_as_a_failed_verification() {
 // 一覧に正しい形で載っていないファイルは、読まずに照合の不一致として報告する
 // ---------------------------------------------------------------------------
 
-/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、116 ケースのうち値の表の `buildAid` の 9 件だけが成功していることを確かめる。
+/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、116 ケースのうちメモリの対象 54 件が成功していることを確かめる。
 fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &str) {
   let stderr = String::from_utf8_lossy(&execution.output.stderr);
   assert_eq!(
@@ -415,7 +435,7 @@ fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &
   let problems = report["data"]["manifest"]["problems"].to_string();
   assert!(problems.contains(problem_path), "{problems}");
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
-  assert_eq!(count_status(&report, "passed"), 9);
+  assert_eq!(count_status(&report, "passed"), 54);
 }
 
 #[test]

@@ -137,7 +137,7 @@ pub fn run_build_aid(case: &Value) -> CaseOutcome {
     Ok(aid) => {
       let expected = case.pointer("/expect/value").and_then(Value::as_str);
       match expected {
-        Some(expected) if expected == aid.as_str() => CaseOutcome::Passed,
+        Some(expected) if expected == aid.as_str() => CaseOutcome::Passed { values: None },
         _ => failed(
           "組み立てた aid が期待値と一致しない".to_string(),
           case.pointer("/expect/value").cloned(),
@@ -147,7 +147,7 @@ pub fn run_build_aid(case: &Value) -> CaseOutcome {
     }
     Err(error) => match case.pointer("/expect/error") {
       Some(expected) => match matches_expected_error(expected, &error) {
-        Ok(()) => CaseOutcome::Passed,
+        Ok(()) => CaseOutcome::Passed { values: None },
         Err(detail) => failed(
           detail,
           case.pointer("/expect/error").cloned(),

@@ -7,7 +7,7 @@ use std::process::ExitCode;
 
 use event_store_adapter_conformance_rs::data;
 use event_store_adapter_conformance_rs::report::{Implementation, Report};
-use event_store_adapter_conformance_rs::runner::{self, Target};
+use event_store_adapter_conformance_rs::runner::{self, CaseExecutor, Target};
 use event_store_adapter_conformance_rs::{target_dynamodb, target_memory};
 
 const USAGE: &str =
@@ -16,17 +16,17 @@ const USAGE: &str =
 /// コマンドの引数を解析した結果を表す。
 #[derive(Debug)]
 struct Args {
-  backend: Target,
+  backend: (Target, CaseExecutor),
   data: PathBuf,
   report: PathBuf,
   require_all: bool,
 }
 
-/// コマンドの引数の文字列から、保存先を作る。知らない文字列は `None` を返す。
-fn parse_target(value: &str) -> Option<Target> {
+/// コマンドの引数から、保存先の分類情報と実行関数を選ぶ。知らない文字列は `None` を返す。
+fn parse_target(value: &str) -> Option<(Target, CaseExecutor)> {
   match value {
-    "memory" => Some(target_memory::TARGET),
-    "dynamodb" => Some(target_dynamodb::TARGET),
+    "memory" => Some((target_memory::TARGET, target_memory::run_case)),
+    "dynamodb" => Some((target_dynamodb::TARGET, target_dynamodb::run_case)),
     _ => None,
   }
 }
@@ -73,8 +73,9 @@ fn main() -> ExitCode {
       return ExitCode::from(2);
     }
   };
-  let cases = runner::run(&data, &args.backend);
-  let report = Report::build(&data, args.backend.name, cases, Implementation::detect());
+  let (target, execute) = args.backend;
+  let cases = runner::run(&data, &target, execute);
+  let report = Report::build(&data, target.name, cases, Implementation::detect());
   let mut text = match serde_json::to_string_pretty(&report) {
     Ok(text) => text,
     Err(error) => {
@@ -126,7 +127,7 @@ mod tests {
     ]))
     .expect("正しい引数");
 
-    assert_eq!(args.backend, target_dynamodb::TARGET);
+    assert_eq!(args.backend.0, target_dynamodb::TARGET);
     assert_eq!(args.data, PathBuf::from("conformance"));
     assert_eq!(args.report, PathBuf::from("report.json"));
     assert!(args.require_all);
@@ -144,7 +145,7 @@ mod tests {
     ]))
     .expect("正しい引数");
 
-    assert_eq!(args.backend, target_memory::TARGET);
+    assert_eq!(args.backend.0, target_memory::TARGET);
     assert!(!args.require_all);
   }
 
