@@ -8,9 +8,16 @@ use chrono::{DateTime, Utc};
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{Arc, Mutex, MutexGuard};
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MemoryStorage {
   pub(super) inner: Arc<SharedStorage>,
+}
+impl std::fmt::Debug for MemoryStorage {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("MemoryStorage")
+      .field("retention", &self.inner.retention)
+      .finish_non_exhaustive()
+  }
 }
 #[derive(Debug)]
 pub(super) struct SharedStorage {

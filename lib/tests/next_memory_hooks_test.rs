@@ -72,6 +72,17 @@ fn setup(retention: RetentionSettings) -> (Arc<Hooks>, MemoryStorage, Store) {
   (hooks, storage, store)
 }
 #[tokio::test]
+async fn should_debug_exclude_hook_details() {
+  let (hooks, storage, store) = setup(RetentionSettings::current_only());
+  store
+    .persist_event_and_snapshot(event(1), SnapshotEnvelope::new(1, 1))
+    .await
+    .unwrap();
+  let hook_details = format!("{hooks:?}");
+  let output = format!("storage={storage:?}\nstore={store:?}");
+  assert!(!output.contains(&hook_details), "Debug exposed hook details: {output}");
+}
+#[tokio::test]
 async fn should_hook_before_commit_allow_atomic_success() {
   let (_, _, store) = setup(RetentionSettings::current_only());
   store

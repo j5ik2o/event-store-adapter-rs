@@ -41,6 +41,53 @@ fn snapshot(seq: u64) -> SnapshotEnvelope<serde_json::Value> {
 }
 
 #[tokio::test]
+async fn should_debug_exclude_stored_identifiers_and_serialized_payloads() {
+  let storage = MemoryStorage::new(RetentionSettings::current_only()).unwrap();
+  let writer = store(storage.clone());
+  let id = Id("private-aggregate-marker");
+  let payload = serde_json::json!({"secret": "private-event-marker"});
+  let aggregate = serde_json::json!({"secret": "private-snapshot-marker"});
+  writer
+    .persist_event_and_snapshot(
+      EventEnvelope::new(
+        id.clone(),
+        1,
+        DateTime::<Utc>::from_timestamp(0, 0).unwrap(),
+        payload.clone(),
+      ),
+      SnapshotEnvelope::new(aggregate.clone(), 1),
+    )
+    .await
+    .unwrap();
+  assert_eq!(
+    writer.get_events_by_id_since_seq_nr(&id, 0).await.unwrap()[0].payload(),
+    &payload
+  );
+  assert_eq!(
+    writer
+      .get_latest_snapshot_by_id(&id)
+      .await
+      .unwrap()
+      .unwrap()
+      .snapshot()
+      .unwrap()
+      .aggregate(),
+    &aggregate
+  );
+
+  let output = format!("storage={storage:?}\nstore={writer:?}");
+  let forbidden = [
+    id.0.to_owned(),
+    format!("{:?}", serde_json::to_vec(&payload).unwrap()),
+    format!("{:?}", serde_json::to_vec(&aggregate).unwrap()),
+  ];
+  let leaked: Vec<_> = forbidden
+    .iter()
+    .filter(|value| output.contains(value.as_str()))
+    .collect();
+  assert!(leaked.is_empty(), "Debug exposed {leaked:?}: {output}");
+}
+#[tokio::test]
 async fn should_storage_sharing_expose_clone_writes() {
   let storage = MemoryStorage::new(RetentionSettings::current_only()).unwrap();
   let writer = store(storage.clone());
