@@ -33,15 +33,15 @@ impl AidString {
         snapshot_seq_nr: None,
       });
     }
-    let aid = format!("{type_name}-{value}");
-    if aid.len() > AID_MAX_BYTES {
+    let aid_len = type_name.len().saturating_add(1).saturating_add(value.len());
+    if aid_len > AID_MAX_BYTES {
       return Err(EventStoreError::ContractViolation {
         rule: ContractRule::T12,
         seq_nr: None,
         snapshot_seq_nr: None,
       });
     }
-    Ok(AidString(aid))
+    Ok(AidString(format!("{type_name}-{value}")))
   }
 
   /// 組み立て済みの aid 文字列を返す。

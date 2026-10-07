@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 
-use crate::next::error::EventStoreError;
+use crate::next::error::{EventStoreError, SerializationPhase};
 use crate::next::serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer};
 
 #[derive(Debug, PartialEq, Serialize, Deserialize)]
@@ -66,5 +66,11 @@ fn should_json_event_serializer_report_deserialization_failure_as_serialization(
 
   let error = serializer.deserialize(b"not json").expect_err("復元に失敗する");
 
-  assert!(matches!(error, EventStoreError::Serialization { .. }));
+  assert!(matches!(
+    error,
+    EventStoreError::Serialization {
+      phase: SerializationPhase::DeserializeEvent,
+      ..
+    }
+  ));
 }
