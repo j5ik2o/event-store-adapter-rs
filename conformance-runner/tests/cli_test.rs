@@ -94,7 +94,7 @@ fn count_status(report: &Value, status: &str) -> usize {
 }
 
 // ---------------------------------------------------------------------------
-// 実データを全ケース未検証か対象外で報告する
+// 実データを、値の表の buildAid の成功と、ほかのケースの未検証か対象外で報告する
 // ---------------------------------------------------------------------------
 
 #[test]
@@ -111,15 +111,15 @@ fn should_cli_exits_zero_and_passes_manifest_verification_for_memory_backend() {
 }
 
 #[test]
-fn should_cli_reports_every_case_of_memory_backend_without_any_success() {
+fn should_cli_reports_every_case_of_memory_backend_with_the_build_aid_success() {
   let execution = execute_on_real_data("cli-memory-counts", &["--backend", "memory"]);
 
   let report = execution.report();
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
-  assert_eq!(count_status(&report, "passed"), 0);
+  assert_eq!(count_status(&report, "passed"), 9);
   assert_eq!(count_status(&report, "failed"), 0);
   assert_eq!(
-    count_status(&report, "not-applicable") + count_status(&report, "unverified"),
+    count_status(&report, "passed") + count_status(&report, "not-applicable") + count_status(&report, "unverified"),
     116
   );
 }
@@ -130,24 +130,33 @@ fn should_cli_gives_every_not_applicable_and_unverified_case_a_reason_of_a_known
 
   let report = execution.report();
   for case in report["cases"].as_array().expect("cases は配列") {
-    let kind = case["reason"]["kind"]
-      .as_str()
-      .unwrap_or_else(|| panic!("理由がある: {case}"));
     match case["status"].as_str().expect("status は文字列") {
-      "not-applicable" => assert!(
-        [
-          "backend-not-targeted",
-          "representation",
-          "fnv1a64-decision",
-          "coverage-exclusion"
-        ]
-        .contains(&kind),
-        "{case}"
-      ),
-      "unverified" => assert!(
-        ["unimplemented-constraint-words", "not-executed"].contains(&kind),
-        "{case}"
-      ),
+      // 値の表の buildAid は成功するので、理由を持たない。
+      "passed" => continue,
+      "not-applicable" => {
+        let kind = case["reason"]["kind"]
+          .as_str()
+          .unwrap_or_else(|| panic!("理由がある: {case}"));
+        assert!(
+          [
+            "backend-not-targeted",
+            "representation",
+            "fnv1a64-decision",
+            "coverage-exclusion"
+          ]
+          .contains(&kind),
+          "{case}"
+        );
+      }
+      "unverified" => {
+        let kind = case["reason"]["kind"]
+          .as_str()
+          .unwrap_or_else(|| panic!("理由がある: {case}"));
+        assert!(
+          ["unimplemented-constraint-words", "not-executed"].contains(&kind),
+          "{case}"
+        );
+      }
       other => panic!("成功にも失敗にもならない: {other} {case}"),
     }
   }
@@ -178,9 +187,9 @@ fn should_cli_accepts_dynamodb_backend_and_reports_without_connecting() {
   );
   let report = execution.report();
   assert_eq!(report["backend"], "dynamodb");
-  assert_eq!(count_status(&report, "passed"), 0);
+  assert_eq!(count_status(&report, "passed"), 9);
   assert_eq!(
-    count_status(&report, "not-applicable") + count_status(&report, "unverified"),
+    count_status(&report, "passed") + count_status(&report, "not-applicable") + count_status(&report, "unverified"),
     116
   );
 }
@@ -194,7 +203,7 @@ fn should_cli_with_require_all_exits_with_failure_because_cases_are_unverified()
   let execution = execute_on_real_data("cli-require-all", &["--backend", "memory", "--require-all"]);
 
   assert_eq!(execution.code(), Some(1));
-  assert_eq!(count_status(&execution.report(), "passed"), 0);
+  assert_eq!(count_status(&execution.report(), "passed"), 9);
 }
 
 #[test]
@@ -392,7 +401,7 @@ fn should_cli_reports_unknown_manifest_field_as_a_failed_verification() {
 // 一覧に正しい形で載っていないファイルは、読まずに照合の不一致として報告する
 // ---------------------------------------------------------------------------
 
-/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、116 ケースのどれも成功していないことを確かめる。
+/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、116 ケースのうち値の表の `buildAid` の 9 件だけが成功していることを確かめる。
 fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &str) {
   let stderr = String::from_utf8_lossy(&execution.output.stderr);
   assert_eq!(
@@ -406,7 +415,7 @@ fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &
   let problems = report["data"]["manifest"]["problems"].to_string();
   assert!(problems.contains(problem_path), "{problems}");
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 116);
-  assert_eq!(count_status(&report, "passed"), 0);
+  assert_eq!(count_status(&report, "passed"), 9);
 }
 
 #[test]

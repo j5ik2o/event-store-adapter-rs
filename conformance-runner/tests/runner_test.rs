@@ -1,5 +1,5 @@
-//! ケースの分類（対象外・未検証・失敗）と、保存先に依存しない準備の試験。
-//! 保存先にはまだつながないので、成功（`passed`）は 1 件も出ない。
+//! ケースの分類（対象外・未検証・失敗・成功）と、保存先に依存しない準備の試験。
+//! 保存先にはまだつながないので、成功（`passed`）は値の表の `buildAid` の 9 件だけである。
 
 use std::path::{Path, PathBuf};
 
@@ -531,23 +531,90 @@ fn should_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
 }
 
 #[test]
-fn should_run_reports_no_success_for_memory_and_leaves_the_rest_unverified() {
+fn should_run_reports_the_build_aid_success_for_memory_and_leaves_the_rest_unverified() {
   let data = real_data();
 
   let reports = run(&data, &target_memory::TARGET);
 
-  // (passed, failed, not-applicable, unverified)
-  assert_eq!(counts(&reports), (0, 0, 58, 58));
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。
+  assert_eq!(counts(&reports), (9, 0, 58, 49));
 }
 
 #[test]
-fn should_run_reports_no_success_for_dynamodb_and_leaves_the_rest_unverified() {
+fn should_run_reports_the_build_aid_success_for_dynamodb_and_leaves_the_rest_unverified() {
   let data = real_data();
 
   let reports = run(&data, &target_dynamodb::TARGET);
 
-  // (passed, failed, not-applicable, unverified)
-  assert_eq!(counts(&reports), (0, 0, 14, 102));
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。
+  assert_eq!(counts(&reports), (9, 0, 14, 93));
+}
+
+// buildAid の 9 件が両保存先で成功する。
+#[test]
+fn should_run_marks_build_aid_cases_as_passed_on_every_backend() {
+  let data = real_data();
+  let ids: Vec<&str> = data
+    .cases
+    .iter()
+    .filter(|case| case.body.get("operation") == Some(&json!("buildAid")))
+    .map(|case| case.id.as_str())
+    .collect();
+  assert_eq!(ids.len(), 9);
+
+  for target in TARGETS {
+    let reports = run(&data, target);
+    for id in &ids {
+      assert_eq!(outcome_of(&reports, id), &CaseOutcome::Passed, "{} {id}", target.name);
+    }
+  }
+}
+
+// buildAid の契約違反は分類と規則を伴い、規則はデータの期待と一致する。
+#[test]
+fn should_run_reports_build_aid_contract_violation_with_rule_and_message() {
+  let data = real_data();
+  let reports = run(&data, &target_memory::TARGET);
+
+  let case = data
+    .cases
+    .iter()
+    .find(|case| case.id == "aid-hyphen-type")
+    .expect("aid-hyphen-type がある");
+  let expected_rule = case
+    .body
+    .pointer("/expect/error/rule")
+    .and_then(Value::as_str)
+    .expect("期待する規則がある");
+  assert_eq!(expected_rule, "T-11");
+
+  assert_eq!(outcome_of(&reports, "aid-hyphen-type"), &CaseOutcome::Passed);
+}
+
+// 実行器は型名と値から aid を組み立て、利用者の文字列化（user_string）に依存しない。
+#[test]
+fn should_run_build_aid_uses_type_name_and_value_not_user_string() {
+  let data = real_data();
+  let case = data
+    .cases
+    .iter()
+    .find(|case| case.id == "aid-library-format")
+    .expect("aid-library-format がある");
+  let user_string = case
+    .body
+    .pointer("/input/user_string")
+    .and_then(Value::as_str)
+    .expect("user_string がある");
+  let expected = case
+    .body
+    .pointer("/expect/value")
+    .and_then(Value::as_str)
+    .expect("期待する aid がある");
+  assert!(!expected.contains(user_string), "期待する aid は user_string と異なる");
+
+  let reports = run(&data, &target_memory::TARGET);
+
+  assert_eq!(outcome_of(&reports, "aid-library-format"), &CaseOutcome::Passed);
 }
 
 #[test]
