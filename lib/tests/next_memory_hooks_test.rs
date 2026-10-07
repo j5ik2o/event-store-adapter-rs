@@ -9,8 +9,8 @@ use event_store_adapter_rs::next::memory::{EventStoreForMemory, MemoryStorage, M
 use event_store_adapter_rs::next::retention::RetentionSettings;
 use event_store_adapter_rs::next::seq_nr::SeqNr;
 use std::sync::{
-  atomic::{AtomicBool, Ordering},
-  Arc,
+  atomic::{AtomicBool, AtomicUsize, Ordering},
+  Arc, Mutex,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +29,12 @@ struct Hooks {
   commit: AtomicBool,
   events: AtomicBool,
   snapshot: AtomicBool,
+  query: AtomicBool,
+  delete: AtomicBool,
+  duplicate_history: AtomicBool,
+  just_written: Mutex<Option<SeqNr>>,
+  query_calls: AtomicUsize,
+  delete_calls: AtomicUsize,
 }
 fn failure(operation: StorageOperation) -> EventStoreError {
   EventStoreError::Storage {
@@ -56,6 +62,32 @@ impl MemoryTestHooks for Hooks {
   fn read_snapshot(&self, _: &AidString) -> Result<(), EventStoreError> {
     if self.snapshot.load(Ordering::SeqCst) {
       Err(failure(StorageOperation::LoadSnapshot))
+    } else {
+      Ok(())
+    }
+  }
+
+  fn retention_visible_history(
+    &self,
+    _: &AidString,
+    history: &[SeqNr],
+    just_written: Option<SeqNr>,
+  ) -> Result<Vec<SeqNr>, EventStoreError> {
+    self.query_calls.fetch_add(1, Ordering::SeqCst);
+    *self.just_written.lock().unwrap() = just_written;
+    if self.query.load(Ordering::SeqCst) {
+      Err(failure(StorageOperation::Append))
+    } else if self.duplicate_history.load(Ordering::SeqCst) {
+      Ok(history.iter().chain(history).copied().collect())
+    } else {
+      Ok(history.to_vec())
+    }
+  }
+
+  fn retention_delete(&self, _: &AidString, _: &[SeqNr]) -> Result<(), EventStoreError> {
+    self.delete_calls.fetch_add(1, Ordering::SeqCst);
+    if self.delete.load(Ordering::SeqCst) {
+      Err(failure(StorageOperation::Append))
     } else {
       Ok(())
     }
@@ -108,6 +140,8 @@ async fn should_hook_before_commit_leave_all_records_unchanged_on_failure() {
   let history = storage.history_view(&aid).unwrap();
   let previous = store.get_latest_snapshot_by_id(&Id).await.unwrap();
   hooks.commit.store(true, Ordering::SeqCst);
+  let query_calls = hooks.query_calls.load(Ordering::SeqCst);
+  let delete_calls = hooks.delete_calls.load(Ordering::SeqCst);
   assert!(matches!(
     store
       .persist_event_and_snapshot(event(2), SnapshotEnvelope::new(2, 2))
@@ -123,6 +157,92 @@ async fn should_hook_before_commit_leave_all_records_unchanged_on_failure() {
     vec![event(1)]
   );
   assert_eq!(storage.history_view(&aid).unwrap(), history);
+  assert_eq!(hooks.query_calls.load(Ordering::SeqCst), query_calls);
+  assert_eq!(hooks.delete_calls.load(Ordering::SeqCst), delete_calls);
+}
+
+#[tokio::test]
+async fn should_retry_query_failure_on_next_event_only_append_in_same_storage() {
+  retry_retention_failure(true, false).await;
+}
+
+#[tokio::test]
+async fn should_retry_delete_failure_on_next_event_only_append_in_same_storage() {
+  retry_retention_failure(false, false).await;
+}
+
+#[tokio::test]
+async fn should_retry_query_failure_with_duplicate_history_on_event_only_append_in_same_storage() {
+  retry_retention_failure(true, true).await;
+}
+
+#[tokio::test]
+async fn should_retry_delete_failure_with_duplicate_history_on_event_only_append_in_same_storage() {
+  retry_retention_failure(false, true).await;
+}
+
+async fn retry_retention_failure(query: bool, duplicate_history: bool) {
+  let (hooks, storage, store) = setup(RetentionSettings::keep_latest(1));
+  let aid = AidString::from_aggregate_id(&Id).unwrap();
+  store
+    .persist_event_and_snapshot(event(1), SnapshotEnvelope::new(1, 1))
+    .await
+    .unwrap();
+  assert_eq!(storage.history_view(&aid).unwrap(), vec![1]);
+  let fault = if query { &hooks.query } else { &hooks.delete };
+  fault.store(true, Ordering::SeqCst);
+  store
+    .persist_event_and_snapshot(event(2), SnapshotEnvelope::new(2, 2))
+    .await
+    .unwrap();
+  assert_eq!(storage.history_view(&aid).unwrap(), vec![1, 2]);
+  let read = store.get_latest_snapshot_by_id(&Id).await.unwrap().unwrap();
+  assert_eq!(read.head_seq_nr(), 2);
+  assert_eq!(read.snapshot().unwrap().aggregate(), &2);
+  assert_eq!(
+    store.get_events_by_id_since_seq_nr(&Id, 0).await.unwrap(),
+    vec![event(1), event(2)]
+  );
+  assert_eq!(hooks.delete_calls.load(Ordering::SeqCst), usize::from(!query));
+  fault.store(false, Ordering::SeqCst);
+  hooks.duplicate_history.store(duplicate_history, Ordering::SeqCst);
+  store.persist_event(event(3)).await.unwrap();
+  assert_eq!(*hooks.just_written.lock().unwrap(), None);
+  assert_eq!(storage.history_view(&aid).unwrap(), vec![2]);
+  let read = store.get_latest_snapshot_by_id(&Id).await.unwrap().unwrap();
+  assert_eq!(read.head_seq_nr(), 3);
+  assert_eq!(read.snapshot().unwrap().seq_nr(), 2);
+  assert_eq!(read.snapshot().unwrap().aggregate(), &2);
+  assert_eq!(
+    store.get_events_by_id_since_seq_nr(&Id, 0).await.unwrap(),
+    vec![event(1), event(2), event(3)]
+  );
+}
+
+#[tokio::test]
+async fn should_keep_latest_history_with_duplicate_query_results() {
+  for keep in [1, 2] {
+    let (hooks, storage, store) = setup(RetentionSettings::keep_latest(keep));
+    let aid = AidString::from_aggregate_id(&Id).unwrap();
+    hooks.duplicate_history.store(true, Ordering::SeqCst);
+    for seq in 1..=4 {
+      store
+        .persist_event_and_snapshot(event(seq), SnapshotEnvelope::new(seq, seq))
+        .await
+        .unwrap();
+      let first = seq.saturating_sub(keep as u64 - 1).max(1);
+      assert_eq!(storage.history_view(&aid).unwrap(), (first..=seq).collect::<Vec<_>>());
+      assert_eq!(*hooks.just_written.lock().unwrap(), Some(seq));
+      let read = store.get_latest_snapshot_by_id(&Id).await.unwrap().unwrap();
+      assert_eq!(read.head_seq_nr(), seq);
+      assert_eq!(read.snapshot().unwrap().seq_nr(), seq);
+      assert_eq!(read.snapshot().unwrap().aggregate(), &seq);
+      assert_eq!(
+        store.get_events_by_id_since_seq_nr(&Id, 0).await.unwrap(),
+        (1..=seq).map(event).collect::<Vec<_>>()
+      );
+    }
+  }
 }
 #[tokio::test]
 async fn should_hook_read_allow_event_and_snapshot_reads() {
