@@ -12,5 +12,7 @@ sha2 = "0.11"
 thiserror = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
 # スキーマの検査。配布物の `schema/` を `$id` で手元に登録して参照を解決するので、HTTP・ファイルでの取得の機能は有効にしない。
 jsonschema = { version = "=0.20.0", default-features = false }

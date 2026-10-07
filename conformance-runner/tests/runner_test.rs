@@ -1,5 +1,5 @@
 //! ケースの分類（対象外・未検証・失敗・成功）と、保存先に依存しない準備の試験。
-//! メモリは実操作に接続して54件が成功する。DynamoDBは未接続で、値の表の `buildAid` の9件だけが成功する。
+//! メモリは実操作に接続して58件が成功する。DynamoDBは未接続で、値の表の `buildAid` の9件だけが成功する。
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -773,13 +773,13 @@ fn should_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
 }
 
 #[test]
-fn should_run_reports_memory_writes_and_reads_and_leaves_retention_unverified() {
+fn should_run_reports_memory_writes_reads_retention_and_notifications() {
   let data = real_data();
 
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
-  // (passed, failed, not-applicable, unverified)。保持・通知の4件を未検証に残す。
-  assert_eq!(counts(&reports), (54, 0, 58, 4));
+  // (passed, failed, not-applicable, unverified)。保持・通知の4件も実操作で成功する。
+  assert_eq!(counts(&reports), (58, 0, 58, 0));
 }
 
 #[test]

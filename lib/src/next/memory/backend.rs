@@ -1,8 +1,9 @@
-use super::storage::{MemoryStorage, StoredEvent, StoredSnapshot};
+use super::storage::{MemoryStorage, Records, StoredEvent, StoredSnapshot};
 use crate::next::{
   aggregate_id::{AggregateId, AidString},
-  error::{ContractRule, EventStoreError, StorageOperation},
+  error::{ContractRule, EventStoreError, RetentionFailure, StorageOperation},
   event_envelope::{EventEnvelope, SnapshotEnvelope, SnapshotRead},
+  retention::select_expired_history_after_append,
   seq_nr::SeqNr,
   serializer::{EventSerializer, SnapshotSerializer},
   storage_backend::{AppendReceipt, AppendRequest, StorageBackend},
@@ -72,6 +73,8 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Stora
       hooks.before_commit(request.aid, event.seq_nr)?;
     }
     let record = records.entry(request.aid.clone()).or_default();
+    let seq_nr = event.seq_nr;
+    let just_written = snapshot.as_ref().map(|s| s.seq_nr);
     record.events.insert(event.seq_nr, event);
     if let Some(snapshot) = snapshot {
       if self.storage.inner.retention.keep_snapshot_count().is_some() {
@@ -80,7 +83,7 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Stora
       record.snapshot = Some(snapshot);
     }
     Ok(AppendReceipt {
-      retention_failure: None,
+      retention_failure: self.retain_history(request.aid, seq_nr, just_written, record),
     })
   }
 
@@ -135,5 +138,53 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Stora
         })
       })
       .collect()
+  }
+}
+
+impl<A, P> MemoryBackend<A, P> {
+  fn retain_history(
+    &self,
+    aid: &AidString,
+    seq_nr: SeqNr,
+    just_written: Option<SeqNr>,
+    record: &mut Records,
+  ) -> Option<RetentionFailure> {
+    #[cfg(not(feature = "test-hooks"))]
+    let _ = (aid, seq_nr);
+    let keep = self.storage.inner.retention.keep_snapshot_count()?;
+    let visible: Vec<_> = record.history.keys().copied().collect();
+    #[cfg(feature = "test-hooks")]
+    let visible = if let Some(hooks) = &self.storage.inner.hooks {
+      match hooks.retention_visible_history(aid, &visible, just_written) {
+        Ok(visible) => visible,
+        Err(error) => return Some(retention_failure(aid, seq_nr, "retention-query", error)),
+      }
+    } else {
+      visible
+    };
+    let expired = select_expired_history_after_append(&visible, just_written, keep);
+    if expired.is_empty() {
+      return None;
+    }
+    #[cfg(feature = "test-hooks")]
+    if let Some(hooks) = &self.storage.inner.hooks {
+      if let Err(error) = hooks.retention_delete(aid, &expired) {
+        return Some(retention_failure(aid, seq_nr, "retention-delete", error));
+      }
+    }
+    for seq_nr in expired {
+      record.history.remove(&seq_nr);
+    }
+    None
+  }
+}
+
+#[cfg(feature = "test-hooks")]
+fn retention_failure(aid: &AidString, seq_nr: SeqNr, phase: &str, error: EventStoreError) -> RetentionFailure {
+  RetentionFailure {
+    aid: aid.as_str().to_owned(),
+    seq_nr,
+    phase: phase.to_owned(),
+    error: error.to_string(),
   }
 }

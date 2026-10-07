@@ -1,5 +1,7 @@
 //! 新契約のインメモリ保存先。
 mod backend;
+#[cfg(test)]
+mod retention_test;
 mod storage;
 use crate::next::{
   aggregate_id::AggregateId,
@@ -21,6 +23,21 @@ pub trait MemoryTestHooks: std::fmt::Debug + Send + Sync {
   fn before_commit(&self, aid: &crate::next::aggregate_id::AidString, seq_nr: SeqNr) -> Result<(), EventStoreError>;
   fn read_events(&self, aid: &crate::next::aggregate_id::AidString) -> Result<(), EventStoreError>;
   fn read_snapshot(&self, aid: &crate::next::aggregate_id::AidString) -> Result<(), EventStoreError>;
+  fn retention_visible_history(
+    &self,
+    _aid: &crate::next::aggregate_id::AidString,
+    history: &[SeqNr],
+    _just_written: Option<SeqNr>,
+  ) -> Result<Vec<SeqNr>, EventStoreError> {
+    Ok(history.to_vec())
+  }
+  fn retention_delete(
+    &self,
+    _aid: &crate::next::aggregate_id::AidString,
+    _seq_nrs: &[SeqNr],
+  ) -> Result<(), EventStoreError> {
+    Ok(())
+  }
 }
 pub struct EventStoreForMemory<AID, A, P> {
   inner: GenericEventStore<AID, A, P, MemoryBackend<A, P>>,

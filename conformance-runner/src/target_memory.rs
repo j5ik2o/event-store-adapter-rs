@@ -13,11 +13,13 @@ use event_store_adapter_rs::next::{
   serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer},
 };
 use serde_json::{json, Value};
+use tracing::Instrument;
 
 use crate::{
   compare::json_equal,
   data::{Case, CaseKind},
   fault::{FaultKind, Injection, OperationFaults, Phase},
+  notifications::OperationNotifications,
   number::to_integer,
   report::{CaseOutcome, ObservedValues, UnverifiedReason},
   runner::{PreparedCase, Target},
@@ -53,6 +55,7 @@ type Store = EventStoreForMemory<CaseId, Value, Value>;
 #[derive(Debug)]
 struct Callbacks {
   faults: Mutex<OperationFaults>,
+  invalid_response: Mutex<Option<String>>,
 }
 
 impl Callbacks {
@@ -86,7 +89,7 @@ impl Callbacks {
         phase: SerializationPhase::DeserializeSnapshot,
         source,
       },
-      Phase::Commit => EventStoreError::Storage {
+      Phase::Commit | Phase::RetentionDelete => EventStoreError::Storage {
         operation: StorageOperation::Append,
         source,
       },
@@ -115,6 +118,66 @@ impl MemoryTestHooks for Callbacks {
   fn read_snapshot(&self, _: &AidString) -> Result<(), EventStoreError> {
     self.inject(Phase::ReadSnapshot)
   }
+
+  fn retention_visible_history(
+    &self,
+    _: &AidString,
+    history: &[u64],
+    just_written: Option<u64>,
+  ) -> Result<Vec<u64>, EventStoreError> {
+    let fault = self
+      .faults
+      .lock()
+      .expect("障害消費のロック")
+      .start_application(Phase::RetentionQuery)
+      .cloned();
+    let Some(fault) = fault else {
+      return Ok(history.to_vec());
+    };
+    let result = if fault.kind == FaultKind::SdkResponse {
+      visible_history(&fault.details, history, just_written)
+    } else {
+      return Err(EventStoreError::Storage {
+        operation: StorageOperation::Append,
+        source: Box::new(std::io::Error::other(
+          fault.details["message"].as_str().unwrap_or("injected fault").to_owned(),
+        )),
+      });
+    };
+    result.map_err(|message| {
+      *self.invalid_response.lock().expect("応答検査のロック") = Some(message.clone());
+      EventStoreError::Storage {
+        operation: StorageOperation::Append,
+        source: Box::new(std::io::Error::other(message)),
+      }
+    })
+  }
+
+  fn retention_delete(&self, _: &AidString, _: &[u64]) -> Result<(), EventStoreError> {
+    self.inject(Phase::RetentionDelete)
+  }
+}
+
+fn visible_history(details: &Value, history: &[u64], just_written: Option<u64>) -> Result<Vec<u64>, String> {
+  let mut visible = Vec::new();
+  for page in required(details, "history_pages")?
+    .as_array()
+    .ok_or("history_pages が配列ではない")?
+  {
+    for value in page.as_array().ok_or("履歴ページが配列ではない")? {
+      let seq_nr = seq(value)?;
+      if !history.contains(&seq_nr) {
+        return Err(format!("応答計画の履歴 {seq_nr} が対象集約の保存済み履歴にない"));
+      }
+      visible.push(seq_nr);
+    }
+  }
+  if details.get("omit_just_written_history").and_then(Value::as_bool) == Some(true)
+    && just_written.is_some_and(|seq_nr| visible.contains(&seq_nr))
+  {
+    return Err("省略指定の応答計画に今書いた履歴が含まれる".to_owned());
+  }
+  Ok(visible)
 }
 
 impl EventSerializer<Value> for Callbacks {
@@ -389,11 +452,27 @@ async fn step(store: &Store, body: &Value, step: &Value) -> Result<(Value, Optio
   compare_result(&expected, actual).map(|actual| (actual, observed_id))
 }
 
-fn observe(storage: &MemoryStorage, step: &Value, id: Option<&CaseId>) -> Result<(), ComparisonFailure> {
+fn observe(
+  storage: &MemoryStorage,
+  step: &Value,
+  id: Option<&CaseId>,
+  notifications: &[String],
+) -> Result<(), ComparisonFailure> {
   let Some(observe) = step.get("observe") else {
     return Ok(());
   };
   for (key, value) in observe.as_object().ok_or("observe がオブジェクトではない")? {
+    if key == "notifications" {
+      let actual = json!(notifications);
+      if !json_equal(value, &actual) {
+        return Err(ComparisonFailure {
+          detail: "通知が一致しない".to_owned(),
+          expected: Some(value.clone()),
+          actual: Some(actual),
+        });
+      }
+      continue;
+    }
     if key != "history" {
       return Err(format!("未対応の観測: {key}").into());
     }
@@ -428,27 +507,29 @@ fn observe(storage: &MemoryStorage, step: &Value, id: Option<&CaseId>) -> Result
 /// ケースごとに独立した保存先を作り、公開操作を順に実行する。
 pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
   let body = &prepared.body;
-  if matches!(case.kind, CaseKind::Scenario)
-    && body
-      .pointer("/store/retention_count")
-      .is_some_and(|v| !v.is_null() && to_integer(v).is_some_and(|n| n > 0))
-  {
-    return unverified("保持の間引きと失敗通知は次工程で実装するため、未検証");
-  }
   for fault in prepared.faults.faults() {
     let supported = match fault.phase {
       Phase::SerializeEvent | Phase::SerializeSnapshot | Phase::DeserializeEvent | Phase::DeserializeSnapshot => {
-        fault.kind == FaultKind::SerializationError
+        fault.kind == FaultKind::SerializationError && fault.injection == Injection::ReplaceRequest
       }
-      Phase::Commit | Phase::ReadEvents | Phase::ReadSnapshot => fault.kind == FaultKind::StorageError,
+      Phase::Commit | Phase::ReadEvents | Phase::ReadSnapshot | Phase::RetentionDelete => {
+        fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceRequest
+      }
+      Phase::RetentionQuery => {
+        (fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceRequest)
+          || (fault.kind == FaultKind::SdkResponse
+            && fault.injection == Injection::ReplaceResponse
+            && fault.details.get("history_pages").is_some())
+      }
       _ => false,
     };
-    if fault.operation == 0 || !supported || fault.injection != Injection::ReplaceRequest {
+    if fault.operation == 0 || !supported {
       return unverified("宣言された障害の段階・種類・方式へ未接続");
     }
   }
   let callbacks = Arc::new(Callbacks {
     faults: Mutex::new(prepared.faults.begin_operation(0)),
+    invalid_response: Mutex::new(None),
   });
   let settings = if matches!(case.kind, CaseKind::ValueTable) {
     Ok(RetentionSettings::current_only())
@@ -518,7 +599,12 @@ pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
       Err(e) => return failed(None, e.to_string()),
     };
     *callbacks.faults.lock().expect("障害消費のロック") = prepared.faults.begin_operation(operation);
-    let result = runtime.block_on(step(&store, body, input));
+    let notifications = match OperationNotifications::begin(&case.id, operation) {
+      Ok(notifications) => notifications,
+      Err(error) => return unverified(&error),
+    };
+    let result = runtime.block_on(step(&store, body, input).instrument(notifications.span()));
+    let notifications = notifications.finish();
     let faults = std::mem::replace(
       &mut *callbacks.faults.lock().expect("障害消費のロック"),
       prepared.faults.begin_operation(0),
@@ -535,9 +621,12 @@ pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
         unfired_faults,
       };
     }
+    if let Some(error) = callbacks.invalid_response.lock().expect("応答検査のロック").take() {
+      return failed(Some(operation), error);
+    }
     match result {
       Ok((_, id)) => {
-        if let Err(e) = observe(&storage, input, id.as_ref()) {
+        if let Err(e) = observe(&storage, input, id.as_ref(), &notifications) {
           return failed(Some(operation), e);
         }
       }

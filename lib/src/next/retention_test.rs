@@ -1,6 +1,13 @@
 use crate::next::error::{ConfigurationReason, EventStoreError};
 use crate::next::retention::{select_expired_history, ttl_expires_epoch_seconds, RetentionMode, RetentionSettings};
 
+#[test]
+fn should_select_expired_history_without_adding_event_only_append_number() {
+  let expired = super::retention::select_expired_history_after_append(&[1, 2, 3], None, 2);
+  assert_eq!(expired, vec![1]);
+  assert!(super::retention::select_expired_history_after_append(&[], None, 1).is_empty());
+}
+
 // S-1: 保持件数 0（`Some(0)`）は設定エラー。
 #[test]
 fn should_retention_settings_reject_zero_keep_count() {
@@ -79,6 +86,34 @@ fn should_select_expired_history_include_just_written_once() {
   let expired = select_expired_history(&visible, 3, 2);
 
   assert_eq!(expired, vec![1]);
+}
+
+#[test]
+fn should_select_expired_history_keep_just_written_with_duplicate_visible_numbers() {
+  assert!(select_expired_history(&[1, 1], 1, 1).is_empty());
+}
+
+#[test]
+fn should_select_expired_history_deduplicate_before_keeping_one() {
+  assert_eq!(select_expired_history(&[2, 2, 1], 2, 1), vec![1]);
+}
+
+#[test]
+fn should_select_expired_history_deduplicate_unsorted_numbers_before_keeping_two() {
+  assert_eq!(select_expired_history(&[3, 2, 3, 1, 2], 3, 2), vec![1]);
+  assert_eq!(select_expired_history(&[4, 1, 3, 2, 3, 1], 4, 2), vec![2, 1]);
+}
+
+#[test]
+fn should_select_expired_history_add_missing_just_written_and_deduplicate_visible_numbers() {
+  assert_eq!(select_expired_history(&[1, 1], 2, 1), vec![1]);
+}
+
+#[test]
+fn should_select_expired_history_deduplicate_on_event_only_append() {
+  let expired = super::retention::select_expired_history_after_append(&[2, 2, 1], None, 1);
+  assert_eq!(expired, vec![1]);
+  assert!(super::retention::select_expired_history_after_append(&[], None, 1).is_empty());
 }
 
 // S-2: 今書いた履歴が見えていなければ加えてから選ぶ。

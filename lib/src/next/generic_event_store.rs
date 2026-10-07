@@ -8,7 +8,7 @@ use crate::next::error::{ContractRule, EventStoreError};
 use crate::next::event_envelope::{EventEnvelope, SnapshotEnvelope, SnapshotRead};
 use crate::next::event_store::EventStore;
 use crate::next::seq_nr::{SeqNr, SEQ_NR_MAX};
-use crate::next::storage_backend::{AppendRequest, StorageBackend};
+use crate::next::storage_backend::{AppendReceipt, AppendRequest, StorageBackend};
 
 // 共通の入口検査（設計 2.8 の 1〜5）を 1 か所に置く。順序は
 // aid の組み立て（T-11・T-12）→ seq_nr の上限（T-9）→ イベントの seq_nr 0（W-6）→
@@ -131,7 +131,7 @@ where
 
   async fn persist_event(&self, event: EventEnvelope<Self::AID, Self::P>) -> Result<(), EventStoreError> {
     let aid = check_event(&event)?;
-    self
+    let receipt = self
       .backend
       .append(AppendRequest {
         aid: &aid,
@@ -139,6 +139,7 @@ where
         snapshot: None,
       })
       .await?;
+    notify_retention_failure(receipt);
     Ok(())
   }
 
@@ -148,7 +149,7 @@ where
     snapshot: SnapshotEnvelope<Self::A>,
   ) -> Result<(), EventStoreError> {
     let aid = check_event_and_snapshot(&event, &snapshot)?;
-    self
+    let receipt = self
       .backend
       .append(AppendRequest {
         aid: &aid,
@@ -156,6 +157,7 @@ where
         snapshot: Some(&snapshot),
       })
       .await?;
+    notify_retention_failure(receipt);
     Ok(())
   }
 
@@ -172,5 +174,22 @@ where
     let aid_string = AidString::from_aggregate_id(aid)?;
     check_read_seq_nr(seq_nr)?;
     self.backend.load_events(aid, &aid_string, seq_nr).await
+  }
+}
+
+fn notify_retention_failure(receipt: AppendReceipt) {
+  if let Some(failure) = receipt.retention_failure {
+    // 通知処理の失敗を、確定済みの追記へ戻さない（MEM-11）。
+    let _ = std::panic::catch_unwind(|| {
+      tracing::warn!(
+        target: "event_store_adapter::retention",
+        category = "retention-failure",
+        aid = %failure.aid,
+        seq_nr = failure.seq_nr,
+        phase = %failure.phase,
+        error = %failure.error,
+        "snapshot retention failed; the append was committed"
+      );
+    });
   }
 }

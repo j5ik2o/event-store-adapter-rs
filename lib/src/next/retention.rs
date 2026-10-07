@@ -85,11 +85,22 @@ impl RetentionSettings {
 /// 手順は「見える履歴を取る」「今書いた履歴を重ねずに加える」「降順に並べる」「新しい n 件を残し、
 /// それより古いものを選ぶ」である。戻り値は、新しい順に並べた「取り除く対象」の `seq_nr`。
 pub fn select_expired_history(visible: &[SeqNr], just_written: SeqNr, keep: usize) -> Vec<SeqNr> {
+  select_expired_history_after_append(visible, Some(just_written), keep)
+}
+
+pub(crate) fn select_expired_history_after_append(
+  visible: &[SeqNr],
+  just_written: Option<SeqNr>,
+  keep: usize,
+) -> Vec<SeqNr> {
   let mut history: Vec<SeqNr> = visible.to_vec();
-  if !history.contains(&just_written) {
-    history.push(just_written);
+  if let Some(just_written) = just_written {
+    if !history.contains(&just_written) {
+      history.push(just_written);
+    }
   }
   history.sort_unstable_by(|left, right| right.cmp(left));
+  history.dedup();
   history.into_iter().skip(keep).collect()
 }
 
