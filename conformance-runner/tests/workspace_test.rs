@@ -1,4 +1,4 @@
-//! workspace への組み込みと、公開しないこと、実行対象のライブラリに依存しない・その `test-hooks` を使わないことの試験。
+//! workspace への組み込みと、公開しないこと、実行対象のライブラリに依存し・その `test-hooks` を使わないことの試験。
 
 use std::path::Path;
 use std::process::Command;
@@ -62,7 +62,7 @@ fn requested_features(package: &Value, dependency_name: &str) -> Vec<String> {
 }
 
 #[test]
-fn should_runner_does_not_depend_on_the_library_under_test() {
+fn should_runner_depends_on_the_library_under_test() {
   let metadata = workspace_metadata();
 
   let package = runner_package(&metadata);
@@ -73,7 +73,7 @@ fn should_runner_does_not_depend_on_the_library_under_test() {
     .iter()
     .map(|dependency| dependency["name"].as_str().expect("name は文字列"))
     .collect();
-  assert!(!dependencies.contains(&"event-store-adapter-rs"), "{dependencies:?}");
+  assert!(dependencies.contains(&"event-store-adapter-rs"), "{dependencies:?}");
 }
 
 #[test]

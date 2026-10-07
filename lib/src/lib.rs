@@ -21,6 +21,8 @@ mod event_store_for_sqlite_test;
 mod event_store_test_support;
 mod generic_event_store;
 pub mod key_resolver;
+#[doc(hidden)]
+pub mod next;
 pub mod serializer;
 pub mod types;
 
