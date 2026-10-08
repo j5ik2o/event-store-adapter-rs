@@ -104,6 +104,75 @@ fn should_count_one_fault_fires_after_one_application() {
 }
 
 #[test]
+fn should_selection_leave_fault_unconsumed_until_completion() {
+  let plan = register(&case(1, vec![fault(1, "commit", count(1))]));
+  let operation = plan.begin_operation(1);
+
+  assert_eq!(operation.select_application(Phase::Commit).unwrap().index, 0);
+  assert_eq!(operation.select_application(Phase::Commit).unwrap().index, 0);
+  assert!(operation.select_application(Phase::ReadEvents).is_none());
+  assert_eq!(
+    operation.finish(),
+    Err(vec![unfired(0, 1, Phase::Commit, Repeat::Count { count: 1 }, 0)])
+  );
+}
+
+#[test]
+fn should_complete_selected_declaration_after_filtering_other_operations() {
+  let plan = register(&case(
+    2,
+    vec![
+      fault(0, "commit", count(1)),
+      fault(2, "commit", count(2)),
+      fault(2, "commit", count(1)),
+    ],
+  ));
+  let mut operation = plan.begin_operation(2);
+  let index = operation.select_application(Phase::Commit).unwrap().index;
+  assert_eq!(index, 1);
+
+  assert_eq!(operation.complete_application(index).unwrap().index, 1);
+  assert_eq!(operation.start_application(Phase::Commit).unwrap().index, 1);
+  assert!(operation.complete_application(index).is_none());
+  assert_eq!(operation.select_application(Phase::Commit).unwrap().index, 2);
+  assert_eq!(
+    operation.finish(),
+    Err(vec![unfired(2, 2, Phase::Commit, Repeat::Count { count: 1 }, 0)])
+  );
+}
+
+#[test]
+fn should_complete_until_operation_finishes_without_advancing_to_next_declaration() {
+  let plan = register(&case(
+    1,
+    vec![
+      fault(1, "commit", until_operation_finishes()),
+      fault(1, "commit", count(1)),
+    ],
+  ));
+  let mut operation = plan.begin_operation(1);
+
+  for _ in 0..3 {
+    let index = operation.select_application(Phase::Commit).unwrap().index;
+    assert_eq!(index, 0);
+    assert_eq!(operation.complete_application(index).unwrap().index, 0);
+  }
+  assert_eq!(
+    operation.finish(),
+    Err(vec![unfired(1, 1, Phase::Commit, Repeat::Count { count: 1 }, 0)])
+  );
+}
+
+#[test]
+#[should_panic(expected = "確定対象はこの操作で選択した障害")]
+fn should_reject_completion_of_a_declaration_from_another_operation() {
+  let plan = register(&case(2, vec![fault(1, "commit", count(1))]));
+  let mut operation = plan.begin_operation(2);
+
+  operation.complete_application(0);
+}
+
+#[test]
 fn should_count_two_fault_does_not_fire_after_one_application() {
   let plan = register(&case(1, vec![fault(1, "commit", count(2))]));
   let mut operation = plan.begin_operation(1);

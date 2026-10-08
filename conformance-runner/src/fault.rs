@@ -236,13 +236,34 @@ impl OperationFaults {
   /// 同じ段階の障害は、配列の順に、回数を使い切ってから次を使う。`until-operation-finishes` は使い切り
   /// にならない。適用できる障害がなければ `None` を返す。
   pub fn start_application(&mut self, phase: Phase) -> Option<&Fault> {
-    let (fault, applied) = self.entries.iter_mut().find(|(fault, applied)| {
-      fault.phase == phase
+    let index = self.select_application(phase)?.index;
+    self.complete_application(index)
+  }
+
+  /// 段階に適用できる障害を、適用回数を変えずに宣言順で選ぶ。
+  pub fn select_application(&self, phase: Phase) -> Option<&Fault> {
+    self.entries.iter().find_map(|(fault, applied)| {
+      (fault.phase == phase
         && match fault.repeat {
           Repeat::Count { count } => *applied < count,
           Repeat::UntilOperationFinishes => true,
-        }
-    })?;
+        })
+      .then_some(fault)
+    })
+  }
+
+  /// 選択した宣言の適用を確定する。既に回数を使い切った宣言は `None` を返す。
+  ///
+  /// `index` はこの操作の障害の宣言配列の位置でなければならない。
+  pub fn complete_application(&mut self, index: usize) -> Option<&Fault> {
+    let (fault, applied) = self
+      .entries
+      .iter_mut()
+      .find(|(fault, _)| fault.index == index)
+      .expect("確定対象はこの操作で選択した障害");
+    if matches!(fault.repeat, Repeat::Count { count } if *applied >= count) {
+      return None;
+    }
     *applied += 1;
     Some(fault)
   }

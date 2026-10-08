@@ -1,5 +1,12 @@
 //! DynamoDB の保存先の、ケースの分類に必要な値。
 
+mod request;
+mod response;
+mod transport;
+
+pub use request::{RequestLayout, RequestObservation};
+pub use transport::{FaultTransport, OperationGuard, OperationReport, TransportError};
+
 use crate::data::Case;
 use crate::report::{CaseOutcome, UnverifiedReason};
 use crate::runner::{PreparedCase, Target};
