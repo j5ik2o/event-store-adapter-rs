@@ -32,6 +32,7 @@ pub enum TransportError {
 }
 
 struct ActiveOperation {
+  identity: Arc<()>,
   faults: OperationFaults,
   requests: Vec<RequestObservation>,
 }
@@ -113,6 +114,7 @@ impl FaultTransport {
       return Err(TransportError::OperationActive);
     }
     *active = Some(ActiveOperation {
+      identity: Arc::new(()),
       faults: plan.begin_operation(operation),
       requests: Vec::new(),
     });
@@ -230,18 +232,33 @@ impl HttpConnector for FaultConnector {
       let fault = {
         let mut active = state.active.lock().expect("操作状態のロック");
         parsed.observation.phase.and_then(|phase| {
-          active
-            .as_mut()
-            .and_then(|active| active.faults.start_application(phase).cloned())
+          active.as_mut().and_then(|active| {
+            let fault = active.faults.select_application(phase)?.clone();
+            if fault.injection == Injection::ReplaceRequest {
+              active.faults.complete_application(fault.index);
+            }
+            Some((fault, active.identity.clone()))
+          })
         })
       };
       match fault {
         None => upstream.call(request).await,
-        Some(fault) => {
+        Some((fault, identity)) => {
           let response =
             error_response(&parsed, &fault).map_err(|error| ConnectorError::other(Box::new(error), None))?;
           if fault.injection == Injection::ReplaceResponse {
-            upstream.call(request).await?;
+            let upstream_response = upstream.call(request).await?;
+            let applied = state
+              .active
+              .lock()
+              .expect("操作状態のロック")
+              .as_mut()
+              .filter(|active| Arc::ptr_eq(&active.identity, &identity))
+              .and_then(|active| active.faults.complete_application(fault.index))
+              .is_some();
+            if !applied {
+              return Ok(upstream_response);
+            }
           }
           Ok(response)
         }

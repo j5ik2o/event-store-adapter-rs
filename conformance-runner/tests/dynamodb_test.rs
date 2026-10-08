@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::future::Future;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
@@ -29,7 +29,9 @@ const AID: &str = "Account-PAYLOAD_SENTINEL";
 struct Recorder {
   calls: Arc<AtomicUsize>,
   completed: Arc<Mutex<Vec<Value>>>,
-  fail: bool,
+  fail: Arc<AtomicBool>,
+  pause: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
+  started: Arc<tokio::sync::Notify>,
 }
 
 impl std::fmt::Debug for Recorder {
@@ -42,8 +44,13 @@ impl HttpConnector for Recorder {
   fn call(&self, request: HttpRequest) -> HttpConnectorFuture {
     self.calls.fetch_add(1, Ordering::SeqCst);
     let completed = self.completed.clone();
-    let fail = self.fail;
+    let fail = self.fail.load(Ordering::SeqCst);
+    let pause = self.pause.lock().unwrap().take();
+    self.started.notify_one();
     HttpConnectorFuture::new(async move {
+      if let Some(pause) = pause {
+        pause.notified().await;
+      }
       if fail {
         return Err(ConnectorError::other("upstream failure".into(), None));
       }
@@ -716,10 +723,10 @@ fn should_remove_until_operation_finishes_faults_after_finish_and_interruption()
 }
 
 #[test]
-fn should_preserve_upstream_transport_failure_when_replacing_a_response() {
+fn should_leave_response_fault_unfired_after_failed_transfer() {
   run(async {
     let (transport, client, recorder) = fixture_with(Recorder {
-      fail: true,
+      fail: Arc::new(AtomicBool::new(true)),
       ..Recorder::default()
     });
     let plan = plan(vec![once(
@@ -735,9 +742,285 @@ fn should_preserve_upstream_transport_failure_when_replacing_a_response() {
       .send()
       .await
       .unwrap_err();
-    assert!(error.as_service_error().is_none());
+    let report = operation.finish();
+    let calls = recorder.calls.load(Ordering::SeqCst);
+    let completed = recorder.completed.lock().unwrap().len();
+    println!("SDK={error:?}, upstream calls={calls}, completed={completed}, report={report:?}");
+    assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+    assert!(format!("{error:?}").contains("upstream failure"));
+    assert_eq!(calls, 1);
+    assert_eq!(completed, 0);
+    assert_eq!(report.requests.len(), 1);
+    assert_eq!(report.unfired.len(), 1);
+    assert_eq!(report.unfired[0].index, 0);
+    assert_eq!(report.unfired[0].operation, 1);
+    assert_eq!(report.unfired[0].phase, Phase::Commit);
+    assert_eq!(report.unfired[0].declared, Repeat::Count { count: 1 });
+    assert_eq!(report.unfired[0].applied, 0);
+  });
+}
+
+#[test]
+fn should_retry_response_fault_and_consume_counts_before_next_declaration_on_same_client() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![
+      fault(
+        1,
+        "commit",
+        "replace-response",
+        json!({"mode": "count", "count": 2}),
+        json!({"code": "InternalServerError"}),
+      ),
+      once(
+        1,
+        "commit",
+        "replace-request",
+        json!({"code": "ProvisionedThroughputExceededException"}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    recorder.fail.store(true, Ordering::SeqCst);
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 1);
     assert!(recorder.completed.lock().unwrap().is_empty());
-    assert_eq!(operation.finish().requests.len(), 1);
+    recorder.fail.store(false, Ordering::SeqCst);
+    for (expected, calls, completed) in [
+      ("InternalServerError", 2, 1),
+      ("InternalServerError", 3, 2),
+      ("ProvisionedThroughputExceededException", 3, 2),
+    ] {
+      let error = client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+        .unwrap_err();
+      let code = error.as_service_error().unwrap().code();
+      let actual_calls = recorder.calls.load(Ordering::SeqCst);
+      let actual_completed = recorder.completed.lock().unwrap().len();
+      println!("SDK code={code:?}, upstream calls={actual_calls}, completed={actual_completed}");
+      assert_eq!(code, Some(expected));
+      assert_eq!(actual_calls, calls);
+      assert_eq!(actual_completed, completed);
+    }
+    client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap();
+    let report = operation.finish();
+    assert_eq!(report.requests.len(), 5);
+    assert!(report.unfired.is_empty());
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(
+      *recorder.completed.lock().unwrap(),
+      [1, 2, 4].map(|index| report.requests[index].body.clone())
+    );
+    let next = transport.begin_operation(&plan, 2).unwrap();
+    client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap();
+    assert!(next.finish().unfired.is_empty());
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 5);
+    assert_eq!(recorder.completed.lock().unwrap().len(), 4);
+  });
+}
+
+#[test]
+fn should_report_only_successful_response_replacements_in_partial_count() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![fault(
+      1,
+      "commit",
+      "replace-response",
+      json!({"mode": "count", "count": 2}),
+      json!({"code": "InternalServerError"}),
+    )]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    for fail in [true, false] {
+      recorder.fail.store(fail, Ordering::SeqCst);
+      let error = client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+        .unwrap_err();
+      if fail {
+        assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+      } else {
+        assert!(error.as_service_error().unwrap().is_internal_server_error());
+      }
+    }
+    let report = operation.finish();
+    println!("partial count report={report:?}");
+    assert_eq!(report.requests.len(), 2);
+    assert_eq!(report.unfired.len(), 1);
+    assert_eq!(report.unfired[0].declared, Repeat::Count { count: 2 });
+    assert_eq!(report.unfired[0].applied, 1);
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+      *recorder.completed.lock().unwrap(),
+      vec![report.requests[1].body.clone()]
+    );
+  });
+}
+
+#[test]
+fn should_apply_response_fault_until_finish_and_clear_it_after_finish_or_interruption() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![fault(
+      1,
+      "commit",
+      "replace-response",
+      json!({"mode": "until-operation-finishes"}),
+      json!({"code": "InternalServerError"}),
+    )]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    recorder.fail.store(true, Ordering::SeqCst);
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+    let report = operation.finish();
+    println!("until-operation-finishes failure report={report:?}");
+    assert_eq!(report.unfired.len(), 1);
+    assert_eq!(report.unfired[0].applied, 0);
+    assert_eq!(report.unfired[0].declared, Repeat::UntilOperationFinishes);
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 1);
+    assert!(recorder.completed.lock().unwrap().is_empty());
+    for interrupt in [false, true] {
+      let operation = transport.begin_operation(&plan, 1).unwrap();
+      for fail in [true, false, false] {
+        recorder.fail.store(fail, Ordering::SeqCst);
+        let error = client
+          .transact_write_items()
+          .set_transact_items(Some(write_actions()))
+          .send()
+          .await
+          .unwrap_err();
+        if fail {
+          assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+        } else {
+          assert!(error.as_service_error().unwrap().is_internal_server_error());
+        }
+      }
+      if interrupt {
+        drop(operation);
+      } else {
+        let report = operation.finish();
+        assert_eq!(report.requests.len(), 3);
+        assert!(report.unfired.is_empty());
+      }
+      let next = transport.begin_operation(&plan, 2).unwrap();
+      client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+        .unwrap();
+      assert!(next.finish().unfired.is_empty());
+    }
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 9);
+    assert_eq!(recorder.completed.lock().unwrap().len(), 6);
+  });
+}
+
+#[test]
+fn should_not_complete_a_delayed_response_fault_in_a_new_operation() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![once(
+      1,
+      "commit",
+      "replace-response",
+      json!({"code": "InternalServerError"}),
+    )]);
+    for interrupt in [false, true] {
+      let operation = transport.begin_operation(&plan, 1).unwrap();
+      let release = Arc::new(tokio::sync::Notify::new());
+      *recorder.pause.lock().unwrap() = Some(release.clone());
+      let task_client = client.clone();
+      let pending = tokio::spawn(async move {
+        task_client
+          .transact_write_items()
+          .set_transact_items(Some(write_actions()))
+          .send()
+          .await
+      });
+      recorder.started.notified().await;
+      if interrupt {
+        drop(operation);
+      } else {
+        let report = operation.finish();
+        assert_eq!(report.requests.len(), 1);
+        assert_eq!(report.unfired.len(), 1);
+        assert_eq!(report.unfired[0].applied, 0);
+      }
+      let next = transport.begin_operation(&plan, 1).unwrap();
+      release.notify_one();
+      pending.await.unwrap().unwrap();
+      let report = next.finish();
+      assert!(report.requests.is_empty());
+      assert_eq!(report.unfired.len(), 1);
+      assert_eq!(report.unfired[0].applied, 0);
+    }
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(recorder.completed.lock().unwrap().len(), 2);
+  });
+}
+
+#[test]
+fn should_not_exceed_response_fault_count_when_transfers_overlap() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![once(
+      1,
+      "commit",
+      "replace-response",
+      json!({"code": "InternalServerError"}),
+    )]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(release.clone());
+    let task_client = client.clone();
+    let pending = tokio::spawn(async move {
+      task_client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+    });
+    recorder.started.notified().await;
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert!(error.as_service_error().unwrap().is_internal_server_error());
+    release.notify_one();
+    pending.await.unwrap().unwrap();
+    let report = operation.finish();
+    assert_eq!(report.requests.len(), 2);
+    assert!(report.unfired.is_empty());
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(recorder.completed.lock().unwrap().len(), 2);
   });
 }
 
