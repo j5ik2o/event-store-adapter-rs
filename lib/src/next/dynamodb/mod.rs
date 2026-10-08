@@ -2,8 +2,10 @@
 
 mod configuration;
 mod configuration_create;
+mod item_size;
 #[cfg(test)]
 mod open_test;
+mod persist_event;
 
 use std::marker::PhantomData;
 use std::sync::Arc;
