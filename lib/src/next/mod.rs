@@ -1,6 +1,8 @@
 //! 次のメジャー版の中核。旧 API との共存のため `#[doc(hidden)]` で公開し、PR 20 で直下へ移す。
 
 pub mod aggregate_id;
+#[cfg(feature = "dynamodb")]
+pub mod dynamodb;
 pub mod error;
 pub mod event_envelope;
 pub mod event_store;

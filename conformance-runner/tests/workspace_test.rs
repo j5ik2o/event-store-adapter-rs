@@ -136,3 +136,21 @@ fn should_library_not_enable_test_hooks_by_default() {
   let defaults = library["features"]["default"].as_array().unwrap();
   assert!(!defaults.iter().any(|feature| feature == "test-hooks"));
 }
+
+#[test]
+fn should_configuration_read_test_require_the_opt_in_dynamodb_feature() {
+  let package = runner_package(&workspace_metadata());
+  assert_eq!(package["features"]["default"], json!([]));
+  assert_eq!(
+    package["features"]["dynamodb"],
+    json!(["event-store-adapter-rs/dynamodb"])
+  );
+  assert!(!requested_features(&package, "event-store-adapter-rs").contains(&"dynamodb".to_string()));
+  let target = package["targets"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|target| target["name"] == "dynamodb_config_read_test")
+    .unwrap();
+  assert_eq!(target["required-features"], json!(["dynamodb"]));
+}

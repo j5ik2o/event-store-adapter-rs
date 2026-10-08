@@ -81,6 +81,15 @@ pub(super) struct Action {
 pub(super) struct ParsedRequest {
   pub observation: RequestObservation,
   pub actions: Vec<Action>,
+  pub configuration_keys: Vec<ConfigurationKey>,
+}
+
+#[derive(Clone)]
+pub(super) struct ConfigurationKey {
+  pub table_name: String,
+  pub table: &'static str,
+  pub key: Value,
+  pub selector: String,
 }
 
 fn invalid(message: &'static str) -> TransportError {
@@ -193,16 +202,17 @@ fn transactions(layout: &RequestLayout, body: &Value) -> Result<(Option<Phase>, 
   ))
 }
 
-fn batch_get(layout: &RequestLayout, body: &Value) -> Result<Option<Phase>, TransportError> {
+fn batch_get(layout: &RequestLayout, body: &Value) -> Result<(Option<Phase>, Vec<ConfigurationKey>), TransportError> {
   let tables = body
     .get("RequestItems")
     .and_then(Value::as_object)
     .filter(|tables| !tables.is_empty())
     .ok_or_else(|| invalid("RequestItemsが空、またはオブジェクトではない"))?;
   let mut configuration = None;
+  let mut configuration_keys = Vec::new();
   for (name, request) in tables {
     let Some(table) = layout.table(name) else {
-      return Ok(None);
+      return Ok((None, Vec::new()));
     };
     let keys = request
       .get("Keys")
@@ -215,21 +225,35 @@ fn batch_get(layout: &RequestLayout, body: &Value) -> Result<Option<Phase>, Tran
         return Err(invalid("設定と通常の読み取りが混在"));
       }
       if !is_config && (table == "journal" || (table == "snapshot" && number(key, "skey")? != 0)) {
-        return Ok(None);
+        return Ok((None, Vec::new()));
+      }
+      if is_config {
+        configuration_keys.push(ConfigurationKey {
+          table_name: name.clone(),
+          table,
+          key: key.clone(),
+          selector: if table == "head" {
+            "head:__config__".into()
+          } else {
+            format!("{table}:__config__:0")
+          },
+        });
       }
       configuration = Some(is_config);
     }
   }
-  Ok(Some(if configuration == Some(true) {
-    Phase::ConfigurationRead
-  } else {
-    Phase::ReadSnapshot
-  }))
+  Ok((
+    Some(if configuration == Some(true) {
+      Phase::ConfigurationRead
+    } else {
+      Phase::ReadSnapshot
+    }),
+    configuration_keys,
+  ))
 }
 
 fn phase(layout: &RequestLayout, api: &str, body: &Value) -> Result<Option<Phase>, TransportError> {
   match api {
-    "BatchGetItem" => batch_get(layout, body),
     "Query" => {
       let table = body.get("TableName").and_then(Value::as_str);
       let index = body.get("IndexName").and_then(Value::as_str);
@@ -324,10 +348,14 @@ pub(super) fn parse(layout: &RequestLayout, request: &HttpRequest) -> Result<Par
     .bytes()
     .ok_or_else(|| invalid("要求本文がバッファではない"))?;
   let body: Value = serde_json::from_slice(bytes).map_err(|_| invalid("要求本文がJSONではない"))?;
-  let (phase, actions) = if api == "TransactWriteItems" {
-    transactions(layout, &body)?
+  let (phase, actions, configuration_keys) = if api == "TransactWriteItems" {
+    let (phase, actions) = transactions(layout, &body)?;
+    (phase, actions, Vec::new())
+  } else if api == "BatchGetItem" {
+    let (phase, keys) = batch_get(layout, &body)?;
+    (phase, Vec::new(), keys)
   } else {
-    (phase(layout, api, &body)?, Vec::new())
+    (phase(layout, api, &body)?, Vec::new(), Vec::new())
   };
   Ok(ParsedRequest {
     observation: RequestObservation {
@@ -336,5 +364,6 @@ pub(super) fn parse(layout: &RequestLayout, request: &HttpRequest) -> Result<Par
       phase,
     },
     actions,
+    configuration_keys,
   })
 }

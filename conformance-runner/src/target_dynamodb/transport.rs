@@ -8,15 +8,16 @@ use aws_smithy_runtime_api::client::http::{
 };
 use aws_smithy_runtime_api::client::interceptors::context::BeforeTransmitInterceptorContextRef;
 use aws_smithy_runtime_api::client::interceptors::Intercept;
-use aws_smithy_runtime_api::client::orchestrator::HttpRequest;
+use aws_smithy_runtime_api::client::orchestrator::{HttpRequest, HttpResponse};
 use aws_smithy_runtime_api::client::result::ConnectorError;
 use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
 use aws_smithy_types::config_bag::ConfigBag;
 use aws_smithy_types::retry::RetryConfig;
+use aws_smithy_types::{body::SdkBody, byte_stream::ByteStream};
 
 use super::request::{parse, RequestLayout, RequestObservation};
-use super::response::error_response;
-use crate::fault::{FaultKind, FaultPlan, Injection, OperationFaults, UnfiredFault};
+use super::response::{error_response, prepare_response, ResponseReplacement};
+use crate::fault::{FaultKind, FaultPlan, Injection, OperationFaults, Phase, UnfiredFault};
 
 /// 要求層の登録・解析・操作境界の失敗を表す。本文や障害詳細を含めない。
 #[derive(Debug, thiserror::Error)]
@@ -103,7 +104,10 @@ impl FaultTransport {
       .iter()
       .filter(|fault| fault.operation == operation)
       .any(|fault| {
-        !matches!(fault.kind, FaultKind::StorageError | FaultKind::SdkError)
+        !(matches!(fault.kind, FaultKind::StorageError | FaultKind::SdkError)
+          || (fault.kind == FaultKind::SdkResponse
+            && fault.phase == Phase::ConfigurationRead
+            && fault.injection == Injection::ReplaceResponse))
           || fault.details.get("install_items").is_some()
       })
     {
@@ -217,6 +221,11 @@ struct FaultConnector {
   upstream: SharedHttpConnector,
 }
 
+enum PreparedReplacement {
+  Request(HttpResponse),
+  Response(ResponseReplacement),
+}
+
 impl fmt::Debug for FaultConnector {
   fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
     f.write_str("DynamoDbFaultConnector")
@@ -234,7 +243,10 @@ impl HttpConnector for FaultConnector {
         parsed.observation.phase.and_then(|phase| {
           active.as_mut().and_then(|active| {
             let fault = active.faults.select_application(phase)?.clone();
-            let response = error_response(&parsed, &fault);
+            let response = match fault.injection {
+              Injection::ReplaceRequest => error_response(&parsed, &fault).map(PreparedReplacement::Request),
+              Injection::ReplaceResponse => prepare_response(&parsed, &fault).map(PreparedReplacement::Response),
+            };
             if fault.injection == Injection::ReplaceRequest && response.is_ok() {
               active.faults.complete_application(fault.index);
             }
@@ -246,34 +258,47 @@ impl HttpConnector for FaultConnector {
         None => upstream.call(request).await,
         Some((fault, response, identity)) => {
           let response = response.map_err(|error| ConnectorError::other(Box::new(error), None))?;
-          if fault.injection == Injection::ReplaceResponse {
-            let upstream_response = upstream.call(request).await?;
-            let mut active = state.active.lock().expect("操作状態のロック");
-            let Some(active) = active
-              .as_mut()
-              .filter(|active| Arc::ptr_eq(&active.identity, &identity))
-            else {
-              return Ok(upstream_response);
-            };
-            let Some(next_fault) = active
-              .faults
-              .select_application(fault.phase)
-              .filter(|fault| fault.injection == Injection::ReplaceResponse)
-            else {
-              return Ok(upstream_response);
-            };
-            let index = next_fault.index;
-            let response = if index == fault.index {
-              response
-            } else {
-              error_response(&parsed, next_fault).map_err(|error| ConnectorError::other(Box::new(error), None))?
-            };
-            active
-              .faults
-              .complete_application(index)
-              .expect("同じロック内で選択した未消費の障害");
-            return Ok(response);
+          let response = match response {
+            PreparedReplacement::Request(response) => return Ok(response),
+            PreparedReplacement::Response(response) => response,
+          };
+          let mut upstream_response = upstream.call(request).await?;
+          if fault.phase == Phase::ConfigurationRead {
+            let body = std::mem::replace(upstream_response.body_mut(), SdkBody::taken());
+            let bytes = ByteStream::new(body)
+              .collect()
+              .await
+              .map_err(|error| ConnectorError::other(Box::new(error), None))?
+              .into_bytes();
+            *upstream_response.body_mut() = SdkBody::from(bytes);
           }
+          let mut active = state.active.lock().expect("操作状態のロック");
+          let Some(active) = active
+            .as_mut()
+            .filter(|active| Arc::ptr_eq(&active.identity, &identity))
+          else {
+            return Ok(upstream_response);
+          };
+          let Some(next_fault) = active
+            .faults
+            .select_application(fault.phase)
+            .filter(|fault| fault.injection == Injection::ReplaceResponse)
+          else {
+            return Ok(upstream_response);
+          };
+          let index = next_fault.index;
+          let response = if index == fault.index {
+            response
+          } else {
+            prepare_response(&parsed, next_fault).map_err(|error| ConnectorError::other(Box::new(error), None))?
+          };
+          let response = response
+            .apply(&upstream_response)
+            .map_err(|error| ConnectorError::other(Box::new(error), None))?;
+          active
+            .faults
+            .complete_application(index)
+            .expect("同じロック内で選択した未消費の障害");
           Ok(response)
         }
       }
