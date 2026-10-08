@@ -134,3 +134,26 @@ fn should_storage_display_include_operation_without_source_text() {
   assert!(text.contains("append"));
   assert!(!text.contains("connection reset by peer"));
 }
+
+#[test]
+fn should_configuration_read_errors_keep_the_existing_categories_and_safe_display() {
+  for reason in [
+    ConfigurationReason::MissingRetrySleeper,
+    ConfigurationReason::DuplicateDynamoDbTableNames,
+    ConfigurationReason::PartialDynamoDbConfiguration,
+    ConfigurationReason::DynamoDbStoreIdMismatch,
+    ConfigurationReason::UnsupportedDynamoDbLayoutVersion,
+  ] {
+    let reason_text = reason.to_string();
+    let error = EventStoreError::Configuration { reason };
+    assert!(error.to_string().contains(&reason_text));
+    assert!(matches!(error, EventStoreError::Configuration { .. }));
+  }
+  let error = EventStoreError::Storage {
+    operation: StorageOperation::ReadConfiguration,
+    source: Box::new(std::io::Error::other("http://SECRET_ENDPOINT SDK_SENTINEL")),
+  };
+  assert!(error.to_string().contains("read-configuration"));
+  assert!(!error.to_string().contains("SECRET_ENDPOINT"));
+  assert!(!error.to_string().contains("SDK_SENTINEL"));
+}

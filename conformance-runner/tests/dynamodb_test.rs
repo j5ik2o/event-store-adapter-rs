@@ -32,6 +32,8 @@ struct Recorder {
   fail: Arc<AtomicBool>,
   pause: Arc<Mutex<Option<Arc<tokio::sync::Notify>>>>,
   started: Arc<tokio::sync::Notify>,
+  body: Arc<Mutex<Option<Value>>>,
+  status: Arc<AtomicUsize>,
 }
 
 impl std::fmt::Debug for Recorder {
@@ -46,6 +48,8 @@ impl HttpConnector for Recorder {
     let completed = self.completed.clone();
     let fail = self.fail.load(Ordering::SeqCst);
     let pause = self.pause.lock().unwrap().take();
+    let body = self.body.lock().unwrap().clone().unwrap_or_else(|| json!({}));
+    let status = self.status.load(Ordering::SeqCst);
     self.started.notify_one();
     HttpConnectorFuture::new(async move {
       if let Some(pause) = pause {
@@ -58,7 +62,14 @@ impl HttpConnector for Recorder {
         .lock()
         .unwrap()
         .push(serde_json::from_slice(request.body().bytes().unwrap()).unwrap());
-      Ok(Response::new(StatusCode::try_from(200).unwrap(), SdkBody::from("{}")))
+      let mut response = Response::new(
+        StatusCode::try_from(if status == 0 { 200 } else { status as u16 }).unwrap(),
+        SdkBody::from(body.to_string()),
+      );
+      response
+        .headers_mut()
+        .insert("content-length", body.to_string().len().to_string());
+      Ok(response)
     })
   }
 }
@@ -167,6 +178,257 @@ async fn transact_codes(client: &Client, actions: Vec<TransactWriteItem>) -> Vec
 
 fn reason(target: &str, code: &str) -> Value {
   json!({"target": target, "code": code})
+}
+
+fn configuration_fault(responses: &[&str], unprocessed: &[&str], count: u32) -> Value {
+  let responses: serde_json::Map<String, Value> = responses
+    .iter()
+    .map(|table| ((*table).into(), json!("seed-config")))
+    .collect();
+  json!({"operation": 1, "phase": "configuration-read", "kind": "sdk-response", "injection": "replace-response", "repeat": {"mode": "count", "count": count}, "details": {"responses": responses, "unprocessed_keys": unprocessed}})
+}
+
+fn configuration_upstream() -> Value {
+  json!({"Responses": {
+    JOURNAL: [{"aid": {"S": "__config__"}, "seq_nr": {"N": "0"}, "store_id": {"S": "SEED_VALUE_SENTINEL"}, "layout_version": {"N": "1"}, "seed_marker": {"S": "actual-upstream-field"}}],
+    SNAPSHOT: [{"aid": {"S": "__config__"}, "skey": {"N": "0"}, "store_id": {"S": "SEED_VALUE_SENTINEL"}, "layout_version": {"N": "1"}}],
+    HEAD: [{"aid": {"S": "__config__"}, "store_id": {"S": "SEED_VALUE_SENTINEL"}, "layout_version": {"N": "1"}}]
+  }, "UnprocessedKeys": {}})
+}
+
+async fn configuration_batch(
+  client: &Client,
+  tables: &[&str],
+) -> Result<
+  aws_sdk_dynamodb::operation::batch_get_item::BatchGetItemOutput,
+  aws_sdk_dynamodb::error::SdkError<aws_sdk_dynamodb::operation::batch_get_item::BatchGetItemError>,
+> {
+  let request = tables
+    .iter()
+    .map(|table| {
+      let sort = match *table {
+        JOURNAL => Some(("seq_nr", "0")),
+        SNAPSHOT => Some(("skey", "0")),
+        HEAD => None,
+        _ => panic!("unknown fixture table"),
+      };
+      (
+        (*table).into(),
+        KeysAndAttributes::builder()
+          .keys(key("__config__", sort))
+          .consistent_read(true)
+          .build()
+          .unwrap(),
+      )
+    })
+    .collect();
+  client.batch_get_item().set_request_items(Some(request)).send().await
+}
+
+#[test]
+fn should_configuration_response_preserve_upstream_seed_and_strong_pending_keys() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    *recorder.body.lock().unwrap() = Some(configuration_upstream());
+    let plan = plan(vec![configuration_fault(
+      &["journal"],
+      &["snapshot:__config__:0", "head:__config__"],
+      1,
+    )]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let output = configuration_batch(&client, &[HEAD, JOURNAL, SNAPSHOT]).await.unwrap();
+    let responses = output.responses().unwrap();
+    assert_eq!(responses.len(), 1);
+    assert_eq!(
+      responses[JOURNAL][0]["store_id"],
+      AttributeValue::S("SEED_VALUE_SENTINEL".into())
+    );
+    assert_eq!(
+      responses[JOURNAL][0]["seed_marker"],
+      AttributeValue::S("actual-upstream-field".into())
+    );
+    let pending = output.unprocessed_keys().unwrap();
+    assert_eq!(pending.len(), 2);
+    for (table, sort) in [(SNAPSHOT, Some(("skey", "0"))), (HEAD, None)] {
+      assert_eq!(pending[table].keys(), &[key("__config__", sort)]);
+      assert_eq!(pending[table].consistent_read(), Some(true));
+    }
+    assert_eq!(recorder.completed.lock().unwrap().len(), 1);
+    let report = operation.finish();
+    assert!(report.unfired.is_empty());
+    assert_eq!(report.requests[0].body, recorder.completed.lock().unwrap()[0]);
+    assert_eq!(
+      configuration_batch(&client, &[HEAD, JOURNAL, SNAPSHOT])
+        .await
+        .unwrap()
+        .responses()
+        .unwrap()
+        .len(),
+      3
+    );
+  });
+}
+
+#[test]
+fn should_configuration_response_reject_invalid_plans_before_transfer() {
+  run(async {
+    for details in [
+      json!({"responses": [], "unprocessed_keys": []}),
+      json!({"responses": {}, "unprocessed_keys": "head:__config__"}),
+      json!({"responses": {"head": "stored-head"}, "unprocessed_keys": []}),
+      json!({"responses": {"unknown": "seed-config"}, "unprocessed_keys": []}),
+      json!({"responses": {"snapshot": "seed-config"}, "unprocessed_keys": []}),
+      json!({"responses": {}, "unprocessed_keys": ["snapshot:__config__:0"]}),
+      json!({"responses": {}, "unprocessed_keys": ["head:__config__", "head:__config__"]}),
+      json!({"responses": {"head": "seed-config"}, "unprocessed_keys": ["head:__config__"]}),
+      json!({"responses": {}, "unprocessed_keys": ["head:other"]}),
+    ] {
+      let (transport, client, recorder) = fixture();
+      let mut fault = configuration_fault(&[], &[], 1);
+      fault["details"] = details;
+      let plan = plan(vec![fault]);
+      let operation = transport.begin_operation(&plan, 1).unwrap();
+      assert!(configuration_batch(&client, &[JOURNAL, HEAD]).await.is_err());
+      assert_eq!(recorder.calls.load(Ordering::SeqCst), 0);
+      assert_eq!(operation.finish().unfired[0].applied, 0);
+    }
+  });
+}
+
+#[test]
+fn should_configuration_response_require_a_successful_transfer_and_real_unique_seed() {
+  run(async {
+    let mut absent = configuration_upstream();
+    absent["Responses"][JOURNAL] = json!([]);
+    let mut wrong_key = configuration_upstream();
+    wrong_key["Responses"][JOURNAL][0]["seq_nr"]["N"] = json!("1");
+    let mut duplicate = configuration_upstream();
+    duplicate["Responses"][JOURNAL]
+      .as_array_mut()
+      .unwrap()
+      .push(configuration_upstream()["Responses"][JOURNAL][0].clone());
+    for (body, status) in [
+      (json!({}), 200),
+      (absent, 200),
+      (wrong_key, 200),
+      (duplicate, 200),
+      (configuration_upstream(), 500),
+    ] {
+      let (transport, client, recorder) = fixture();
+      *recorder.body.lock().unwrap() = Some(body);
+      recorder.status.store(status, Ordering::SeqCst);
+      let plan = plan(vec![configuration_fault(&["journal"], &[], 1)]);
+      let operation = transport.begin_operation(&plan, 1).unwrap();
+      assert!(configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD]).await.is_err());
+      assert_eq!(recorder.completed.lock().unwrap().len(), 1);
+      assert_eq!(operation.finish().unfired[0].applied, 0);
+    }
+  });
+}
+
+#[test]
+fn should_configuration_response_count_only_successful_replacements_and_clear_on_drop() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    *recorder.body.lock().unwrap() = Some(configuration_upstream());
+    let plan = plan(vec![
+      configuration_fault(&["journal"], &[], 2),
+      configuration_fault(&["head"], &[], 1),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    recorder.fail.store(true, Ordering::SeqCst);
+    assert!(configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD]).await.is_err());
+    recorder.fail.store(false, Ordering::SeqCst);
+    for expected in [JOURNAL, JOURNAL, HEAD] {
+      let output = configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD]).await.unwrap();
+      assert_eq!(output.responses().unwrap().len(), 1);
+      assert!(output.responses().unwrap().contains_key(expected));
+    }
+    assert!(operation.finish().unfired.is_empty());
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    drop(operation);
+    assert_eq!(
+      configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD])
+        .await
+        .unwrap()
+        .responses()
+        .unwrap()
+        .len(),
+      3
+    );
+  });
+}
+
+#[test]
+fn should_configuration_response_revalidate_reselected_fault_against_the_sent_keys() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    *recorder.body.lock().unwrap() = Some(configuration_upstream());
+    let plan = plan(vec![
+      configuration_fault(&["journal"], &[], 1),
+      configuration_fault(&["head"], &[], 1),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let pause = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(pause.clone());
+    let delayed_client = client.clone();
+    let delayed = tokio::spawn(async move { configuration_batch(&delayed_client, &[JOURNAL]).await });
+    recorder.started.notified().await;
+    assert!(configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD])
+      .await
+      .unwrap()
+      .responses()
+      .unwrap()
+      .contains_key(JOURNAL));
+    pause.notify_one();
+    assert!(delayed.await.unwrap().is_err(), "再選択されたheadは遅延要求にない");
+    assert!(configuration_batch(&client, &[HEAD])
+      .await
+      .unwrap()
+      .responses()
+      .unwrap()
+      .contains_key(HEAD));
+    let report = operation.finish();
+    assert_eq!(report.requests.len(), 3);
+    assert!(report.unfired.is_empty());
+  });
+}
+
+#[test]
+fn should_configuration_response_preserve_a_delayed_transfer_after_operation_change() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    *recorder.body.lock().unwrap() = Some(configuration_upstream());
+    let plan = plan(vec![configuration_fault(&["journal"], &[], 1)]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let pause = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(pause.clone());
+    let delayed_client = client.clone();
+    let delayed = tokio::spawn(async move { configuration_batch(&delayed_client, &[JOURNAL, SNAPSHOT, HEAD]).await });
+    recorder.started.notified().await;
+    assert_eq!(operation.finish().unfired[0].applied, 0);
+    let next = transport.begin_operation(&plan, 1).unwrap();
+    pause.notify_one();
+    assert_eq!(delayed.await.unwrap().unwrap().responses().unwrap().len(), 3);
+    assert_eq!(next.finish().unfired[0].applied, 0);
+  });
+}
+
+#[test]
+fn should_configuration_response_leave_cancelled_transfer_unfired() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    *recorder.body.lock().unwrap() = Some(configuration_upstream());
+    let plan = plan(vec![configuration_fault(&[], &["journal:__config__:0"], 1)]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    *recorder.pause.lock().unwrap() = Some(Arc::new(tokio::sync::Notify::new()));
+    let delayed = tokio::spawn(async move { configuration_batch(&client, &[JOURNAL]).await });
+    recorder.started.notified().await;
+    delayed.abort();
+    assert!(delayed.await.unwrap_err().is_cancelled());
+    assert_eq!(operation.finish().unfired[0].applied, 0);
+    assert!(recorder.completed.lock().unwrap().is_empty());
+  });
 }
 
 #[test]

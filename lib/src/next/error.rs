@@ -60,6 +60,7 @@ impl fmt::Display for SerializationPhase {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum StorageOperation {
+  ReadConfiguration,
   Append,
   LoadSnapshot,
   LoadEvents,
@@ -68,6 +69,7 @@ pub enum StorageOperation {
 impl fmt::Display for StorageOperation {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     let text = match self {
+      StorageOperation::ReadConfiguration => "read-configuration",
       StorageOperation::Append => "append",
       StorageOperation::LoadSnapshot => "load-snapshot",
       StorageOperation::LoadEvents => "load-events",
@@ -84,6 +86,16 @@ pub enum ConfigurationReason {
   KeepSnapshotCountZero,
   /// メモリで保持件数があるときの TTL 方式（MEM-3・MEM-12）。
   TtlWithKeepSnapshotCount,
+  /// SDK Client の設定に待ちの仕組みがない（設計 2.12.1）。
+  MissingRetrySleeper,
+  /// ３表の役割に同じ表名が指定されている（DY-8・SP-1）。
+  DuplicateDynamoDbTableNames,
+  /// ３表の一部だけに設定項目がある（DY-8）。
+  PartialDynamoDbConfiguration,
+  /// ３設定項目の store_id が一致しない（DY-8）。
+  DynamoDbStoreIdMismatch,
+  /// 設定項目の layout_version が版1ではない（DY-8）。
+  UnsupportedDynamoDbLayoutVersion,
 }
 
 impl fmt::Display for ConfigurationReason {
@@ -94,6 +106,17 @@ impl fmt::Display for ConfigurationReason {
       }
       ConfigurationReason::TtlWithKeepSnapshotCount => {
         formatter.write_str("retention mode ttl cannot be combined with a snapshot history count on the memory backend")
+      }
+      ConfigurationReason::MissingRetrySleeper => formatter.write_str("DynamoDB client has no retry sleeper"),
+      ConfigurationReason::DuplicateDynamoDbTableNames => {
+        formatter.write_str("DynamoDB journal, snapshot, and head table names must be distinct")
+      }
+      ConfigurationReason::PartialDynamoDbConfiguration => {
+        formatter.write_str("DynamoDB configuration exists in only some tables")
+      }
+      ConfigurationReason::DynamoDbStoreIdMismatch => formatter.write_str("DynamoDB configuration store_id mismatch"),
+      ConfigurationReason::UnsupportedDynamoDbLayoutVersion => {
+        formatter.write_str("DynamoDB configuration layout_version must be 1")
       }
     }
   }

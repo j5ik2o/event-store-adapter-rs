@@ -4,6 +4,14 @@ version = "0.0.1"
 edition = "2021"
 publish = false
 
+[features]
+default = []
+dynamodb = ["event-store-adapter-rs/dynamodb"]
+
+[[test]]
+name = "dynamodb_config_read_test"
+required-features = ["dynamodb"]
+
 [dependencies]
 event-store-adapter-rs = { path = "../lib", features = ["test-hooks"] }
 serde = { workspace = true, features = ["derive"] }
@@ -19,3 +27,9 @@ aws-smithy-runtime-api = { version = "1.19.0", features = ["client"] }
 aws-smithy-types = "1.8.1"
 # スキーマの検査。配布物の `schema/` を `$id` で手元に登録して参照を解決するので、HTTP・ファイルでの取得の機能は有効にしない。
 jsonschema = { version = "=0.20.0", default-features = false }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+event-store-adapter-test-utils-rs = { path = "../test-utils" }
+testcontainers = { workspace = true }
+aws-smithy-http-client = { version = "1.5.0", features = ["default-client", "rt-tokio"] }
