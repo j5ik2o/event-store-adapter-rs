@@ -201,7 +201,7 @@ async fn configuration_batch(
   tables: &[&str],
 ) -> Result<
   aws_sdk_dynamodb::operation::batch_get_item::BatchGetItemOutput,
-  aws_sdk_dynamodb::error::SdkError<aws_sdk_dynamodb::operation::batch_get_item::BatchGetItemError>,
+  Box<aws_sdk_dynamodb::error::SdkError<aws_sdk_dynamodb::operation::batch_get_item::BatchGetItemError>>,
 > {
   let request = tables
     .iter()
@@ -222,7 +222,12 @@ async fn configuration_batch(
       )
     })
     .collect();
-  client.batch_get_item().set_request_items(Some(request)).send().await
+  client
+    .batch_get_item()
+    .set_request_items(Some(request))
+    .send()
+    .await
+    .map_err(Box::new)
 }
 
 #[test]
@@ -323,6 +328,86 @@ fn should_configuration_response_require_a_successful_transfer_and_real_unique_s
       assert_eq!(recorder.completed.lock().unwrap().len(), 1);
       assert_eq!(operation.finish().unfired[0].applied, 0);
     }
+
+    let (transport, client, recorder) = fixture();
+    *recorder.body.lock().unwrap() = Some(configuration_upstream());
+    let observed = configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD]).await.unwrap();
+    assert_eq!(observed.responses().unwrap().len(), 3);
+    let measured_responses: serde_json::Map<String, Value> = observed
+      .responses()
+      .unwrap()
+      .iter()
+      .map(|(table, items)| {
+        let items: Vec<Value> = items
+          .iter()
+          .map(|item| {
+            let attributes: serde_json::Map<String, Value> = item
+              .iter()
+              .map(|(name, value)| {
+                let value = match value {
+                  AttributeValue::S(value) => json!({"S": value}),
+                  AttributeValue::N(value) => json!({"N": value}),
+                  _ => panic!("設定fixtureの実測属性が文字列・数値ではない"),
+                };
+                (name.clone(), value)
+              })
+              .collect();
+            Value::Object(attributes)
+          })
+          .collect();
+        (table.clone(), Value::Array(items))
+      })
+      .collect();
+    let upstream_body = json!({"Responses": measured_responses, "UnprocessedKeys": {}});
+    let sent = recorder.completed.lock().unwrap()[0]["RequestItems"].clone();
+    for (pending_tables, responses, unprocessed) in [
+      (vec![JOURNAL, SNAPSHOT, HEAD], vec![], vec![]),
+      (vec![HEAD], vec!["journal"], vec!["head:__config__"]),
+      (vec![HEAD], vec!["journal"], vec!["snapshot:__config__:0"]),
+    ] {
+      let mut body = upstream_body.clone();
+      let mut pending = serde_json::Map::new();
+      for table in &pending_tables {
+        body["Responses"].as_object_mut().unwrap().remove(*table);
+        pending.insert((*table).into(), sent[*table].clone());
+      }
+      body["UnprocessedKeys"] = Value::Object(pending);
+      *recorder.body.lock().unwrap() = Some(body);
+      let observed = configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD]).await.unwrap();
+      let actual_pending = observed.unprocessed_keys().unwrap();
+      println!("SDK upstream UnprocessedKeys={actual_pending:?}");
+      assert_eq!(actual_pending.len(), pending_tables.len());
+      for table in &pending_tables {
+        assert!(actual_pending.contains_key(*table));
+        assert_eq!(actual_pending[*table].consistent_read(), Some(true));
+      }
+      assert_eq!(observed.responses().unwrap().len(), 3 - pending_tables.len());
+      let plan = plan(vec![configuration_fault(&responses, &unprocessed, 1)]);
+      let operation = transport.begin_operation(&plan, 1).unwrap();
+      let calls = recorder.calls.load(Ordering::SeqCst);
+      let error = configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD])
+        .await
+        .unwrap_err();
+      let aws_sdk_dynamodb::error::SdkError::DispatchFailure(failure) = error.as_ref() else {
+        panic!("実未処理を含む応答の加工失敗がSDKへ伝播していない: {error:?}");
+      };
+      let source = std::error::Error::source(failure.as_connector_error().unwrap()).unwrap();
+      assert!(matches!(
+        source.downcast_ref::<TransportError>(),
+        Some(TransportError::InvalidFault(_))
+      ));
+      assert_eq!(recorder.calls.load(Ordering::SeqCst), calls + 1);
+      let report = operation.finish();
+      assert_eq!(report.requests.len(), 1);
+      assert_eq!(report.unfired.len(), 1);
+      assert_eq!(report.unfired[0].applied, 0);
+    }
+    recorder.status.store(500, Ordering::SeqCst);
+    *recorder.body.lock().unwrap() = Some(json!({"__type": "InternalServerError"}));
+    let error = configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD])
+      .await
+      .unwrap_err();
+    assert_eq!(error.as_service_error().unwrap().code(), Some("InternalServerError"));
   });
 }
 
@@ -337,7 +422,14 @@ fn should_configuration_response_count_only_successful_replacements_and_clear_on
     ]);
     let operation = transport.begin_operation(&plan, 1).unwrap();
     recorder.fail.store(true, Ordering::SeqCst);
-    assert!(configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD]).await.is_err());
+    let error = configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD])
+      .await
+      .unwrap_err();
+    assert!(matches!(
+      error.as_ref(),
+      aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)
+    ));
+    assert!(format!("{error:?}").contains("upstream failure"));
     recorder.fail.store(false, Ordering::SeqCst);
     for expected in [JOURNAL, JOURNAL, HEAD] {
       let output = configuration_batch(&client, &[JOURNAL, SNAPSHOT, HEAD]).await.unwrap();

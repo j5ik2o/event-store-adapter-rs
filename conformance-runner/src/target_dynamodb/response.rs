@@ -197,6 +197,13 @@ impl ResponseReplacement {
       .bytes()
       .ok_or_else(|| invalid("設定の実応答がバッファではない"))?;
     let mut body: Value = serde_json::from_slice(bytes).map_err(|_| invalid("設定の実応答がJSONではない"))?;
+    if body
+      .get("UnprocessedKeys")
+      .and_then(Value::as_object)
+      .is_some_and(|pending| !pending.is_empty())
+    {
+      return Err(invalid("設定の実応答に未処理キーがある"));
+    }
     let mut returned = serde_json::Map::new();
     for key in responses {
       let items = body
