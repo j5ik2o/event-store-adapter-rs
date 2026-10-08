@@ -234,18 +234,18 @@ impl HttpConnector for FaultConnector {
         parsed.observation.phase.and_then(|phase| {
           active.as_mut().and_then(|active| {
             let fault = active.faults.select_application(phase)?.clone();
-            if fault.injection == Injection::ReplaceRequest {
+            let response = error_response(&parsed, &fault);
+            if fault.injection == Injection::ReplaceRequest && response.is_ok() {
               active.faults.complete_application(fault.index);
             }
-            Some((fault, active.identity.clone()))
+            Some((fault, response, active.identity.clone()))
           })
         })
       };
       match fault {
         None => upstream.call(request).await,
-        Some((fault, identity)) => {
-          let response =
-            error_response(&parsed, &fault).map_err(|error| ConnectorError::other(Box::new(error), None))?;
+        Some((fault, response, identity)) => {
+          let response = response.map_err(|error| ConnectorError::other(Box::new(error), None))?;
           if fault.injection == Injection::ReplaceResponse {
             let upstream_response = upstream.call(request).await?;
             let applied = state

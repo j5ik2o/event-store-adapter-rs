@@ -374,34 +374,52 @@ fn should_match_configuration_targets_in_actual_request_order() {
 #[test]
 fn should_reject_duplicate_missing_and_unmatched_reason_targets() {
   run(async {
-    for reasons in [
-      vec![reason("head", "None"), reason("head", "TransactionConflict")],
-      vec![reason("journal", "None")],
-      vec![reason("journal", "None"), reason("history-snapshot", "None")],
-      vec![
-        reason("journal", "None"),
-        reason("head", "None"),
-        reason("current-snapshot", "None"),
-      ],
-      vec![reason("journal", "None"), reason("head", "ConditionalCheckFailed")],
-    ] {
-      let (transport, client, recorder) = fixture();
-      let plan = plan(vec![once(
-        1,
-        "commit",
-        "replace-request",
-        json!({"code": "TransactionCanceledException", "cancellation_reasons": reasons}),
-      )]);
-      let operation = transport.begin_operation(&plan, 1).unwrap();
-      let error = client
-        .transact_write_items()
-        .set_transact_items(Some(write_actions()))
-        .send()
-        .await
-        .unwrap_err();
-      assert!(error.as_service_error().is_none());
-      assert!(recorder.completed.lock().unwrap().is_empty());
-      operation.finish();
+    for injection in ["replace-response", "replace-request"] {
+      for (case, reasons) in [
+        vec![reason("head", "None"), reason("head", "TransactionConflict")],
+        vec![reason("journal", "None")],
+        vec![reason("journal", "None"), reason("history-snapshot", "None")],
+        vec![
+          reason("journal", "None"),
+          reason("head", "None"),
+          reason("current-snapshot", "None"),
+        ],
+        vec![reason("journal", "None"), reason("head", "ConditionalCheckFailed")],
+      ]
+      .into_iter()
+      .enumerate()
+      {
+        let (transport, client, recorder) = fixture();
+        let plan = plan(vec![once(
+          1,
+          "commit",
+          injection,
+          json!({"code": "TransactionCanceledException", "cancellation_reasons": reasons}),
+        )]);
+        let operation = transport.begin_operation(&plan, 1).unwrap();
+        let error = client
+          .transact_write_items()
+          .set_transact_items(Some(write_actions()))
+          .send()
+          .await
+          .unwrap_err();
+        let report = operation.finish();
+        let calls = recorder.calls.load(Ordering::SeqCst);
+        let completed = recorder.completed.lock().unwrap().len();
+        println!(
+          "injection={injection}, reason case={case}, SDK={error:?}, upstream calls={calls}, completed={completed}, report={report:?}"
+        );
+        assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+        assert_eq!(calls, 0);
+        assert_eq!(completed, 0);
+        assert_eq!(report.requests.len(), 1);
+        assert_eq!(report.unfired.len(), 1);
+        assert_eq!(report.unfired[0].index, 0);
+        assert_eq!(report.unfired[0].operation, 1);
+        assert_eq!(report.unfired[0].phase, Phase::Commit);
+        assert_eq!(report.unfired[0].declared, Repeat::Count { count: 1 });
+        assert_eq!(report.unfired[0].applied, 0);
+      }
     }
   });
 }
@@ -1136,27 +1154,37 @@ fn should_reject_ambiguous_actions_and_invalid_configuration_keys_before_transfe
 #[test]
 fn should_reject_invalid_error_headers_without_panicking_or_transferring() {
   run(async {
-    let (transport, client, recorder) = fixture();
-    let operation = transport
-      .begin_operation(
-        &plan(vec![once(
+    for injection in ["replace-response", "replace-request"] {
+      let (transport, client, recorder) = fixture();
+      let operation = transport
+        .begin_operation(
+          &plan(vec![once(1, "commit", injection, json!({"code": "bad\nheader"}))]),
           1,
-          "commit",
-          "replace-request",
-          json!({"code": "bad\nheader"}),
-        )]),
-        1,
-      )
-      .unwrap();
-    let error = client
-      .transact_write_items()
-      .set_transact_items(Some(write_actions()))
-      .send()
-      .await
-      .unwrap_err();
-    assert!(error.as_service_error().is_none());
-    assert!(recorder.completed.lock().unwrap().is_empty());
-    operation.finish();
+        )
+        .unwrap();
+      let error = client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+        .unwrap_err();
+      let report = operation.finish();
+      let calls = recorder.calls.load(Ordering::SeqCst);
+      let completed = recorder.completed.lock().unwrap().len();
+      println!(
+        "injection={injection}, SDK={error:?}, upstream calls={calls}, completed={completed}, report={report:?}"
+      );
+      assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+      assert_eq!(calls, 0);
+      assert_eq!(completed, 0);
+      assert_eq!(report.requests.len(), 1);
+      assert_eq!(report.unfired.len(), 1);
+      assert_eq!(report.unfired[0].index, 0);
+      assert_eq!(report.unfired[0].operation, 1);
+      assert_eq!(report.unfired[0].phase, Phase::Commit);
+      assert_eq!(report.unfired[0].declared, Repeat::Count { count: 1 });
+      assert_eq!(report.unfired[0].applied, 0);
+    }
   });
 }
 
