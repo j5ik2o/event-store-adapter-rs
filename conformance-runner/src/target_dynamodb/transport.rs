@@ -248,17 +248,31 @@ impl HttpConnector for FaultConnector {
           let response = response.map_err(|error| ConnectorError::other(Box::new(error), None))?;
           if fault.injection == Injection::ReplaceResponse {
             let upstream_response = upstream.call(request).await?;
-            let applied = state
-              .active
-              .lock()
-              .expect("操作状態のロック")
+            let mut active = state.active.lock().expect("操作状態のロック");
+            let Some(active) = active
               .as_mut()
               .filter(|active| Arc::ptr_eq(&active.identity, &identity))
-              .and_then(|active| active.faults.complete_application(fault.index))
-              .is_some();
-            if !applied {
+            else {
               return Ok(upstream_response);
-            }
+            };
+            let Some(next_fault) = active
+              .faults
+              .select_application(fault.phase)
+              .filter(|fault| fault.injection == Injection::ReplaceResponse)
+            else {
+              return Ok(upstream_response);
+            };
+            let index = next_fault.index;
+            let response = if index == fault.index {
+              response
+            } else {
+              error_response(&parsed, next_fault).map_err(|error| ConnectorError::other(Box::new(error), None))?
+            };
+            active
+              .faults
+              .complete_application(index)
+              .expect("同じロック内で選択した未消費の障害");
+            return Ok(response);
           }
           Ok(response)
         }

@@ -1004,6 +1004,368 @@ fn should_not_complete_a_delayed_response_fault_in_a_new_operation() {
 }
 
 #[test]
+fn should_apply_consecutive_response_faults_when_transfers_overlap() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![
+      once(1, "commit", "replace-response", json!({"code": "InternalServerError"})),
+      once(
+        1,
+        "commit",
+        "replace-response",
+        json!({"code": "ProvisionedThroughputExceededException"}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(release.clone());
+    let task_client = client.clone();
+    let pending = tokio::spawn(async move {
+      task_client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+    });
+    recorder.started.notified().await;
+    let first = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await;
+    release.notify_one();
+    let delayed = pending.await.unwrap();
+    let report = operation.finish();
+    let calls = recorder.calls.load(Ordering::SeqCst);
+    let completed = recorder.completed.lock().unwrap().len();
+    println!("first={first:?}, delayed={delayed:?}, upstream calls={calls}, completed={completed}, report={report:?}");
+    assert_eq!(
+      first.unwrap_err().as_service_error().unwrap().code(),
+      Some("InternalServerError")
+    );
+    assert_eq!(
+      delayed.unwrap_err().as_service_error().unwrap().code(),
+      Some("ProvisionedThroughputExceededException")
+    );
+    assert_eq!(calls, 2);
+    assert_eq!(completed, 2);
+    assert_eq!(report.requests.len(), 2);
+    assert!(report.unfired.is_empty());
+  });
+}
+
+#[test]
+fn should_exhaust_response_count_before_building_the_next_fault_for_the_delayed_request() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![
+      fault(
+        1,
+        "commit",
+        "replace-response",
+        json!({"mode": "count", "count": 2}),
+        json!({"code": "InternalServerError"}),
+      ),
+      once(
+        1,
+        "commit",
+        "replace-response",
+        json!({"code": "TransactionCanceledException", "cancellation_reasons": [reason("journal", "None"), reason("head", "TransactionConflict")]}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(release.clone());
+    let task_client = client.clone();
+    let pending = tokio::spawn(async move {
+      let mut actions = write_actions();
+      actions.reverse();
+      task_client
+        .transact_write_items()
+        .set_transact_items(Some(actions))
+        .send()
+        .await
+    });
+    recorder.started.notified().await;
+    for _ in 0..2 {
+      let error = client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+        .unwrap_err();
+      assert_eq!(error.as_service_error().unwrap().code(), Some("InternalServerError"));
+    }
+    release.notify_one();
+    let error = pending.await.unwrap().unwrap_err();
+    match error.as_service_error().unwrap() {
+      aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError::TransactionCanceledException(
+        error,
+      ) => {
+        let reasons = error.cancellation_reasons();
+        assert_eq!(reasons.len(), 2);
+        assert_eq!(reasons[0].code(), Some("TransactionConflict"));
+        assert_eq!(reasons[1].code(), Some("None"));
+      }
+      error => panic!("次宣言の取り消し例外ではない: {error:?}"),
+    }
+    client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap();
+    let report = operation.finish();
+    println!("finite count report={report:?}");
+    assert!(report.unfired.is_empty());
+    assert_eq!(report.requests.len(), 4);
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 4);
+    assert_eq!(
+      *recorder.completed.lock().unwrap(),
+      [1, 2, 0, 3].map(|index| report.requests[index].body.clone())
+    );
+  });
+}
+
+#[test]
+fn should_leave_the_next_request_fault_for_an_untransferred_request_when_transfers_overlap() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![
+      once(1, "commit", "replace-response", json!({"code": "InternalServerError"})),
+      once(
+        1,
+        "commit",
+        "replace-request",
+        json!({"code": "ProvisionedThroughputExceededException"}),
+      ),
+      once(
+        1,
+        "commit",
+        "replace-response",
+        json!({"code": "TransactionConflictException"}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(release.clone());
+    let task_client = client.clone();
+    let pending = tokio::spawn(async move {
+      task_client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+    });
+    recorder.started.notified().await;
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert_eq!(error.as_service_error().unwrap().code(), Some("InternalServerError"));
+    release.notify_one();
+    pending.await.unwrap().unwrap();
+    for (expected, calls) in [
+      ("ProvisionedThroughputExceededException", 2),
+      ("TransactionConflictException", 3),
+    ] {
+      let error = client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+        .unwrap_err();
+      assert_eq!(error.as_service_error().unwrap().code(), Some(expected));
+      assert_eq!(recorder.calls.load(Ordering::SeqCst), calls);
+      assert_eq!(recorder.completed.lock().unwrap().len(), calls);
+    }
+    let report = operation.finish();
+    assert!(report.unfired.is_empty());
+    assert_eq!(report.requests.len(), 4);
+    assert_eq!(
+      *recorder.completed.lock().unwrap(),
+      [1, 0, 3].map(|index| report.requests[index].body.clone())
+    );
+  });
+}
+
+#[test]
+fn should_leave_the_next_response_fault_unfired_when_reselected_response_building_fails() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![
+      once(1, "commit", "replace-response", json!({"code": "InternalServerError"})),
+      once(1, "commit", "replace-response", json!({"code": "bad\nheader"})),
+      once(
+        1,
+        "commit",
+        "replace-response",
+        json!({"code": "ProvisionedThroughputExceededException"}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(release.clone());
+    let task_client = client.clone();
+    let pending = tokio::spawn(async move {
+      task_client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+    });
+    recorder.started.notified().await;
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert_eq!(error.as_service_error().unwrap().code(), Some("InternalServerError"));
+    release.notify_one();
+    let delayed = pending.await.unwrap().unwrap_err();
+    let retry = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    let report = operation.finish();
+    println!("delayed={delayed:?}, retry={retry:?}, report={report:?}");
+    for error in [delayed, retry] {
+      let aws_sdk_dynamodb::error::SdkError::DispatchFailure(failure) = error else {
+        panic!("構築失敗がSDKへ伝播していない: {error:?}");
+      };
+      let source = std::error::Error::source(failure.as_connector_error().unwrap()).unwrap();
+      assert!(matches!(
+        source.downcast_ref::<TransportError>(),
+        Some(TransportError::InvalidFault(_))
+      ));
+    }
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(
+      *recorder.completed.lock().unwrap(),
+      [1, 0].map(|index| report.requests[index].body.clone())
+    );
+    assert_eq!(report.requests.len(), 3);
+    assert_eq!(report.unfired.len(), 2);
+    for (unfired, index) in report.unfired.iter().zip([1, 2]) {
+      assert_eq!(unfired.index, index);
+      assert_eq!(unfired.declared, Repeat::Count { count: 1 });
+      assert_eq!(unfired.applied, 0);
+    }
+  });
+}
+
+#[test]
+fn should_leave_the_next_response_fault_for_a_successful_transfer_when_transfers_overlap() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![
+      once(1, "commit", "replace-response", json!({"code": "InternalServerError"})),
+      once(
+        1,
+        "commit",
+        "replace-response",
+        json!({"code": "ProvisionedThroughputExceededException"}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    let release = Arc::new(tokio::sync::Notify::new());
+    *recorder.pause.lock().unwrap() = Some(release.clone());
+    recorder.fail.store(true, Ordering::SeqCst);
+    let task_client = client.clone();
+    let pending = tokio::spawn(async move {
+      task_client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+    });
+    recorder.started.notified().await;
+    recorder.fail.store(false, Ordering::SeqCst);
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert_eq!(error.as_service_error().unwrap().code(), Some("InternalServerError"));
+    release.notify_one();
+    let error = pending.await.unwrap().unwrap_err();
+    assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+    assert!(format!("{error:?}").contains("upstream failure"));
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(recorder.completed.lock().unwrap().len(), 1);
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert_eq!(
+      error.as_service_error().unwrap().code(),
+      Some("ProvisionedThroughputExceededException")
+    );
+    let report = operation.finish();
+    assert!(report.unfired.is_empty());
+    assert_eq!(report.requests.len(), 3);
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 3);
+    assert_eq!(
+      *recorder.completed.lock().unwrap(),
+      [1, 2].map(|index| report.requests[index].body.clone())
+    );
+  });
+}
+
+#[test]
+fn should_leave_the_next_response_fault_unfired_when_an_overlapping_request_is_cancelled() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let plan = plan(vec![
+      once(1, "commit", "replace-response", json!({"code": "InternalServerError"})),
+      once(
+        1,
+        "commit",
+        "replace-response",
+        json!({"code": "ProvisionedThroughputExceededException"}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    *recorder.pause.lock().unwrap() = Some(Arc::new(tokio::sync::Notify::new()));
+    let task_client = client.clone();
+    let pending = tokio::spawn(async move {
+      task_client
+        .transact_write_items()
+        .set_transact_items(Some(write_actions()))
+        .send()
+        .await
+    });
+    recorder.started.notified().await;
+    let error = client
+      .transact_write_items()
+      .set_transact_items(Some(write_actions()))
+      .send()
+      .await
+      .unwrap_err();
+    assert_eq!(error.as_service_error().unwrap().code(), Some("InternalServerError"));
+    pending.abort();
+    assert!(pending.await.unwrap_err().is_cancelled());
+    let report = operation.finish();
+    println!("cancelled request report={report:?}");
+    assert_eq!(report.requests.len(), 2);
+    assert_eq!(report.unfired.len(), 1);
+    assert_eq!(report.unfired[0].index, 1);
+    assert_eq!(report.unfired[0].declared, Repeat::Count { count: 1 });
+    assert_eq!(report.unfired[0].applied, 0);
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(*recorder.completed.lock().unwrap(), [report.requests[1].body.clone()]);
+  });
+}
+
+#[test]
 fn should_not_exceed_response_fault_count_when_transfers_overlap() {
   run(async {
     let (transport, client, recorder) = fixture();
