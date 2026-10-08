@@ -124,15 +124,22 @@ fn should_configuration_display_include_reason() {
 // E-1: Storage の表示は操作の種類を含み、SDK の生文を出さない。
 #[test]
 fn should_storage_display_include_operation_without_source_text() {
-  let error = EventStoreError::Storage {
-    operation: StorageOperation::Append,
-    source: Box::new(std::io::Error::other("connection reset by peer")),
-  };
-
-  let text = error.to_string();
-
-  assert!(text.contains("append"));
-  assert!(!text.contains("connection reset by peer"));
+  for (operation, name) in [
+    (StorageOperation::Append, "append"),
+    (StorageOperation::CreateConfiguration, "create-configuration"),
+  ] {
+    let error = EventStoreError::Storage {
+      operation,
+      source: Box::new(std::io::Error::other("connection reset by peer")),
+    };
+    let text = error.to_string();
+    assert!(text.contains(name));
+    assert!(!text.contains("connection reset by peer"));
+    assert_eq!(
+      std::error::Error::source(&error).unwrap().to_string(),
+      "connection reset by peer"
+    );
+  }
 }
 
 #[test]

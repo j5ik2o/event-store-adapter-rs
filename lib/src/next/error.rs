@@ -61,6 +61,7 @@ impl fmt::Display for SerializationPhase {
 #[non_exhaustive]
 pub enum StorageOperation {
   ReadConfiguration,
+  CreateConfiguration,
   Append,
   LoadSnapshot,
   LoadEvents,
@@ -70,6 +71,7 @@ impl fmt::Display for StorageOperation {
   fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
     let text = match self {
       StorageOperation::ReadConfiguration => "read-configuration",
+      StorageOperation::CreateConfiguration => "create-configuration",
       StorageOperation::Append => "append",
       StorageOperation::LoadSnapshot => "load-snapshot",
       StorageOperation::LoadEvents => "load-events",

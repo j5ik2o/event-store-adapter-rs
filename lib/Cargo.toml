@@ -24,7 +24,7 @@ all-features = true
 [features]
 default = []
 test-hooks = []
-dynamodb = ["dep:aws-config", "dep:aws-sdk-dynamodb"]
+dynamodb = ["dep:aws-config", "dep:aws-sdk-dynamodb", "dep:uuid"]
 bigtable = ["dep:tonic", "dep:googleapis-tonic-google-bigtable-v2"]
 sqlite = ["dep:rusqlite", "rusqlite/bundled"]
 sqlite-system = ["dep:rusqlite"]
@@ -34,6 +34,7 @@ thiserror = { workspace = true }
 async-trait = { workspace = true }
 aws-config = { workspace = true, features = ["behavior-version-latest"], optional = true }
 aws-sdk-dynamodb = { workspace = true, optional = true }
+uuid = { version = "1", features = ["v4"], optional = true }
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
@@ -43,6 +44,9 @@ googleapis-tonic-google-bigtable-v2 = { workspace = true, optional = true }
 rusqlite = { workspace = true, optional = true }
 
 [dev-dependencies]
+aws-smithy-runtime-api = { version = "1.19.0", features = ["client"] }
+aws-smithy-types = "1.8.1"
+aws-smithy-http-client = { version = "1.5.0", features = ["default-client", "rt-tokio"] }
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
 testcontainers = { workspace = true }
 once_cell = { workspace = true }

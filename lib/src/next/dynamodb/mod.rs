@@ -1,12 +1,99 @@
-//! 新契約のDynamoDB設定読み取り。
+//! 新契約のDynamoDBストア生成と設定確定。
 
-// 公開openは後続。内部読み取りはtest-hooksから直接検証する。
-#[cfg_attr(not(feature = "test-hooks"), allow(dead_code))]
 mod configuration;
+mod configuration_create;
+#[cfg(test)]
+mod open_test;
 
+use std::marker::PhantomData;
+use std::sync::Arc;
 use std::time::Duration;
 
+use aws_sdk_dynamodb::Client;
+use serde::{de::DeserializeOwned, Serialize};
+
+use crate::next::aggregate_id::AggregateId;
+use crate::next::error::EventStoreError;
 use crate::next::retention::RetentionSettings;
+use crate::next::serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer};
+
+/// ３表で確定した設定と、その設定を使うクライアント・シリアライザを保持する。
+pub struct EventStoreForDynamoDB<AID, A, P> {
+  client: Client,
+  tables: DynamoDbTables,
+  options: DynamoDbOptions,
+  store_id: String,
+  event_serializer: Arc<dyn EventSerializer<P>>,
+  snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+  _aggregate_id: PhantomData<fn() -> AID>,
+}
+
+impl<AID, A, P> Clone for EventStoreForDynamoDB<AID, A, P> {
+  fn clone(&self) -> Self {
+    Self {
+      client: self.client.clone(),
+      tables: self.tables.clone(),
+      options: self.options.clone(),
+      store_id: self.store_id.clone(),
+      event_serializer: self.event_serializer.clone(),
+      snapshot_serializer: self.snapshot_serializer.clone(),
+      _aggregate_id: PhantomData,
+    }
+  }
+}
+
+impl<AID, A, P> std::fmt::Debug for EventStoreForDynamoDB<AID, A, P> {
+  fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    f.debug_struct("EventStoreForDynamoDB")
+      .field("tables", &self.tables)
+      .field("options", &self.options)
+      .field("store_id", &self.store_id)
+      .field("event_serializer", &self.event_serializer)
+      .field("snapshot_serializer", &self.snapshot_serializer)
+      .finish_non_exhaustive()
+  }
+}
+
+impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> EventStoreForDynamoDB<AID, A, P> {
+  /// 設定を確定し、任意のシリアライザを持つストアを生成する（DY-8・T-6）。
+  pub async fn open_with_serializers(
+    client: Client,
+    tables: DynamoDbTables,
+    options: DynamoDbOptions,
+    event_serializer: Arc<dyn EventSerializer<P>>,
+    snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+  ) -> Result<Self, EventStoreError> {
+    let store_id = configuration_create::resolve_configuration(&client, &tables, &options).await?;
+    Ok(Self {
+      client,
+      tables,
+      options,
+      store_id,
+      event_serializer,
+      snapshot_serializer,
+      _aggregate_id: PhantomData,
+    })
+  }
+}
+
+impl<AID, A, P> EventStoreForDynamoDB<AID, A, P>
+where
+  AID: AggregateId,
+  A: Serialize + DeserializeOwned + Send + Sync + 'static,
+  P: Serialize + DeserializeOwned + Send + Sync + 'static,
+{
+  /// 設定を確定し、既定のJSONシリアライザを持つストアを生成する（DY-8・T-8）。
+  pub async fn open(client: Client, tables: DynamoDbTables, options: DynamoDbOptions) -> Result<Self, EventStoreError> {
+    Self::open_with_serializers(
+      client,
+      tables,
+      options,
+      Arc::new(JsonEventSerializer::new()),
+      Arc::new(JsonSnapshotSerializer::new()),
+    )
+    .await
+  }
+}
 
 /// ３テーブルと履歴インデックスの名前を保持する。
 #[derive(Debug, Clone)]
