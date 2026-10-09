@@ -566,13 +566,11 @@ fn assert_warning(observation: &Value, aid: &str, number: u64, phase: &str) {
 }
 
 #[tokio::test]
-async fn should_skip_retention_for_both_writes_without_a_count_or_in_ttl_mode() {
+async fn should_skip_retention_for_both_writes_without_a_count_in_either_mode() {
   for retention in [
     RetentionSettings::current_only(),
     RetentionSettings::current_only().with_mode(RetentionMode::Ttl { grace_seconds: 60 }),
-    RetentionSettings::keep_latest(1).with_mode(RetentionMode::Ttl { grace_seconds: 60 }),
   ] {
-    let keep = retention.keep_snapshot_count().is_some();
     let fixture = Fixture::new().await;
     let (store, observed) = fixture.open_json_with_retention(retention).await;
     let notices = Arc::new(Mutex::new(Vec::new()));
@@ -586,7 +584,7 @@ async fn should_skip_retention_for_both_writes_without_a_count_or_in_ttl_mode() 
       let traces = observed.take();
       assert_eq!(traces.len(), 1);
       if pair {
-        pair_actions(&fixture, &traces[0], keep);
+        pair_actions(&fixture, &traces[0], false);
       } else {
         actions(&fixture, &traces[0]);
       }
@@ -596,18 +594,7 @@ async fn should_skip_retention_for_both_writes_without_a_count_or_in_ttl_mode() 
       assert_eq!(report["applied"], 0);
       assert_eq!(report["unfired"], 2);
       let state = fixture.state("Account-skip-retention").await;
-      assert_eq!(
-        history_numbers(&state),
-        if keep {
-          if number == 3 {
-            vec![1, 3]
-          } else {
-            vec![1]
-          }
-        } else {
-          Vec::new()
-        }
-      );
+      assert!(history_numbers(&state).is_empty());
       for item in state["snapshot"].as_array().unwrap() {
         assert!(item.get("ttl").is_none());
       }

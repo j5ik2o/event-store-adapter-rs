@@ -138,7 +138,7 @@ fn should_library_not_enable_test_hooks_by_default() {
 }
 
 #[test]
-fn should_configuration_read_test_require_the_opt_in_dynamodb_feature() {
+fn should_dynamodb_local_tests_require_the_opt_in_dynamodb_feature() {
   let package = runner_package(&workspace_metadata());
   assert_eq!(package["features"]["default"], json!([]));
   assert_eq!(
@@ -146,11 +146,13 @@ fn should_configuration_read_test_require_the_opt_in_dynamodb_feature() {
     json!(["event-store-adapter-rs/dynamodb"])
   );
   assert!(!requested_features(&package, "event-store-adapter-rs").contains(&"dynamodb".to_string()));
-  let target = package["targets"]
-    .as_array()
-    .unwrap()
-    .iter()
-    .find(|target| target["name"] == "dynamodb_config_read_test")
-    .unwrap();
-  assert_eq!(target["required-features"], json!(["dynamodb"]));
+  for name in ["dynamodb_config_read_test", "dynamodb_retention_ttl_test"] {
+    let target = package["targets"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|target| target["name"] == name)
+      .unwrap();
+    assert_eq!(target["required-features"], json!(["dynamodb"]));
+  }
 }

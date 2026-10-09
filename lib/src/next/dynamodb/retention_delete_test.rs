@@ -104,6 +104,7 @@ fn setup(
     store_id: "unit".into(),
     event_serializer: Arc::new(JsonEventSerializer::new()),
     snapshot_serializer: Arc::new(JsonSnapshotSerializer::new()),
+    clock: Arc::new(super::super::clock::SystemClock),
     _aggregate_id: std::marker::PhantomData,
   };
   (store, script, sleep)
@@ -192,11 +193,10 @@ fn should_build_only_history_delete_keys() {
 }
 
 #[tokio::test]
-async fn should_skip_delete_retention_without_a_count_or_in_ttl_mode() {
+async fn should_skip_retention_without_a_count_in_either_mode() {
   for retention in [
     RetentionSettings::current_only(),
     RetentionSettings::current_only().with_mode(RetentionMode::Ttl { grace_seconds: 60 }),
-    RetentionSettings::keep_latest(1).with_mode(RetentionMode::Ttl { grace_seconds: 60 }),
   ] {
     let (store, script, sleep) = setup(
       DynamoDbOptions {
@@ -214,6 +214,9 @@ async fn should_skip_delete_retention_without_a_count_or_in_ttl_mode() {
     assert!(sleep.0.lock().unwrap().is_empty());
   }
 }
+
+#[path = "retention_ttl_test.rs"]
+mod ttl;
 
 #[tokio::test]
 async fn should_read_all_pages_before_selecting_with_missing_or_duplicate_written_history() {

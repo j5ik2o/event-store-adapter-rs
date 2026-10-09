@@ -317,6 +317,7 @@ async fn should_validate_pair_then_serialize_event_then_snapshot_before_sending(
       store_id: "unit".into(),
       event_serializer: event_serializer.clone(),
       snapshot_serializer: snapshot_serializer.clone(),
+      clock: Arc::new(super::super::clock::SystemClock),
       _aggregate_id: std::marker::PhantomData,
     };
     let result = store

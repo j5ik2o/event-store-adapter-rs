@@ -1,5 +1,6 @@
 //! 新契約のDynamoDBストア生成と設定確定。
 
+mod clock;
 mod configuration;
 mod configuration_create;
 mod item_size;
@@ -9,6 +10,7 @@ mod persist_event;
 mod read_events;
 mod read_snapshot;
 mod retention_delete;
+mod retention_ttl;
 
 use std::marker::PhantomData;
 use std::sync::Arc;
@@ -22,6 +24,10 @@ use crate::next::error::EventStoreError;
 use crate::next::retention::RetentionSettings;
 use crate::next::serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer};
 
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use clock::Clock;
+
 /// ３表で確定した設定と、その設定を使うクライアント・シリアライザを保持する。
 pub struct EventStoreForDynamoDB<AID, A, P> {
   client: Client,
@@ -30,6 +36,7 @@ pub struct EventStoreForDynamoDB<AID, A, P> {
   store_id: String,
   event_serializer: Arc<dyn EventSerializer<P>>,
   snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+  clock: Arc<dyn clock::Clock>,
   _aggregate_id: PhantomData<fn() -> AID>,
 }
 
@@ -42,6 +49,7 @@ impl<AID, A, P> Clone for EventStoreForDynamoDB<AID, A, P> {
       store_id: self.store_id.clone(),
       event_serializer: self.event_serializer.clone(),
       snapshot_serializer: self.snapshot_serializer.clone(),
+      clock: self.clock.clone(),
       _aggregate_id: PhantomData,
     }
   }
@@ -76,8 +84,17 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
       store_id,
       event_serializer,
       snapshot_serializer,
+      clock: Arc::new(clock::SystemClock),
       _aggregate_id: PhantomData,
     })
+  }
+
+  /// 試験用の印付け時計を設定する。
+  #[cfg(feature = "test-hooks")]
+  #[doc(hidden)]
+  pub fn with_clock_for_test(mut self, clock: Arc<dyn Clock>) -> Self {
+    self.clock = clock;
+    self
   }
 }
 

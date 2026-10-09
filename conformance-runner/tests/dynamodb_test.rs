@@ -84,6 +84,10 @@ fn run(future: impl Future<Output = ()>) {
 
 fn fixture_with(recorder: Recorder) -> (FaultTransport, Client, Recorder) {
   let transport = FaultTransport::new(RequestLayout::new(JOURNAL, SNAPSHOT, HEAD, INDEX).unwrap());
+  fixture_using(transport, recorder)
+}
+
+fn fixture_using(transport: FaultTransport, recorder: Recorder) -> (FaultTransport, Client, Recorder) {
   let connector = SharedHttpConnector::new(recorder.clone());
   let upstream = http_client_fn(move |_, _| connector.clone());
   let builder = aws_sdk_dynamodb::Config::builder()
@@ -1925,5 +1929,163 @@ fn should_report_unfired_until_operation_finishes_and_reset_on_the_same_client()
     delete(&client, SNAPSHOT, "3").await;
     assert!(next.finish().unfired.is_empty());
     assert_eq!(recorder.completed.lock().unwrap().len(), 2);
+  });
+}
+
+fn history_fixture() -> (FaultTransport, Client, Recorder, Recorder) {
+  let (_, raw, saved) = fixture();
+  let transport =
+    FaultTransport::new_with_history_client(RequestLayout::new(JOURNAL, SNAPSHOT, HEAD, INDEX).unwrap(), raw);
+  let (transport, client, upstream) = fixture_using(transport, Recorder::default());
+  *upstream.body.lock().unwrap() = Some(json!({"Items": []}));
+  (transport, client, upstream, saved)
+}
+
+fn saved_history(number: &str) -> Value {
+  json!({"Item": {"aid": {"S": AID}, "skey": {"N": number}, "seq_nr": {"N": number},
+    "ttl": {"N": "4102444740"}, "payload": {"B": "e30="}}})
+}
+
+fn history_fault(pages: Value, count: u32) -> Value {
+  json!({"operation": 1, "phase": "retention-query", "kind": "sdk-response", "injection": "replace-response",
+    "repeat": {"mode": "count", "count": count}, "details": {"history_pages": pages}})
+}
+
+#[test]
+fn should_deliver_all_history_pages_as_one_application_and_preserve_upstream_responses() {
+  run(async {
+    let (transport, client, upstream, saved) = history_fixture();
+    let plan = plan(vec![
+      history_fault(json!([[2], [1]]), 1),
+      once(
+        1,
+        "retention-query",
+        "replace-request",
+        json!({"code": "InternalServerError", "message": "NEXT_DECLARATION"}),
+      ),
+    ]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    *saved.body.lock().unwrap() = Some(saved_history("2"));
+    let first = client
+      .query()
+      .table_name(SNAPSHOT)
+      .index_name(INDEX)
+      .key_condition_expression("aid = :aid")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(first.items().len(), 1);
+    assert_eq!(
+      first.items()[0]
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>(),
+      std::collections::BTreeSet::from(["aid", "skey", "active_history_seq_nr"])
+    );
+    assert_eq!(first.items()[0]["active_history_seq_nr"], AttributeValue::N("2".into()));
+    *saved.body.lock().unwrap() = Some(saved_history("1"));
+    let second = client
+      .query()
+      .table_name(SNAPSHOT)
+      .index_name(INDEX)
+      .key_condition_expression("aid = :aid")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .set_exclusive_start_key(first.last_evaluated_key().cloned())
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(second.items()[0]["skey"], AttributeValue::N("1".into()));
+    assert!(second.last_evaluated_key().is_none());
+    let error = client
+      .query()
+      .table_name(SNAPSHOT)
+      .index_name(INDEX)
+      .key_condition_expression("aid = :aid")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .send()
+      .await
+      .unwrap_err();
+    assert_eq!(error.as_service_error().unwrap().message(), Some("NEXT_DECLARATION"));
+    let report = operation.finish();
+    assert!(report.unfired.is_empty());
+    assert_eq!(upstream.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(saved.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(report.responses.len(), 3);
+    for response in &report.responses[..2] {
+      assert_eq!(response["fault_index"], 0);
+      assert_eq!(response["upstream"]["status"], 200);
+      assert_eq!(
+        serde_json::from_str::<Value>(response["upstream"]["body"].as_str().unwrap()).unwrap(),
+        json!({"Items": []})
+      );
+    }
+    let first_page: Value = serde_json::from_str(report.responses[0]["delivered"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(
+      report.requests[1].body["ExclusiveStartKey"],
+      first_page["LastEvaluatedKey"]
+    );
+    assert!(report.responses[2]["upstream"].is_null());
+  });
+}
+
+#[test]
+fn should_count_a_history_application_at_first_delivery_and_clear_unfinished_pages_on_finish() {
+  run(async {
+    let (transport, client, _, saved) = history_fixture();
+    *saved.body.lock().unwrap() = Some(saved_history("2"));
+    let plan = plan(vec![history_fault(json!([[2], [1]]), 2)]);
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    query(&client, SNAPSHOT, Some(INDEX)).await;
+    let report = operation.finish();
+    assert_eq!(report.unfired.len(), 1);
+    assert_eq!(report.unfired[0].applied, 1);
+    assert_eq!(report.unfired[0].declared, Repeat::Count { count: 2 });
+    let operation = transport.begin_operation(&plan, 1).unwrap();
+    assert_eq!(operation.finish().unfired[0].applied, 0);
+    let operation = transport.begin_operation(&plan, 2).unwrap();
+    let output = client
+      .query()
+      .table_name(SNAPSHOT)
+      .index_name(INDEX)
+      .key_condition_expression("aid = :aid")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .send()
+      .await
+      .unwrap();
+    assert!(output.items().is_empty());
+    let report = operation.finish();
+    assert!(report.unfired.is_empty());
+    assert_eq!(report.responses[0]["upstream"], report.responses[0]["delivered"]);
+  });
+}
+
+#[test]
+fn should_leave_history_response_unfired_without_a_successful_transfer_and_saved_key() {
+  run(async {
+    for (status, saved_item) in [
+      (500, Some(saved_history("2"))),
+      (200, Some(json!({}))),
+      (200, Some(saved_history("3"))),
+    ] {
+      let (transport, client, upstream, saved) = history_fixture();
+      upstream.status.store(status, Ordering::SeqCst);
+      *saved.body.lock().unwrap() = saved_item;
+      let operation = transport
+        .begin_operation(&plan(vec![history_fault(json!([[2]]), 1)]), 1)
+        .unwrap();
+      let error = client
+        .query()
+        .table_name(SNAPSHOT)
+        .index_name(INDEX)
+        .key_condition_expression("aid = :aid")
+        .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+        .send()
+        .await
+        .unwrap_err();
+      assert!(matches!(error, aws_sdk_dynamodb::error::SdkError::DispatchFailure(_)));
+      assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
+      assert_eq!(operation.finish().unfired[0].applied, 0);
+    }
   });
 }

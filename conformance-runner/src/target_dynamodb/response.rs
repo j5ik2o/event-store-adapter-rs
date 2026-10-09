@@ -10,6 +10,85 @@ use super::transport::TransportError;
 use crate::fault::{Fault, FaultKind, Phase};
 use crate::number::to_integer;
 
+/// 宣言したページの実キーを本体から読み、古い GSI 応答を組み立てる。
+pub(super) async fn history_page_response(
+  request: &ParsedRequest,
+  fault: &Fault,
+  raw: &aws_sdk_dynamodb::Client,
+  position: usize,
+  upstream: &HttpResponse,
+) -> Result<(HttpResponse, Option<Value>), TransportError> {
+  if !upstream.status().is_success() {
+    return Err(invalid("履歴応答の実転送が成功していない"));
+  }
+  let pages = fault
+    .details
+    .get("history_pages")
+    .and_then(Value::as_array)
+    .filter(|pages| !pages.is_empty())
+    .ok_or_else(|| invalid("history_pagesが空、または配列ではない"))?;
+  let page = pages
+    .get(position)
+    .and_then(Value::as_array)
+    .ok_or_else(|| invalid("履歴ページが配列ではない"))?;
+  let body = &request.observation.body;
+  let table = body
+    .get("TableName")
+    .and_then(Value::as_str)
+    .ok_or_else(|| invalid("履歴の表名がない"))?;
+  let aid = body
+    .pointer("/ExpressionAttributeValues/:aid/S")
+    .and_then(Value::as_str)
+    .ok_or_else(|| invalid("履歴のaid束縛がない"))?;
+  let mut items = Vec::new();
+  for number in page {
+    let number = to_integer(number)
+      .and_then(|number| u64::try_from(number).ok())
+      .filter(|number| (1..=event_store_adapter_rs::next::seq_nr::SEQ_NR_MAX).contains(number))
+      .ok_or_else(|| invalid("履歴番号が正の範囲内整数ではない"))?;
+    let saved = raw
+      .get_item()
+      .table_name(table)
+      .key("aid", aws_sdk_dynamodb::types::AttributeValue::S(aid.into()))
+      .key("skey", aws_sdk_dynamodb::types::AttributeValue::N(number.to_string()))
+      .consistent_read(true)
+      .send()
+      .await
+      .map_err(|_| invalid("履歴の実項目を読めない"))?
+      .item
+      .ok_or_else(|| invalid("宣言した履歴の実項目がない"))?;
+    let saved_aid = saved
+      .get("aid")
+      .and_then(|attribute| attribute.as_s().ok())
+      .filter(|saved_aid| saved_aid.as_str() == aid)
+      .ok_or_else(|| invalid("履歴の実aidが一致しない"))?;
+    let skey = saved
+      .get("skey")
+      .and_then(|attribute| attribute.as_n().ok())
+      .filter(|skey| skey.parse::<u64>().ok() == Some(number))
+      .ok_or_else(|| invalid("履歴の実skeyが一致しない"))?;
+    items.push(json!({"aid": {"S": saved_aid}, "skey": {"N": skey}, "active_history_seq_nr": {"N": skey}}));
+  }
+  let continuation = if position + 1 < pages.len() {
+    Some(
+      items
+        .last()
+        .cloned()
+        .ok_or_else(|| invalid("続く履歴ページの実キーがない"))?,
+    )
+  } else {
+    None
+  };
+  let mut delivered = json!({"Items": items});
+  if let Some(key) = &continuation {
+    delivered["LastEvaluatedKey"] = key.clone();
+  }
+  let mut response = Response::new(upstream.status(), SdkBody::from(delivered.to_string()));
+  *response.headers_mut() = upstream.headers().clone();
+  response.headers_mut().remove("content-length");
+  Ok((response, continuation))
+}
+
 fn invalid(message: &'static str) -> TransportError {
   TransportError::InvalidFault(message)
 }
