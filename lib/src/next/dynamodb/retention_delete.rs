@@ -20,17 +20,24 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
         retention_failure: None,
       };
     };
-    if !matches!(self.options.retention.mode(), RetentionMode::Delete) {
-      return AppendReceipt {
-        retention_failure: None,
-      };
-    }
     let result = match query_history(&self.client, &self.tables, aid).await {
       Ok(visible) => {
         let expired = select_expired_history_after_append(&visible, Some(seq_nr), keep);
-        delete_history(&self.client, &self.tables, &self.options, aid, &expired)
+        match self.options.retention.mode() {
+          RetentionMode::Delete => delete_history(&self.client, &self.tables, &self.options, aid, &expired)
+            .await
+            .map_err(|error| ("retention-delete", error)),
+          RetentionMode::Ttl { grace_seconds } => super::retention_ttl::mark_history(
+            &self.client,
+            &self.tables,
+            self.clock.as_ref(),
+            aid,
+            &expired,
+            *grace_seconds,
+          )
           .await
-          .map_err(|error| ("retention-delete", error))
+          .map_err(|error| ("retention-mark", error)),
+        }
       }
       Err(error) => Err(("retention-query", error)),
     };

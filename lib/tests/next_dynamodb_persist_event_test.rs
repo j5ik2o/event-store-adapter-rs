@@ -812,6 +812,22 @@ fn assert_pair_request_matches_saved(fixture: &Fixture, trace: &Value) {
   }
 }
 
+fn assert_marked_snapshot_matches_request(previous: &Value, actual: &Value, traces: &[Value]) {
+  let update = traces
+    .iter()
+    .find(|trace| trace["api"] == "UpdateItem" && trace["input"]["Key"]["skey"] == previous["skey"])
+    .unwrap();
+  assert_eq!(update["upstream_status"], 200);
+  let mut expected = previous.clone();
+  expected
+    .as_object_mut()
+    .unwrap()
+    .remove("active_history_seq_nr")
+    .unwrap();
+  expected["ttl"] = update["input"]["ExpressionAttributeValues"][":expires"].clone();
+  assert_eq!(actual, &expected);
+}
+
 #[tokio::test]
 async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
   for retention in [
@@ -844,7 +860,7 @@ async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
       assert!(result.is_ok(), "{result:?}");
       assert_eq!(calls.load(Ordering::SeqCst), 1);
       let traces = observed.take();
-      assert_eq!(traces.len(), if delete_retention { seq_nr as usize + 1 } else { 1 });
+      assert_eq!(traces.len(), if keep_history { seq_nr as usize + 1 } else { 1 });
       pair_actions(&fixture, &traces[0], keep_history);
       assert_eq!(traces[0]["upstream_status"], 200);
       assert_eq!(traces[0]["upstream_body"], traces[0]["delivered_body"]);
@@ -893,7 +909,7 @@ async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
       if seq_nr == 2 {
         assert_eq!(after["journal"][0], previous["journal"][0]);
         if keep_history && !delete_retention {
-          assert_eq!(after["snapshot"][1], previous["snapshot"][1]);
+          assert_marked_snapshot_matches_request(&previous["snapshot"][1], &after["snapshot"][1], &traces);
         }
       }
       assert_eq!(after["configuration"], previous["configuration"]);
@@ -977,7 +993,7 @@ async fn should_preserve_non_serde_pair_bytes_across_shared_scratch_reuse() {
       event_bytes
     );
     let traces = observed.take();
-    assert_eq!(traces.len(), 1);
+    assert_eq!(traces.len(), seq_nr as usize + 1);
     pair_actions(&fixture, &traces[0], true);
     assert_eq!(traces[0]["scratch_reuse"]["before"], json!(snapshot_bytes));
     assert_eq!(
@@ -1014,7 +1030,7 @@ async fn should_preserve_non_serde_pair_bytes_across_shared_scratch_reuse() {
     );
     if seq_nr == 2 {
       assert_eq!(after["journal"][0], previous["journal"][0]);
-      assert_eq!(after["snapshot"][1], previous["snapshot"][1]);
+      assert_marked_snapshot_matches_request(&previous["snapshot"][1], &after["snapshot"][1], &traces);
     }
     assert_pair_request_matches_saved(&fixture, &traces[0]);
     fixture.record(&format!("pair-scratch-{seq_nr}"), &traces, &json!({"before": previous, "after": after, "event_inputs": *event_serializer.inputs.lock().unwrap(), "snapshot_inputs": *snapshot_serializer.inputs.lock().unwrap(), "result": result_json(&result)}));
@@ -1808,18 +1824,23 @@ async fn should_commit_exactly_one_complete_pair_for_parallel_new_and_existing_h
           true,
         );
       }
+      let traces = observed.take();
       if seq_nr == 2 {
         assert_eq!(after["journal"][0], previous["journal"][0]);
         if keep_history {
-          assert_eq!(after["snapshot"][1], previous["snapshot"][1]);
+          assert_marked_snapshot_matches_request(&previous["snapshot"][1], &after["snapshot"][1], &traces);
         }
       }
       assert_eq!(after["configuration"], previous["configuration"]);
-      let traces = observed.take();
-      assert_eq!(traces.len(), 2);
-      assert_eq!(traces.iter().filter(|trace| trace["upstream_status"] == 200).count(), 1);
-      assert_eq!(traces.iter().filter(|trace| trace["upstream_status"] == 400).count(), 1);
-      for trace in &traces {
+      assert_eq!(traces.len(), if keep_history { seq_nr as usize + 2 } else { 2 });
+      let writes = traces
+        .iter()
+        .filter(|trace| trace["api"] == "TransactWriteItems")
+        .collect::<Vec<_>>();
+      assert_eq!(writes.len(), 2);
+      assert_eq!(writes.iter().filter(|trace| trace["upstream_status"] == 200).count(), 1);
+      assert_eq!(writes.iter().filter(|trace| trace["upstream_status"] == 400).count(), 1);
+      for trace in writes {
         pair_actions(&fixture, trace, keep_history);
         assert!(trace["injected_response"].is_null());
         assert_eq!(trace["upstream_body"], trace["delivered_body"]);

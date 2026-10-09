@@ -12,6 +12,10 @@ dynamodb = ["event-store-adapter-rs/dynamodb"]
 name = "dynamodb_config_read_test"
 required-features = ["dynamodb"]
 
+[[test]]
+name = "dynamodb_retention_ttl_test"
+required-features = ["dynamodb"]
+
 [dependencies]
 event-store-adapter-rs = { path = "../lib", features = ["test-hooks"] }
 serde = { workspace = true, features = ["derive"] }
