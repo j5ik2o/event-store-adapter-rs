@@ -1,5 +1,5 @@
 //! コマンドの入口（引数・報告の書き出し・終了コード）の試験。
-//! 実行ファイルを起動し、メモリの実操作で58件、未接続のDynamoDBでbuildAidの9件が成功することを確かめる。
+//! 実行ファイルを起動し、Memoryの58件と、feature有効時の実DynamoDBの102件を検査する。
 
 mod support;
 
@@ -198,7 +198,7 @@ fn should_cli_report_names_backend_data_version_and_implementation() {
 }
 
 #[test]
-fn should_cli_accepts_dynamodb_backend_and_reports_without_connecting() {
+fn should_cli_selects_dynamodb_and_reports_actual_or_explicitly_disabled_execution() {
   let execution = execute_on_real_data("cli-dynamodb", &["--backend", "dynamodb"]);
 
   assert_eq!(
@@ -209,7 +209,10 @@ fn should_cli_accepts_dynamodb_backend_and_reports_without_connecting() {
   );
   let report = execution.report();
   assert_eq!(report["backend"], "dynamodb");
-  assert_eq!(count_status(&report, "passed"), 9);
+  assert_eq!(
+    count_status(&report, "passed"),
+    if cfg!(feature = "dynamodb") { 102 } else { 9 }
+  );
   assert_eq!(
     count_status(&report, "passed") + count_status(&report, "not-applicable") + count_status(&report, "unverified"),
     116
@@ -229,13 +232,19 @@ fn should_cli_with_require_all_pass_memory_with_reasoned_exclusions() {
 }
 
 #[test]
-fn should_cli_with_require_all_fail_unverified_dynamodb_operations() {
+fn should_cli_with_require_all_preserves_dynamodb_execution_failures() {
   let execution = execute_on_real_data("cli-require-all-dynamodb", &["--backend", "dynamodb", "--require-all"]);
-  assert_eq!(execution.code(), Some(1));
-  assert_eq!(count_status(&execution.report(), "passed"), 9);
+  assert_eq!(execution.code(), Some(if cfg!(feature = "dynamodb") { 0 } else { 1 }));
+  assert_eq!(
+    count_status(&execution.report(), "passed"),
+    if cfg!(feature = "dynamodb") { 102 } else { 9 }
+  );
   assert_eq!(count_status(&execution.report(), "failed"), 0);
   assert_eq!(count_status(&execution.report(), "not-applicable"), 14);
-  assert_eq!(count_status(&execution.report(), "unverified"), 93);
+  assert_eq!(
+    count_status(&execution.report(), "unverified"),
+    if cfg!(feature = "dynamodb") { 0 } else { 93 }
+  );
 }
 
 #[test]

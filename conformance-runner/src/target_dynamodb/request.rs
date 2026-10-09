@@ -11,10 +11,10 @@ use crate::number::to_integer;
 /// 要求の識別に使う実テーブル名と履歴GSI名を保持する。
 #[derive(Clone)]
 pub struct RequestLayout {
-  journal: String,
-  snapshot: String,
-  head: String,
-  history_index: String,
+  pub(super) journal: String,
+  pub(super) snapshot: String,
+  pub(super) head: String,
+  pub(super) history_index: String,
 }
 
 impl RequestLayout {
@@ -37,7 +37,16 @@ impl RequestLayout {
     })
   }
 
-  fn table(&self, name: &str) -> Option<&'static str> {
+  pub(super) fn actual_table(&self, name: &str) -> Result<&str, String> {
+    match name {
+      "journal" => Ok(&self.journal),
+      "snapshot" => Ok(&self.snapshot),
+      "head" => Ok(&self.head),
+      _ => Err(format!("未知の表: {name}")),
+    }
+  }
+
+  pub(super) fn table(&self, name: &str) -> Option<&'static str> {
     if name == self.journal {
       Some("journal")
     } else if name == self.snapshot {
@@ -57,7 +66,7 @@ impl fmt::Debug for RequestLayout {
 }
 
 /// 送信直前に観測したAPI名・本文と、内容から判定した段階を表す。
-#[derive(Clone)]
+#[derive(Clone, serde::Serialize)]
 pub struct RequestObservation {
   pub api: String,
   pub body: Value,
@@ -227,18 +236,20 @@ fn batch_get(layout: &RequestLayout, body: &Value) -> Result<(Option<Phase>, Vec
       if !is_config && (table == "journal" || (table == "snapshot" && number(key, "skey")? != 0)) {
         return Ok((None, Vec::new()));
       }
-      if is_config {
-        configuration_keys.push(ConfigurationKey {
-          table_name: name.clone(),
-          table,
-          key: key.clone(),
-          selector: if table == "head" {
-            "head:__config__".into()
-          } else {
-            format!("{table}:__config__:0")
-          },
-        });
-      }
+      configuration_keys.push(ConfigurationKey {
+        table_name: name.clone(),
+        table,
+        key: key.clone(),
+        selector: if table == "head" {
+          format!("head:{}", aid(key)?)
+        } else {
+          format!(
+            "{table}:{}:{}",
+            aid(key)?,
+            number(key, if table == "journal" { "seq_nr" } else { "skey" })?
+          )
+        },
+      });
       configuration = Some(is_config);
     }
   }

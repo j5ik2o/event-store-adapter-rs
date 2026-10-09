@@ -1,5 +1,5 @@
 //! ケースの分類（対象外・未検証・失敗・成功）と、保存先に依存しない準備の試験。
-//! メモリは実操作に接続して58件が成功する。DynamoDBは未接続で、値の表の `buildAid` の9件だけが成功する。
+//! Memoryは実操作、DynamoDBの分類試験は明示した未実行のtest doubleを使う。実Localの検証はCLI試験で行う。
 
 use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
@@ -9,9 +9,17 @@ use event_store_adapter_conformance_rs::fault::Phase;
 use event_store_adapter_conformance_rs::report::{
   CaseOutcome, CaseReport, NotApplicableReason, ObservedValues, RepresentationGap, UnverifiedReason,
 };
-use event_store_adapter_conformance_rs::runner::{run, run_case, CaseExecutor, Target};
+use event_store_adapter_conformance_rs::runner::{run, run_case, CaseExecutor, PreparedCase, Target};
 use event_store_adapter_conformance_rs::{target_dynamodb, target_memory};
 use serde_json::{json, Value};
+
+fn classification_executor(_: &Case, _: PreparedCase) -> CaseOutcome {
+  CaseOutcome::Unverified {
+    reason: UnverifiedReason::NotExecuted {
+      detail: "分類だけを検査するtest doubleで、実操作を行わない".into(),
+    },
+  }
+}
 
 fn conformance_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")
@@ -215,7 +223,7 @@ fn should_run_case_executes_memory_and_leaves_dynamodb_unverified() {
     &case,
     &target_dynamodb::TARGET,
     &no_exclusions(),
-    target_dynamodb::run_case,
+    classification_executor,
   );
 
   assert_eq!(on_memory, CaseOutcome::Passed { values: None });
@@ -247,7 +255,7 @@ fn should_run_case_preserves_classification_order_without_calling_the_executor()
   body["fixtures"]["events"] = json!({"e1": {"payload": "not empty"}});
   body["generators"] = json!([{"target": "/fixtures/events/e1/payload", "character": "x", "byte_length": 3}]);
   body["steps"][0]["observe"] =
-    json!({"requests": [{"api": "BatchGetItem", "phase": "read-snapshot", "constraints": {"keys": []}}]});
+    json!({"requests": [{"api": "BatchGetItem", "phase": "read-snapshot", "constraints": {"unknown_word": true}}]});
   body["representation"] = json!({"signed_seq_nr": true, "time_precision": "milliseconds"});
 
   let mut not_targeted = scenario(&["W-5"], body.clone());
@@ -321,13 +329,16 @@ fn should_run_build_aid_without_calling_the_target_executor() {
       let outcome = run_case(case, target, &data.coverage, |_, _| {
         panic!("buildAidは共通処理で実行する")
       });
-      assert_eq!(
-        outcome,
-        CaseOutcome::Passed { values: None },
-        "{} {}",
-        target.name,
-        case.id
-      );
+      let CaseOutcome::Passed { values: Some(values) } = outcome else {
+        panic!("{} {}: {outcome:?}", target.name, case.id);
+      };
+      assert_eq!(values.expected, case.body["expect"]);
+      if case.body["expect"].get("error").is_some() {
+        assert_eq!(values.actual["category"], "contract-violation");
+        assert_eq!(values.actual["rule"], case.body["expect"]["error"]["rule"]);
+      } else {
+        assert_eq!(values.actual["value"], case.body["expect"]["value"]);
+      }
     }
   }
 }
@@ -353,7 +364,7 @@ fn should_run_case_leaves_case_requiring_ttl_unverified_on_dynamodb() {
     &case,
     &target_dynamodb::TARGET,
     &no_exclusions(),
-    target_dynamodb::run_case,
+    classification_executor,
   );
 
   assert!(is_not_executed(&outcome), "{outcome:?}");
@@ -430,7 +441,7 @@ fn should_run_case_reports_unimplemented_constraint_words_as_unverified() {
   body["steps"][0]["observe"] = json!({"requests": [{
     "api": "BatchGetItem",
     "phase": "read-snapshot",
-    "constraints": {"keys": ["journal:__config__:0"], "consistent_read_all_tables": true}
+    "constraints": {"unknown_word": true}
   }]});
   let case = scenario(&["DY-8"], body);
 
@@ -438,14 +449,14 @@ fn should_run_case_reports_unimplemented_constraint_words_as_unverified() {
     &case,
     &target_dynamodb::TARGET,
     &no_exclusions(),
-    target_dynamodb::run_case,
+    classification_executor,
   );
 
   assert_eq!(
     outcome,
     CaseOutcome::Unverified {
       reason: UnverifiedReason::UnimplementedConstraintWords {
-        words: vec!["consistent_read_all_tables".to_string(), "keys".to_string()]
+        words: vec!["unknown_word".to_string()]
       }
     }
   );
@@ -470,7 +481,7 @@ fn should_run_case_does_not_count_same_names_outside_request_constraints_as_word
     &case,
     &target_dynamodb::TARGET,
     &no_exclusions(),
-    target_dynamodb::run_case,
+    classification_executor,
   );
 
   assert!(is_not_executed(&outcome), "{outcome:?}");
@@ -530,13 +541,8 @@ fn should_run_case_decides_capability_from_the_given_target_not_from_its_name() 
     has_layout: true,
   };
 
-  let with_ttl = run_case(&case, &memory_with_ttl, &no_exclusions(), target_dynamodb::run_case);
-  let without_ttl = run_case(
-    &case,
-    &dynamodb_without_ttl,
-    &no_exclusions(),
-    target_dynamodb::run_case,
-  );
+  let with_ttl = run_case(&case, &memory_with_ttl, &no_exclusions(), classification_executor);
+  let without_ttl = run_case(&case, &dynamodb_without_ttl, &no_exclusions(), classification_executor);
 
   assert!(
     is_not_executed(&with_ttl),
@@ -568,13 +574,13 @@ fn should_run_case_requires_every_capability_word_to_be_provided() {
     &case,
     &only_ttl,
     &no_exclusions(),
-    target_dynamodb::run_case
+    classification_executor
   )));
   assert!(is_not_executed(&run_case(
     &case,
     &both,
     &no_exclusions(),
-    target_dynamodb::run_case
+    classification_executor
   )));
 }
 
@@ -592,12 +598,12 @@ fn should_run_case_decides_layout_from_has_layout_not_from_the_name() {
     has_layout: false,
   };
 
-  let with_layout = run_case(&case, &memory_with_layout, &no_exclusions(), target_dynamodb::run_case);
+  let with_layout = run_case(&case, &memory_with_layout, &no_exclusions(), classification_executor);
   let without_layout = run_case(
     &case,
     &dynamodb_without_layout,
     &no_exclusions(),
-    target_dynamodb::run_case,
+    classification_executor,
   );
 
   assert!(is_not_executed(&with_layout), "{with_layout:?}");
@@ -616,13 +622,13 @@ fn should_run_case_classifies_a_target_the_runner_has_never_heard_of() {
     &scenario(&["T-1"], scenario_body(&["sqlite"])),
     &unknown,
     &no_exclusions(),
-    target_dynamodb::run_case,
+    classification_executor,
   );
   let not_listed = run_case(
     &scenario(&["T-1"], scenario_body(&["memory"])),
     &unknown,
     &no_exclusions(),
-    target_dynamodb::run_case,
+    classification_executor,
   );
 
   assert!(is_not_executed(&listed), "{listed:?}");
@@ -653,7 +659,7 @@ fn should_run_case_names_the_given_target_in_the_not_targeted_detail() {
 
 const TARGETS: [(&Target, CaseExecutor); 2] = [
   (&target_memory::TARGET, target_memory::run_case),
-  (&target_dynamodb::TARGET, target_dynamodb::run_case),
+  (&target_dynamodb::TARGET, classification_executor),
 ];
 
 #[test]
@@ -762,7 +768,7 @@ fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory()
 fn should_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
   let data = real_data();
 
-  let reports = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
+  let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   let not_targeted: Vec<&str> = reports
     .iter()
@@ -783,10 +789,10 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
 }
 
 #[test]
-fn should_run_reports_the_build_aid_success_for_dynamodb_and_leaves_the_rest_unverified() {
+fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() {
   let data = real_data();
 
-  let reports = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
+  let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。
   assert_eq!(counts(&reports), (9, 0, 14, 93));
@@ -807,9 +813,8 @@ fn should_run_marks_build_aid_cases_as_passed_on_every_backend() {
   for (target, execute) in TARGETS {
     let reports = run(&data, target, execute);
     for id in &ids {
-      assert_eq!(
-        outcome_of(&reports, id),
-        &CaseOutcome::Passed { values: None },
+      assert!(
+        matches!(outcome_of(&reports, id), CaseOutcome::Passed { values: Some(_) }),
         "{} {id}",
         target.name
       );
@@ -835,10 +840,11 @@ fn should_run_reports_build_aid_contract_violation_with_rule_and_message() {
     .expect("期待する規則がある");
   assert_eq!(expected_rule, "T-11");
 
-  assert_eq!(
-    outcome_of(&reports, "aid-hyphen-type"),
-    &CaseOutcome::Passed { values: None }
-  );
+  let CaseOutcome::Passed { values: Some(values) } = outcome_of(&reports, "aid-hyphen-type") else {
+    panic!("native診断の保存");
+  };
+  assert_eq!(values.actual["rule"], expected_rule);
+  assert!(values.actual["error"].as_str().unwrap().contains(expected_rule));
 }
 
 // 実行器は型名と値から aid を組み立て、利用者の文字列化（user_string）に依存しない。
@@ -864,10 +870,10 @@ fn should_run_build_aid_uses_type_name_and_value_not_user_string() {
 
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
-  assert_eq!(
-    outcome_of(&reports, "aid-library-format"),
-    &CaseOutcome::Passed { values: None }
-  );
+  let CaseOutcome::Passed { values: Some(values) } = outcome_of(&reports, "aid-library-format") else {
+    panic!("公開Aidの結果保存");
+  };
+  assert_eq!(values.actual["value"], expected);
 }
 
 #[test]
@@ -875,14 +881,15 @@ fn should_run_reports_configuration_case_per_backend() {
   let data = real_data();
 
   let on_memory = run(&data, &target_memory::TARGET, target_memory::run_case);
-  let on_dynamodb = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
+  let on_dynamodb = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   assert!(is_backend_not_targeted(outcome_of(&on_memory, "dynamodb-config-new")));
   assert!(
     matches!(
       outcome_of(&on_dynamodb, "dynamodb-config-new"),
-      CaseOutcome::Unverified { reason: UnverifiedReason::UnimplementedConstraintWords { words } }
-        if words.contains(&"keys".to_string())
+      CaseOutcome::Unverified {
+        reason: UnverifiedReason::NotExecuted { .. }
+      }
     ),
     "{:?}",
     outcome_of(&on_dynamodb, "dynamodb-config-new")
@@ -894,7 +901,7 @@ fn should_run_reports_layout_case_per_backend() {
   let data = real_data();
 
   let on_memory = run(&data, &target_memory::TARGET, target_memory::run_case);
-  let on_dynamodb = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
+  let on_dynamodb = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   assert!(is_backend_not_targeted(outcome_of(&on_memory, "dynamodb-layout-v1")));
   assert!(is_not_executed(outcome_of(&on_dynamodb, "dynamodb-layout-v1")));
@@ -909,7 +916,7 @@ fn should_run_keeps_the_id_and_all_rules_of_each_case() {
     .find(|case| case.id == "dynamodb-layout-v1")
     .expect("配置のケースがある");
 
-  let reports = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
+  let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   let report = reports
     .iter()

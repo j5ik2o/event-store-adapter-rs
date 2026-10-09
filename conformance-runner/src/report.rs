@@ -213,6 +213,10 @@ pub struct Report {
   pub backend: &'static str,
   pub cases: Vec<CaseReport>,
   pub rules: Vec<RuleReport>,
+  #[serde(skip_serializing_if = "Option::is_none")]
+  pub environment: Option<Value>,
+  #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+  pub observations: BTreeMap<String, Vec<Value>>,
 }
 
 fn empty_rule_report(rule: &str) -> RuleReport {
@@ -273,6 +277,8 @@ impl Report {
       backend,
       cases,
       rules: rules.into_values().collect(),
+      environment: None,
+      observations: BTreeMap::new(),
     }
   }
 

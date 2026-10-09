@@ -231,6 +231,21 @@ fn is_fired(fault: &Fault, applied: u32) -> bool {
 }
 
 impl OperationFaults {
+  /// 全宣言の実適用回数を、消費せずに観測する。
+  pub fn applications(&self) -> Vec<FaultApplication> {
+    self
+      .entries
+      .iter()
+      .map(|(fault, applied)| FaultApplication {
+        index: fault.index,
+        operation: fault.operation,
+        phase: fault.phase,
+        declared: fault.repeat,
+        applied: *applied,
+      })
+      .collect()
+  }
+
   /// 段階 `phase` への適用を 1 回始め、適用する障害を返す。
   ///
   /// 同じ段階の障害は、配列の順に、回数を使い切ってから次を使う。`until-operation-finishes` は使い切り
@@ -291,6 +306,16 @@ impl OperationFaults {
       Err(unfired)
     }
   }
+}
+
+/// 操作終了時に観測した宣言と適用回数を表す。
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct FaultApplication {
+  pub index: usize,
+  pub operation: u32,
+  pub phase: Phase,
+  pub declared: Repeat,
+  pub applied: u32,
 }
 
 /// 発火しなかった障害と、宣言した回数・適用できた回数を表す。ケースは `failed` になる。

@@ -8,9 +8,9 @@ use std::fmt::{Display, Formatter};
 
 use event_store_adapter_rs::next::aggregate_id::{AggregateId, AidString};
 use event_store_adapter_rs::next::error::EventStoreError;
-use serde_json::Value;
+use serde_json::{json, Value};
 
-use crate::report::CaseOutcome;
+use crate::report::{CaseOutcome, ObservedValues};
 
 /// 値の表の試験用の集約 ID。`user_string` は `Display` の別表現として持ち、結果に影響しない。
 struct CaseAggregateId {
@@ -137,7 +137,12 @@ pub fn run_build_aid(case: &Value) -> CaseOutcome {
     Ok(aid) => {
       let expected = case.pointer("/expect/value").and_then(Value::as_str);
       match expected {
-        Some(expected) if expected == aid.as_str() => CaseOutcome::Passed { values: None },
+        Some(expected) if expected == aid.as_str() => CaseOutcome::Passed {
+          values: Some(ObservedValues {
+            expected: case["expect"].clone(),
+            actual: json!({"value":aid.as_str()}),
+          }),
+        },
         _ => failed(
           "組み立てた aid が期待値と一致しない".to_string(),
           case.pointer("/expect/value").cloned(),
@@ -147,17 +152,22 @@ pub fn run_build_aid(case: &Value) -> CaseOutcome {
     }
     Err(error) => match case.pointer("/expect/error") {
       Some(expected) => match matches_expected_error(expected, &error) {
-        Ok(()) => CaseOutcome::Passed { values: None },
+        Ok(()) => CaseOutcome::Passed {
+          values: Some(ObservedValues {
+            expected: case["expect"].clone(),
+            actual: crate::case::error_value(&error),
+          }),
+        },
         Err(detail) => failed(
           detail,
           case.pointer("/expect/error").cloned(),
-          Some(Value::String(error.to_string())),
+          Some(crate::case::error_value(&error)),
         ),
       },
       None => failed(
         "失敗したが expect.error がない".to_string(),
         None,
-        Some(Value::String(error.to_string())),
+        Some(crate::case::error_value(&error)),
       ),
     },
   }

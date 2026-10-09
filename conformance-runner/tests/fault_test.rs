@@ -9,6 +9,28 @@ fn conformance_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")
 }
 
+#[test]
+fn should_observe_all_application_counts_without_consuming_or_reordering_them() {
+  let plan = register(&case(
+    2,
+    vec![
+      fault(2, "commit", count(1)),
+      fault(1, "serialize-event", count(2)),
+      fault(1, "read-events", count(1)),
+    ],
+  ));
+  let mut operation = plan.begin_operation(1);
+  let before = operation.applications();
+  assert_eq!(before.iter().map(|v| v.index).collect::<Vec<_>>(), vec![1, 2]);
+  assert_eq!(before.iter().map(|v| v.applied).collect::<Vec<_>>(), vec![0, 0]);
+  operation.start_application(Phase::SerializeEvent).unwrap();
+  let after = operation.applications();
+  assert_eq!(after[0].applied, 1);
+  assert_eq!(after[1].applied, 0);
+  assert_eq!(after, operation.applications());
+  assert_eq!(operation.finish().unwrap_err()[0].applied, 1);
+}
+
 fn count(times: u32) -> Value {
   json!({"mode": "count", "count": times})
 }

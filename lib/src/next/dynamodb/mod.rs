@@ -21,8 +21,43 @@ use serde::{de::DeserializeOwned, Serialize};
 
 use crate::next::aggregate_id::AggregateId;
 use crate::next::error::EventStoreError;
+use crate::next::event_envelope::{EventEnvelope, SnapshotEnvelope, SnapshotRead};
+use crate::next::event_store::EventStore;
 use crate::next::retention::RetentionSettings;
 use crate::next::serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer};
+
+#[async_trait::async_trait]
+impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> EventStore
+  for EventStoreForDynamoDB<AID, A, P>
+{
+  type A = A;
+  type AID = AID;
+  type P = P;
+
+  async fn persist_event(&self, event: EventEnvelope<AID, P>) -> Result<(), EventStoreError> {
+    EventStoreForDynamoDB::persist_event(self, event).await
+  }
+
+  async fn persist_event_and_snapshot(
+    &self,
+    event: EventEnvelope<AID, P>,
+    snapshot: SnapshotEnvelope<A>,
+  ) -> Result<(), EventStoreError> {
+    EventStoreForDynamoDB::persist_event_and_snapshot(self, event, snapshot).await
+  }
+
+  async fn get_latest_snapshot_by_id(&self, aid: &AID) -> Result<Option<SnapshotRead<A>>, EventStoreError> {
+    EventStoreForDynamoDB::get_latest_snapshot_by_id(self, aid).await
+  }
+
+  async fn get_events_by_id_since_seq_nr(
+    &self,
+    aid: &AID,
+    seq_nr: crate::next::seq_nr::SeqNr,
+  ) -> Result<Vec<EventEnvelope<AID, P>>, EventStoreError> {
+    EventStoreForDynamoDB::get_events_by_id_since_seq_nr(self, aid, seq_nr).await
+  }
+}
 
 #[cfg(feature = "test-hooks")]
 #[doc(hidden)]

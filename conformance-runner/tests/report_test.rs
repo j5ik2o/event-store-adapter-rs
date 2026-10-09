@@ -91,6 +91,20 @@ fn to_json(report: &Report) -> Value {
   serde_json::to_value(report).expect("報告を直列化できる")
 }
 
+#[test]
+fn should_preserve_actual_observations_and_environment_without_changing_case_status() {
+  let mut report = report_of(vec![], vec![unverified()]);
+  let observation = json!({"operation":1,"actual":{"result":"success"},"requests":[],"unfired_faults":[{"applied":0}]});
+  report.environment = Some(json!({"dynamodb_local":"3.3.1"}));
+  report.observations.insert("case-0".into(), vec![observation.clone()]);
+  let encoded = to_json(&report);
+  assert_eq!(encoded["observations"]["case-0"][0], observation);
+  assert_eq!(encoded["environment"]["dynamodb_local"], "3.3.1");
+  assert_eq!(report.status_counts().passed, 0);
+  assert_eq!(report.status_counts().unverified, 1);
+  assert!(report.should_fail(true));
+}
+
 fn rule_row<'a>(report: &'a Value, rule: &str) -> &'a Value {
   report["rules"]
     .as_array()

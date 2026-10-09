@@ -1067,7 +1067,7 @@ async fn should_keep_partial_marks_and_recover_from_the_real_gsi_on_the_same_sto
   assert!(notices.is_empty());
   assert!(report.unfired.is_empty());
   for response in &report.responses {
-    assert!(response.get("fault_index").is_none());
+    assert!(response["fault_index"].is_null());
     assert_eq!(response["upstream"], response["delivered"]);
   }
   let queries: Vec<_> = report
