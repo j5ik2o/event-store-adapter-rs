@@ -177,7 +177,7 @@ where
   }
 }
 
-fn notify_retention_failure(receipt: AppendReceipt) {
+pub(super) fn notify_retention_failure(receipt: AppendReceipt) {
   if let Some(failure) = receipt.retention_failure {
     // 通知処理の失敗を、確定済みの追記へ戻さない（MEM-11）。
     let _ = std::panic::catch_unwind(|| {

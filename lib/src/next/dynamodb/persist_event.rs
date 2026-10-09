@@ -10,7 +10,7 @@ use super::{DynamoDbTables, EventStoreForDynamoDB};
 use crate::next::aggregate_id::{AggregateId, AidString};
 use crate::next::error::{ContractRule, EventStoreError, StorageOperation};
 use crate::next::event_envelope::{EventEnvelope, SnapshotEnvelope};
-use crate::next::generic_event_store::{check_event, check_event_and_snapshot};
+use crate::next::generic_event_store::{check_event, check_event_and_snapshot, notify_retention_failure};
 use crate::next::seq_nr::{SeqNr, SEQ_NR_MAX};
 
 // この順で組み立てた要求のアクションだけを取消理由に対応付ける。
@@ -18,7 +18,7 @@ const JOURNAL_POSITION: usize = 0;
 const HEAD_POSITION: usize = 1;
 
 impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> EventStoreForDynamoDB<AID, A, P> {
-  /// イベント1件とヘッドを原子的に確定する。snapshot書込み・保持処理は行わない（H-1・D-9）。
+  /// イベント1件とヘッドを原子的に確定し、Delete保持の取り残しを処理する（H-1・S-4）。
   pub async fn persist_event(&self, event: EventEnvelope<AID, P>) -> Result<(), EventStoreError> {
     let aid = check_event(&event)?;
     let payload = self.event_serializer.serialize(event.payload())?;
@@ -31,6 +31,7 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
       .send()
       .await
       .map_err(|error| classify_append_error(error, &aid, event.seq_nr(), action_count))?;
+    notify_retention_failure(self.retain_history_after_append(&aid, event.seq_nr(), None).await);
     Ok(())
   }
 
@@ -60,6 +61,11 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
       .send()
       .await
       .map_err(|error| classify_append_error(error, &aid, event.seq_nr(), action_count))?;
+    notify_retention_failure(
+      self
+        .retain_history_after_append(&aid, event.seq_nr(), Some(snapshot.seq_nr()))
+        .await,
+    );
     Ok(())
   }
 }

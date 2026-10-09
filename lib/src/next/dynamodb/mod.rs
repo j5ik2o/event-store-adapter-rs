@@ -8,6 +8,7 @@ mod open_test;
 mod persist_event;
 mod read_events;
 mod read_snapshot;
+mod retention_delete;
 
 use std::marker::PhantomData;
 use std::sync::Arc;

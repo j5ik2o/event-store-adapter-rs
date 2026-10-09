@@ -42,6 +42,9 @@ type TransmitScratch = Arc<Mutex<Option<Scratch>>>;
 type JsonStore = EventStoreForDynamoDB<Id, Value, Value>;
 type OpaqueStore = EventStoreForDynamoDB<Id, Opaque, Opaque>;
 
+#[path = "next_dynamodb_persist_event_test/retention_delete_test.rs"]
+mod retention_delete_test;
+
 #[derive(Debug, Clone)]
 struct Id {
   type_name: String,
@@ -164,15 +167,6 @@ impl SnapshotSerializer<Opaque> for NoSnapshot {
 }
 
 #[derive(Debug)]
-struct NoWait;
-
-impl AsyncSleep for NoWait {
-  fn sleep(&self, _: Duration) -> Sleep {
-    Sleep::new(async {})
-  }
-}
-
-#[derive(Debug)]
 enum Injection {
   Cancellation {
     template: Value,
@@ -189,6 +183,7 @@ struct ObservedConnector {
   traces: Traces,
   injection: Arc<Mutex<Option<Injection>>>,
   transmit_scratch: TransmitScratch,
+  retention_plan: Arc<Mutex<retention_delete_test::Plan>>,
 }
 
 impl HttpConnector for ObservedConnector {
@@ -225,7 +220,11 @@ impl HttpConnector for ObservedConnector {
     };
     let upstream = self.upstream.clone();
     let traces = self.traces.clone();
+    let retention_plan = self.retention_plan.clone();
     HttpConnectorFuture::new(async move {
+      if api == "BatchWriteItem" || (api == "Query" && input.get("IndexName").is_some()) {
+        return retention_delete_test::deliver_retention(request, upstream, traces, index, retention_plan).await;
+      }
       let injected = match injection {
         Some(Injection::Cancellation {
           mut template,
@@ -316,23 +315,32 @@ struct Observed {
   traces: Traces,
   injection: Arc<Mutex<Option<Injection>>>,
   transmit_scratch: TransmitScratch,
+  retention_plan: Arc<Mutex<retention_delete_test::Plan>>,
+  sleep: retention_delete_test::RecordedSleep,
 }
 
 impl Observed {
   fn new(endpoint: &str) -> Self {
+    Self::with_upstream(endpoint, aws_smithy_http_client::Builder::new().build_http())
+  }
+
+  fn with_upstream(endpoint: &str, upstream: impl HttpClient + 'static) -> Self {
     let traces: Traces = Arc::new(Mutex::new(Vec::new()));
     let injection = Arc::new(Mutex::new(None));
     let transmit_scratch = Arc::new(Mutex::new(None));
-    let upstream = aws_smithy_http_client::Builder::new().build_http();
+    let retention_plan = Arc::new(Mutex::new(retention_delete_test::Plan::default()));
+    let sleep = retention_delete_test::RecordedSleep::default();
     let records = traces.clone();
     let control = injection.clone();
     let scratch = transmit_scratch.clone();
+    let plan = retention_plan.clone();
     let http = http_client_fn(move |settings, components| {
       SharedHttpConnector::new(ObservedConnector {
         upstream: upstream.http_connector(settings, components),
         traces: records.clone(),
         injection: control.clone(),
         transmit_scratch: scratch.clone(),
+        retention_plan: plan.clone(),
       })
     });
     let config = aws_sdk_dynamodb::Config::builder()
@@ -341,7 +349,7 @@ impl Observed {
       .credentials_provider(Credentials::new("x", "x", None, None, "local-test"))
       .endpoint_url(endpoint)
       .http_client(http)
-      .sleep_impl(NoWait)
+      .sleep_impl(sleep.clone())
       .retry_config(RetryConfig::disabled())
       .timeout_config(TimeoutConfig::disabled())
       .stalled_stream_protection(StalledStreamProtectionConfig::disabled())
@@ -351,6 +359,8 @@ impl Observed {
       traces,
       injection,
       transmit_scratch,
+      retention_plan,
+      sleep,
     }
   }
 
@@ -398,14 +408,16 @@ impl Fixture {
   }
 
   async fn open_json_with_retention(&self, retention: RetentionSettings) -> (JsonStore, Observed) {
+    self
+      .open_json_with_options(DynamoDbOptions { retention, ..options() })
+      .await
+  }
+
+  async fn open_json_with_options(&self, options: DynamoDbOptions) -> (JsonStore, Observed) {
     let observed = Observed::new(&self.endpoint);
-    let store = JsonStore::open(
-      observed.client.clone(),
-      self.tables.clone(),
-      DynamoDbOptions { retention, ..options() },
-    )
-    .await
-    .unwrap();
+    let store = JsonStore::open(observed.client.clone(), self.tables.clone(), options)
+      .await
+      .unwrap();
     self.record("open-json", &observed.take(), &json!(null));
     (store, observed)
   }
@@ -808,6 +820,7 @@ async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
     options().retention,
   ] {
     let keep_history = retention.keep_snapshot_count().is_some();
+    let delete_retention = keep_history && matches!(retention.mode(), RetentionMode::Delete);
     let fixture = Fixture::new().await;
     let (store, observed) = fixture.open_json_with_retention(retention).await;
     let aid = "Account-pair-json";
@@ -831,7 +844,7 @@ async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
       assert!(result.is_ok(), "{result:?}");
       assert_eq!(calls.load(Ordering::SeqCst), 1);
       let traces = observed.take();
-      assert_eq!(traces.len(), 1);
+      assert_eq!(traces.len(), if delete_retention { seq_nr as usize + 1 } else { 1 });
       pair_actions(&fixture, &traces[0], keep_history);
       assert_eq!(traces[0]["upstream_status"], 200);
       assert_eq!(traces[0]["upstream_body"], traces[0]["delivered_body"]);
@@ -849,7 +862,13 @@ async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
       assert_head_matches_journal(&after, "Account");
       assert_eq!(
         after["snapshot"].as_array().unwrap().len(),
-        if keep_history { seq_nr as usize + 1 } else { 1 }
+        if delete_retention {
+          2
+        } else if keep_history {
+          seq_nr as usize + 1
+        } else {
+          1
+        }
       );
       assert_saved_snapshot(
         &after["snapshot"][0],
@@ -862,7 +881,7 @@ async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
       );
       if keep_history {
         assert_saved_snapshot(
-          &after["snapshot"][seq_nr as usize],
+          after["snapshot"].as_array().unwrap().last().unwrap(),
           aid,
           seq_nr,
           millis,
@@ -873,7 +892,7 @@ async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
       }
       if seq_nr == 2 {
         assert_eq!(after["journal"][0], previous["journal"][0]);
-        if keep_history {
+        if keep_history && !delete_retention {
           assert_eq!(after["snapshot"][1], previous["snapshot"][1]);
         }
       }
