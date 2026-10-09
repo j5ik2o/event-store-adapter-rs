@@ -7,6 +7,7 @@ mod item_size;
 mod open_test;
 mod persist_event;
 mod read_events;
+mod read_snapshot;
 
 use std::marker::PhantomData;
 use std::sync::Arc;
