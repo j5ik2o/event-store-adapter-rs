@@ -27,7 +27,7 @@ use chrono::{DateTime, Utc};
 use event_store_adapter_rs::next::aggregate_id::AggregateId;
 use event_store_adapter_rs::next::dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
 use event_store_adapter_rs::next::error::{ContractRule, EventStoreError, SerializationPhase, StorageOperation};
-use event_store_adapter_rs::next::event_envelope::EventEnvelope;
+use event_store_adapter_rs::next::event_envelope::{EventEnvelope, SnapshotEnvelope};
 use event_store_adapter_rs::next::retention::{RetentionMode, RetentionSettings};
 use event_store_adapter_rs::next::seq_nr::SEQ_NR_MAX;
 use event_store_adapter_rs::next::serializer::{EventSerializer, SnapshotSerializer};
@@ -37,6 +37,8 @@ use testcontainers::{ContainerAsync, GenericImage};
 
 type Item = HashMap<String, AttributeValue>;
 type Traces = Arc<Mutex<Vec<Value>>>;
+type Scratch = Arc<Mutex<Vec<u8>>>;
+type TransmitScratch = Arc<Mutex<Option<Scratch>>>;
 type JsonStore = EventStoreForDynamoDB<Id, Value, Value>;
 type OpaqueStore = EventStoreForDynamoDB<Id, Opaque, Opaque>;
 
@@ -94,6 +96,60 @@ impl EventSerializer<Opaque> for BytesSerializer {
   }
 }
 
+impl SnapshotSerializer<Opaque> for BytesSerializer {
+  fn serialize(&self, aggregate: &Opaque) -> Result<Vec<u8>, EventStoreError> {
+    self.calls.fetch_add(1, Ordering::SeqCst);
+    if self.fail.load(Ordering::SeqCst) {
+      return Err(EventStoreError::Serialization {
+        phase: SerializationPhase::SerializeSnapshot,
+        source: Box::new(std::io::Error::new(std::io::ErrorKind::InvalidData, "SERIALIZER_CAUSE")),
+      });
+    }
+    Ok(aggregate.0.clone())
+  }
+
+  fn deserialize(&self, data: &[u8]) -> Result<Opaque, EventStoreError> {
+    Ok(Opaque(data.to_vec()))
+  }
+}
+
+#[derive(Debug)]
+struct ScratchSerializer {
+  scratch: Scratch,
+  inputs: Mutex<Vec<Vec<u8>>>,
+  previous: Mutex<Vec<Vec<u8>>>,
+}
+
+impl EventSerializer<Opaque> for ScratchSerializer {
+  fn serialize(&self, payload: &Opaque) -> Result<Vec<u8>, EventStoreError> {
+    self.inputs.lock().unwrap().push(payload.0.clone());
+    let mut scratch = self.scratch.lock().unwrap();
+    self.previous.lock().unwrap().push(scratch.clone());
+    scratch.clear();
+    scratch.extend_from_slice(&payload.0);
+    Ok(scratch.clone())
+  }
+
+  fn deserialize(&self, data: &[u8]) -> Result<Opaque, EventStoreError> {
+    Ok(Opaque(data.to_vec()))
+  }
+}
+
+impl SnapshotSerializer<Opaque> for ScratchSerializer {
+  fn serialize(&self, aggregate: &Opaque) -> Result<Vec<u8>, EventStoreError> {
+    self.inputs.lock().unwrap().push(aggregate.0.clone());
+    let mut scratch = self.scratch.lock().unwrap();
+    self.previous.lock().unwrap().push(scratch.clone());
+    scratch.clear();
+    scratch.extend_from_slice(&aggregate.0);
+    Ok(scratch.clone())
+  }
+
+  fn deserialize(&self, data: &[u8]) -> Result<Opaque, EventStoreError> {
+    Ok(Opaque(data.to_vec()))
+  }
+}
+
 #[derive(Debug)]
 struct NoSnapshot;
 
@@ -120,7 +176,7 @@ impl AsyncSleep for NoWait {
 enum Injection {
   Cancellation {
     template: Value,
-    codes: Vec<(String, String)>,
+    codes: Vec<(String, Option<u64>, String)>,
     old_head: Option<Value>,
   },
   Response(Value),
@@ -132,6 +188,7 @@ struct ObservedConnector {
   upstream: SharedHttpConnector,
   traces: Traces,
   injection: Arc<Mutex<Option<Injection>>>,
+  transmit_scratch: TransmitScratch,
 }
 
 impl HttpConnector for ObservedConnector {
@@ -145,6 +202,16 @@ impl HttpConnector for ObservedConnector {
       .unwrap()
       .to_string();
     let input: Value = serde_json::from_slice(request.body().bytes().unwrap()).unwrap();
+    let scratch_reuse = if api == "TransactWriteItems" {
+      self.transmit_scratch.lock().unwrap().as_ref().map(|scratch| {
+        let mut scratch = scratch.lock().unwrap();
+        let before = scratch.clone();
+        scratch.fill(0xaa);
+        json!({"before": before, "after": *scratch})
+      })
+    } else {
+      None
+    };
     let injection = if api == "TransactWriteItems" {
       self.injection.lock().unwrap().take()
     } else {
@@ -166,31 +233,36 @@ impl HttpConnector for ObservedConnector {
           old_head,
         }) => {
           let writes = input["TransactItems"].as_array().unwrap();
-          // 表名と実操作から実要求の位置を解く。期待された位置は使わない。
-          let reasons = writes
-            .iter()
-            .map(|write| {
-              assert_eq!(write.as_object().unwrap().len(), 1);
-              let action = write.get("Put").or_else(|| write.get("Update")).unwrap();
-              let table = action["TableName"].as_str().unwrap();
-              let code = codes
-                .iter()
-                .find(|(name, _)| name == table)
-                .map(|(_, code)| code.as_str())
-                .unwrap_or("None");
-              let mut reason = json!({"Code": code});
-              if code == "ConditionalCheckFailed" && action["ReturnValuesOnConditionCheckFailure"] == "ALL_OLD" {
-                if let Some(item) = &old_head {
-                  reason["Item"] = item.clone();
-                }
-              }
-              reason
-            })
-            .collect::<Vec<_>>();
-          for (table, _) in &codes {
-            assert!(writes
+          // 同じsnapshot表のcurrent/historyも、実要求の表名とキーで区別する。
+          let mut reasons = vec![json!({"Code": "None"}); writes.len()];
+          for (table, skey, code) in codes {
+            let positions = writes
               .iter()
-              .any(|write| { write.get("Put").or_else(|| write.get("Update")).unwrap()["TableName"] == *table }));
+              .enumerate()
+              .filter_map(|(position, write)| {
+                assert_eq!(write.as_object().unwrap().len(), 1);
+                let action = write.get("Put").or_else(|| write.get("Update")).unwrap();
+                let key = action.get("Item").or_else(|| action.get("Key")).unwrap();
+                (action["TableName"] == table
+                  && skey.is_none_or(|number| {
+                    key["skey"]["N"].as_str().and_then(|value| value.parse::<u64>().ok()) == Some(number)
+                  }))
+                .then_some(position)
+              })
+              .collect::<Vec<_>>();
+            assert_eq!(positions.len(), 1, "取消注入の対象は実要求内の1アクション");
+            let position = positions[0];
+            let action = writes[position]
+              .get("Put")
+              .or_else(|| writes[position].get("Update"))
+              .unwrap();
+            let mut reason = json!({"Code": code});
+            if code == "ConditionalCheckFailed" && action["ReturnValuesOnConditionCheckFailure"] == "ALL_OLD" {
+              if let Some(item) = &old_head {
+                reason["Item"] = item.clone();
+              }
+            }
+            reasons[position] = reason;
           }
           template["CancellationReasons"] = json!(reasons);
           template["Message"] = json!("TransactionConflict ConditionalCheckFailed SDK_SENTINEL");
@@ -232,6 +304,7 @@ impl HttpConnector for ObservedConnector {
         "api": api, "input": input, "upstream_body": upstream_body, "upstream_status": upstream_status,
         "delivered_body": std::str::from_utf8(response.body().bytes().unwrap()).unwrap(),
         "delivered_status": response.status().as_u16(), "injected_response": injected,
+        "scratch_reuse": scratch_reuse,
       });
       Ok(response)
     })
@@ -242,20 +315,24 @@ struct Observed {
   client: Client,
   traces: Traces,
   injection: Arc<Mutex<Option<Injection>>>,
+  transmit_scratch: TransmitScratch,
 }
 
 impl Observed {
   fn new(endpoint: &str) -> Self {
     let traces: Traces = Arc::new(Mutex::new(Vec::new()));
     let injection = Arc::new(Mutex::new(None));
+    let transmit_scratch = Arc::new(Mutex::new(None));
     let upstream = aws_smithy_http_client::Builder::new().build_http();
     let records = traces.clone();
     let control = injection.clone();
+    let scratch = transmit_scratch.clone();
     let http = http_client_fn(move |settings, components| {
       SharedHttpConnector::new(ObservedConnector {
         upstream: upstream.http_connector(settings, components),
         traces: records.clone(),
         injection: control.clone(),
+        transmit_scratch: scratch.clone(),
       })
     });
     let config = aws_sdk_dynamodb::Config::builder()
@@ -273,6 +350,7 @@ impl Observed {
       client: Client::from_conf(config),
       traces,
       injection,
+      transmit_scratch,
     }
   }
 
@@ -316,22 +394,38 @@ impl Fixture {
   }
 
   async fn open_json(&self) -> (JsonStore, Observed) {
+    self.open_json_with_retention(options().retention).await
+  }
+
+  async fn open_json_with_retention(&self, retention: RetentionSettings) -> (JsonStore, Observed) {
     let observed = Observed::new(&self.endpoint);
-    let store = JsonStore::open(observed.client.clone(), self.tables.clone(), options())
-      .await
-      .unwrap();
+    let store = JsonStore::open(
+      observed.client.clone(),
+      self.tables.clone(),
+      DynamoDbOptions { retention, ..options() },
+    )
+    .await
+    .unwrap();
     self.record("open-json", &observed.take(), &json!(null));
     (store, observed)
   }
 
   async fn open_opaque(&self, serializer: Arc<BytesSerializer>) -> (OpaqueStore, Observed) {
+    self.open_opaque_pair(serializer, Arc::new(NoSnapshot)).await
+  }
+
+  async fn open_opaque_pair(
+    &self,
+    event_serializer: Arc<dyn EventSerializer<Opaque>>,
+    snapshot_serializer: Arc<dyn SnapshotSerializer<Opaque>>,
+  ) -> (OpaqueStore, Observed) {
     let observed = Observed::new(&self.endpoint);
     let store = OpaqueStore::open_with_serializers(
       observed.client.clone(),
       self.tables.clone(),
       options(),
-      serializer,
-      Arc::new(NoSnapshot),
+      event_serializer,
+      snapshot_serializer,
     )
     .await
     .unwrap();
@@ -491,8 +585,16 @@ fn result_json(result: &Result<(), EventStoreError>) -> Value {
       seq_nr,
       head_seq_nr,
     }) => json!({"error": "optimistic-lock", "aid": aid, "seq_nr": seq_nr, "head_seq_nr": head_seq_nr}),
-    Err(EventStoreError::ContractViolation { rule, seq_nr, .. }) => {
-      json!({"error": "contract-violation", "rule": rule.to_string(), "seq_nr": seq_nr})
+    Err(EventStoreError::ContractViolation {
+      rule,
+      seq_nr,
+      snapshot_seq_nr,
+    }) => {
+      let mut value = json!({"error": "contract-violation", "rule": rule.to_string(), "seq_nr": seq_nr});
+      if let Some(number) = snapshot_seq_nr {
+        value["snapshot_seq_nr"] = json!(number);
+      }
+      value
     }
     Err(EventStoreError::Serialization { phase, source }) => {
       json!({"error": "serialization", "phase": phase.to_string(), "source": source.to_string()})
@@ -550,6 +652,1238 @@ fn assert_head_matches_journal(state: &Value, type_name: &str) {
   for name in ["seq_nr", "occurred_at", "manifest", "payload"] {
     assert_eq!(metadata[name], journal[name]);
   }
+}
+
+fn pair_actions<'a>(
+  fixture: &Fixture,
+  trace: &'a Value,
+  keep_history: bool,
+) -> (&'a Value, &'a Value, &'a Value, Option<&'a Value>) {
+  assert_eq!(trace["api"], "TransactWriteItems");
+  let writes = trace["input"]["TransactItems"].as_array().unwrap();
+  assert_eq!(writes.len(), if keep_history { 4 } else { 3 });
+  let (mut journal, mut head, mut current, mut history) = (None, None, None, None);
+  for write in writes {
+    assert_eq!(write.as_object().unwrap().len(), 1);
+    let action = write.get("Put").or_else(|| write.get("Update")).unwrap();
+    let table = action["TableName"].as_str().unwrap();
+    if table == fixture.tables.journal_table_name {
+      assert!(write.get("Put").is_some());
+      assert_eq!(action["ConditionExpression"], "attribute_not_exists(aid)");
+      assert_eq!(action["Item"].as_object().unwrap().len(), 5);
+      assert!(journal.replace(action).is_none());
+    } else if table == fixture.tables.head_table_name {
+      assert_eq!(action["ReturnValuesOnConditionCheckFailure"], "ALL_OLD");
+      assert!(head.replace(action).is_none());
+    } else {
+      assert_eq!(table, fixture.tables.snapshot_table_name);
+      assert!(write.get("Put").is_some());
+      assert!(action.get("ConditionExpression").is_none());
+      if action["Item"]["skey"]["N"] == "0" {
+        assert_eq!(action["Item"].as_object().unwrap().len(), 6);
+        assert!(current.replace(action).is_none());
+      } else {
+        assert_eq!(action["Item"].as_object().unwrap().len(), 7);
+        assert!(history.replace(action).is_none());
+      }
+    }
+  }
+  assert_eq!(history.is_some(), keep_history);
+  let (journal, head, current) = (journal.unwrap(), head.unwrap(), current.unwrap());
+  let seq_nr = journal["Item"]["seq_nr"]["N"].as_str().unwrap().parse::<u64>().unwrap();
+  let metadata = if seq_nr == 1 {
+    assert_eq!(head["ConditionExpression"], "attribute_not_exists(aid)");
+    assert_eq!(head["Item"].as_object().unwrap().len(), 4);
+    assert_eq!(head["Item"]["aid"], journal["Item"]["aid"]);
+    assert_eq!(head["Item"]["seq_nr"], journal["Item"]["seq_nr"]);
+    &head["Item"]["events"]
+  } else {
+    let values = &head["ExpressionAttributeValues"];
+    let (attribute, binding) = head["ConditionExpression"].as_str().unwrap().split_once('=').unwrap();
+    assert_eq!(attribute.trim(), "seq_nr");
+    assert_eq!(values[binding.trim()], json!({"N": (seq_nr - 1).to_string()}));
+    let assignments = head["UpdateExpression"]
+      .as_str()
+      .unwrap()
+      .trim()
+      .strip_prefix("SET ")
+      .unwrap()
+      .split(',')
+      .map(|assignment| {
+        let (attribute, binding) = assignment.split_once('=').unwrap();
+        (attribute.trim(), &values[binding.trim()])
+      })
+      .collect::<HashMap<_, _>>();
+    assert_eq!(assignments.len(), 2);
+    assert_eq!(assignments["seq_nr"], &journal["Item"]["seq_nr"]);
+    assert_eq!(assignments["events"], &values[":events"]);
+    assert_eq!(head["Key"]["aid"], journal["Item"]["aid"]);
+    &values[":events"]
+  };
+  assert_eq!(metadata["L"].as_array().unwrap().len(), 1);
+  assert_eq!(metadata["L"][0]["M"].as_object().unwrap().len(), 4);
+  for name in ["seq_nr", "occurred_at", "manifest", "payload"] {
+    assert_eq!(metadata["L"][0]["M"][name], journal["Item"][name]);
+  }
+  assert_eq!(current["Item"]["aid"], journal["Item"]["aid"]);
+  assert_eq!(current["Item"]["seq_nr"], journal["Item"]["seq_nr"]);
+  if let Some(history) = history {
+    assert_eq!(history["Item"]["skey"], journal["Item"]["seq_nr"]);
+    assert_eq!(history["Item"]["active_history_seq_nr"], journal["Item"]["seq_nr"]);
+    for name in ["aid", "seq_nr", "manifest", "payload", "last_updated_at"] {
+      assert_eq!(history["Item"][name], current["Item"][name]);
+    }
+  }
+  (journal, head, current, history)
+}
+
+fn assert_saved_snapshot(
+  item: &Value,
+  aid: &str,
+  seq_nr: u64,
+  millis: i64,
+  manifest: &str,
+  bytes: &[u8],
+  history: bool,
+) {
+  let mut expected = json!({
+    "aid": {"S": aid}, "skey": {"N": if history { seq_nr.to_string() } else { "0".into() }},
+    "seq_nr": {"N": seq_nr.to_string()}, "manifest": {"S": manifest}, "payload": {"B": bytes},
+    "last_updated_at": {"N": millis.to_string()},
+  });
+  if history {
+    expected["active_history_seq_nr"] = json!({"N": seq_nr.to_string()});
+  }
+  assert_eq!(item, &expected);
+}
+
+fn assert_pair_request_matches_saved(fixture: &Fixture, trace: &Value) {
+  let observer = fixture.raw.traces.lock().unwrap();
+  for write in trace["input"]["TransactItems"].as_array().unwrap() {
+    let action = write.get("Put").or_else(|| write.get("Update")).unwrap();
+    let table = &action["TableName"];
+    let key = action.get("Item").or_else(|| action.get("Key")).unwrap();
+    let read = observer
+      .iter()
+      .rev()
+      .find(|read| {
+        read["input"]["TableName"] == *table
+          && ((read["api"] == "Query" && read["input"]["ExpressionAttributeValues"][":aid"] == key["aid"])
+            || (read["api"] == "GetItem" && read["input"]["Key"]["aid"] == key["aid"]))
+      })
+      .unwrap();
+    assert_eq!(read["upstream_status"], 200);
+    assert!(read["injected_response"].is_null());
+    let body: Value = serde_json::from_str(read["upstream_body"].as_str().unwrap()).unwrap();
+    if table == &fixture.tables.head_table_name {
+      if let Some(item) = action.get("Item") {
+        assert_eq!(&body["Item"], item);
+      } else {
+        assert_eq!(body["Item"]["aid"], key["aid"]);
+        assert_eq!(body["Item"]["seq_nr"], action["ExpressionAttributeValues"][":next"]);
+        assert_eq!(body["Item"]["events"], action["ExpressionAttributeValues"][":events"]);
+      }
+    } else {
+      let sort = if table == &fixture.tables.journal_table_name {
+        "seq_nr"
+      } else {
+        "skey"
+      };
+      let item = body["Items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item[sort] == key[sort])
+        .unwrap();
+      assert_eq!(item, key);
+    }
+  }
+}
+
+#[tokio::test]
+async fn should_commit_pair_through_public_open_with_three_or_four_actions() {
+  for retention in [
+    RetentionSettings::current_only().with_mode(RetentionMode::Ttl { grace_seconds: 60 }),
+    RetentionSettings::keep_latest(1),
+    options().retention,
+  ] {
+    let keep_history = retention.keep_snapshot_count().is_some();
+    let fixture = Fixture::new().await;
+    let (store, observed) = fixture.open_json_with_retention(retention).await;
+    let aid = "Account-pair-json";
+    let mut previous = fixture.state(aid).await;
+    for seq_nr in [1, 2] {
+      let id = Id::new("Account", "pair-json");
+      let calls = id.type_calls.clone();
+      let nanos = if seq_nr == 1 { -876543211 } else { i64::MAX };
+      let millis = if seq_nr == 1 { -877 } else { 9223372036854 };
+      let event_manifest = if seq_nr == 1 { "" } else { "event:e\u{301}🙂" };
+      let snapshot_manifest = if seq_nr == 1 { "" } else { "snapshot:e\u{301}🙂" };
+      let payload = json!({"event": seq_nr, "values": [null, false, 42], "text": "e\u{301}🙂"});
+      let aggregate = json!({"state": seq_nr, "different": [true, "界"]});
+      let result = store
+        .persist_event_and_snapshot(
+          EventEnvelope::new(id, seq_nr, DateTime::from_timestamp_nanos(nanos), payload.clone())
+            .with_manifest(event_manifest),
+          SnapshotEnvelope::new(aggregate.clone(), seq_nr).with_manifest(snapshot_manifest),
+        )
+        .await;
+      assert!(result.is_ok(), "{result:?}");
+      assert_eq!(calls.load(Ordering::SeqCst), 1);
+      let traces = observed.take();
+      assert_eq!(traces.len(), 1);
+      pair_actions(&fixture, &traces[0], keep_history);
+      assert_eq!(traces[0]["upstream_status"], 200);
+      assert_eq!(traces[0]["upstream_body"], traces[0]["delivered_body"]);
+      assert!(traces[0]["injected_response"].is_null());
+      let after = fixture.state(aid).await;
+      assert_eq!(after["journal"].as_array().unwrap().len(), seq_nr as usize);
+      assert_saved_event(
+        &after["journal"][(seq_nr - 1) as usize],
+        aid,
+        seq_nr,
+        nanos,
+        event_manifest,
+        &serde_json::to_vec(&payload).unwrap(),
+      );
+      assert_head_matches_journal(&after, "Account");
+      assert_eq!(
+        after["snapshot"].as_array().unwrap().len(),
+        if keep_history { seq_nr as usize + 1 } else { 1 }
+      );
+      assert_saved_snapshot(
+        &after["snapshot"][0],
+        aid,
+        seq_nr,
+        millis,
+        snapshot_manifest,
+        &serde_json::to_vec(&aggregate).unwrap(),
+        false,
+      );
+      if keep_history {
+        assert_saved_snapshot(
+          &after["snapshot"][seq_nr as usize],
+          aid,
+          seq_nr,
+          millis,
+          snapshot_manifest,
+          &serde_json::to_vec(&aggregate).unwrap(),
+          true,
+        );
+      }
+      if seq_nr == 2 {
+        assert_eq!(after["journal"][0], previous["journal"][0]);
+        if keep_history {
+          assert_eq!(after["snapshot"][1], previous["snapshot"][1]);
+        }
+      }
+      assert_eq!(after["configuration"], previous["configuration"]);
+      assert_pair_request_matches_saved(&fixture, &traces[0]);
+      fixture.record(
+        &format!("pair-json-{seq_nr}"),
+        &traces,
+        &json!({"before": previous, "after": after, "result": result_json(&result)}),
+      );
+      let read = store
+        .get_events_by_id_since_seq_nr(&Id::new("Account", "pair-json"), 0)
+        .await
+        .unwrap();
+      assert_eq!(read.len(), seq_nr as usize);
+      let mut restored = Vec::new();
+      for (number, restored_event) in read.iter().enumerate() {
+        assert_eq!(restored_event.aggregate_id().type_name, "Account");
+        assert_eq!(restored_event.aggregate_id().value, "pair-json");
+        let item = &after["journal"][number];
+        assert_eq!(restored_event.seq_nr().to_string(), item["seq_nr"]["N"]);
+        assert_eq!(
+          restored_event.occurred_at().timestamp_nanos_opt().unwrap().to_string(),
+          item["occurred_at"]["N"]
+        );
+        assert_eq!(restored_event.manifest(), item["manifest"]["S"]);
+        assert_eq!(
+          json!(serde_json::to_vec(restored_event.payload()).unwrap()),
+          item["payload"]["B"]
+        );
+        restored.push(json!({"seq_nr": restored_event.seq_nr(), "occurred_at": restored_event.occurred_at(), "manifest": restored_event.manifest(), "payload": restored_event.payload()}));
+      }
+      let reads = observed.take();
+      assert_eq!(reads.len(), 1);
+      assert_eq!(reads[0]["api"], "Query");
+      assert_eq!(reads[0]["input"]["TableName"], fixture.tables.journal_table_name);
+      assert_eq!(reads[0]["input"]["ConsistentRead"], true);
+      fixture.record(
+        &format!("pair-json-read-{seq_nr}"),
+        &reads,
+        &json!({"events": restored}),
+      );
+      previous = after;
+    }
+    fixture.close().await;
+  }
+}
+
+#[tokio::test]
+async fn should_preserve_non_serde_pair_bytes_across_shared_scratch_reuse() {
+  let fixture = Fixture::new().await;
+  let scratch = Arc::new(Mutex::new(Vec::new()));
+  let event_serializer = Arc::new(ScratchSerializer {
+    scratch: scratch.clone(),
+    inputs: Mutex::new(Vec::new()),
+    previous: Mutex::new(Vec::new()),
+  });
+  let snapshot_serializer = Arc::new(ScratchSerializer {
+    scratch: scratch.clone(),
+    inputs: Mutex::new(Vec::new()),
+    previous: Mutex::new(Vec::new()),
+  });
+  let (store, observed) = fixture
+    .open_opaque_pair(event_serializer.clone(), snapshot_serializer.clone())
+    .await;
+  *observed.transmit_scratch.lock().unwrap() = Some(scratch.clone());
+  let aid = "Opaque-pair-scratch";
+  let mut previous = fixture.state(aid).await;
+  for seq_nr in [1, 2] {
+    let event_bytes = vec![0, 255, seq_nr as u8, 128];
+    let snapshot_bytes = vec![128, 0, seq_nr as u8, 255, 127];
+    let result = store
+      .persist_event_and_snapshot(
+        event(Id::new("Opaque", "pair-scratch"), seq_nr, Opaque(event_bytes.clone())).with_manifest("event-bytes"),
+        SnapshotEnvelope::new(Opaque(snapshot_bytes.clone()), seq_nr).with_manifest("snapshot-bytes"),
+      )
+      .await;
+    assert!(result.is_ok(), "{result:?}");
+    assert_eq!(*scratch.lock().unwrap(), vec![0xaa; snapshot_bytes.len()]);
+    assert_eq!(
+      snapshot_serializer.previous.lock().unwrap()[(seq_nr - 1) as usize],
+      event_bytes
+    );
+    let traces = observed.take();
+    assert_eq!(traces.len(), 1);
+    pair_actions(&fixture, &traces[0], true);
+    assert_eq!(traces[0]["scratch_reuse"]["before"], json!(snapshot_bytes));
+    assert_eq!(
+      traces[0]["scratch_reuse"]["after"],
+      json!(vec![0xaa; snapshot_bytes.len()])
+    );
+    let after = fixture.state(aid).await;
+    assert_saved_event(
+      &after["journal"][(seq_nr - 1) as usize],
+      aid,
+      seq_nr,
+      -876543211,
+      "event-bytes",
+      &event_bytes,
+    );
+    assert_head_matches_journal(&after, "Opaque");
+    assert_saved_snapshot(
+      &after["snapshot"][0],
+      aid,
+      seq_nr,
+      -877,
+      "snapshot-bytes",
+      &snapshot_bytes,
+      false,
+    );
+    assert_saved_snapshot(
+      &after["snapshot"][seq_nr as usize],
+      aid,
+      seq_nr,
+      -877,
+      "snapshot-bytes",
+      &snapshot_bytes,
+      true,
+    );
+    if seq_nr == 2 {
+      assert_eq!(after["journal"][0], previous["journal"][0]);
+      assert_eq!(after["snapshot"][1], previous["snapshot"][1]);
+    }
+    assert_pair_request_matches_saved(&fixture, &traces[0]);
+    fixture.record(&format!("pair-scratch-{seq_nr}"), &traces, &json!({"before": previous, "after": after, "event_inputs": *event_serializer.inputs.lock().unwrap(), "snapshot_inputs": *snapshot_serializer.inputs.lock().unwrap(), "result": result_json(&result)}));
+    previous = after;
+  }
+  assert_eq!(
+    *event_serializer.inputs.lock().unwrap(),
+    vec![vec![0, 255, 1, 128], vec![0, 255, 2, 128]]
+  );
+  assert_eq!(
+    *snapshot_serializer.inputs.lock().unwrap(),
+    vec![vec![128, 0, 1, 255, 127], vec![128, 0, 2, 255, 127]]
+  );
+  let read = store
+    .get_events_by_id_since_seq_nr(&Id::new("Opaque", "pair-scratch"), 0)
+    .await
+    .unwrap();
+  assert_eq!(read.len(), 2);
+  for (index, restored) in read.iter().enumerate() {
+    assert_eq!(restored.payload().0, vec![0, 255, index as u8 + 1, 128]);
+  }
+  fixture.record(
+    "pair-scratch-read",
+    &observed.take(),
+    &json!({"payloads": read.iter().map(|event| &event.payload().0).collect::<Vec<_>>() }),
+  );
+  fixture.close().await;
+}
+
+#[tokio::test]
+async fn should_reject_pair_envelope_violations_before_both_serializers_or_requests() {
+  let fixture = Fixture::new().await;
+  let event_serializer = Arc::new(BytesSerializer::default());
+  let snapshot_serializer = Arc::new(BytesSerializer::default());
+  let (store, observed) = fixture
+    .open_opaque_pair(event_serializer.clone(), snapshot_serializer.clone())
+    .await;
+  store
+    .persist_event_and_snapshot(
+      event(Id::new("Account", "pair-input"), 1, Opaque(vec![1])),
+      SnapshotEnvelope::new(Opaque(vec![11]), 1),
+    )
+    .await
+    .unwrap();
+  observed.take();
+  let before = fixture.state("Account-pair-input").await;
+  let invalid_time = DateTime::from_timestamp(9223372037, 0).unwrap();
+  let valid_time = DateTime::from_timestamp_nanos(0);
+  for (name, id, seq_nr, time, snapshot_seq_nr, rule) in [
+    (
+      "type-before-seq-time-match",
+      Id::new("Bad-Type", "pair-input"),
+      SEQ_NR_MAX + 1,
+      invalid_time,
+      0,
+      ContractRule::T11,
+    ),
+    (
+      "aid-before-seq-time-match",
+      Id::new("Account", &"界".repeat(339)),
+      SEQ_NR_MAX + 1,
+      invalid_time,
+      0,
+      ContractRule::T12,
+    ),
+    (
+      "seq-limit-before-time-match",
+      Id::new("Account", "pair-input"),
+      SEQ_NR_MAX + 1,
+      invalid_time,
+      0,
+      ContractRule::T9,
+    ),
+    (
+      "zero-before-time-match",
+      Id::new("Account", "pair-input"),
+      0,
+      invalid_time,
+      1,
+      ContractRule::W6,
+    ),
+    (
+      "time-before-match",
+      Id::new("Account", "pair-input"),
+      2,
+      invalid_time,
+      1,
+      ContractRule::T13,
+    ),
+    (
+      "match",
+      Id::new("Account", "pair-input"),
+      2,
+      valid_time,
+      1,
+      ContractRule::W9,
+    ),
+    (
+      "snapshot-limit-is-match",
+      Id::new("Account", "pair-input"),
+      2,
+      valid_time,
+      SEQ_NR_MAX + 1,
+      ContractRule::W9,
+    ),
+  ] {
+    let result = store
+      .persist_event_and_snapshot(
+        EventEnvelope::new(id, seq_nr, time, Opaque(vec![2])),
+        SnapshotEnvelope::new(Opaque(vec![22]), snapshot_seq_nr),
+      )
+      .await;
+    let error = result.as_ref().unwrap_err();
+    assert!(matches!(error, EventStoreError::ContractViolation { rule: actual, .. } if *actual == rule));
+    assert!(error.to_string().contains(&rule.to_string()));
+    if rule == ContractRule::W9 {
+      assert!(
+        matches!(error, EventStoreError::ContractViolation { seq_nr: Some(2), snapshot_seq_nr: Some(n), .. } if *n == snapshot_seq_nr)
+      );
+      assert_eq!(result_json(&result)["snapshot_seq_nr"], snapshot_seq_nr);
+      assert!(error
+        .to_string()
+        .contains(&format!("snapshot_seq_nr={snapshot_seq_nr}")));
+      assert!(error.to_string().contains("seq_nr=2"));
+    }
+    assert_eq!(event_serializer.calls.load(Ordering::SeqCst), 1);
+    assert_eq!(snapshot_serializer.calls.load(Ordering::SeqCst), 1);
+    let traces = observed.take();
+    assert!(traces.is_empty());
+    let after = fixture.state("Account-pair-input").await;
+    assert_eq!(after, before);
+    fixture.record(&format!("pair-reject-{name}"), &traces, &json!({"before": before, "after": after, "event_serializer_calls": event_serializer.calls.load(Ordering::SeqCst), "snapshot_serializer_calls": snapshot_serializer.calls.load(Ordering::SeqCst), "result": result_json(&result)}));
+  }
+  fixture.close().await;
+}
+
+#[tokio::test]
+async fn should_keep_each_pair_serializer_failure_cause_and_prior_records_unchanged() {
+  let fixture = Fixture::new().await;
+  let event_serializer = Arc::new(BytesSerializer::default());
+  let snapshot_serializer = Arc::new(BytesSerializer::default());
+  let (store, observed) = fixture
+    .open_opaque_pair(event_serializer.clone(), snapshot_serializer.clone())
+    .await;
+  store
+    .persist_event_and_snapshot(
+      event(Id::new("Account", "pair-serialization"), 1, Opaque(vec![1])),
+      SnapshotEnvelope::new(Opaque(vec![11]), 1),
+    )
+    .await
+    .unwrap();
+  observed.take();
+  let before = fixture.state("Account-pair-serialization").await;
+  for (name, fail_event, phase, event_calls, snapshot_calls) in [
+    ("event", true, SerializationPhase::SerializeEvent, 2, 1),
+    ("snapshot", false, SerializationPhase::SerializeSnapshot, 3, 2),
+  ] {
+    event_serializer.fail.store(fail_event, Ordering::SeqCst);
+    snapshot_serializer.fail.store(!fail_event, Ordering::SeqCst);
+    let result = store
+      .persist_event_and_snapshot(
+        event(Id::new("Account", "pair-serialization"), 2, Opaque(vec![2])),
+        SnapshotEnvelope::new(Opaque(vec![22]), 2),
+      )
+      .await;
+    let error = result.as_ref().unwrap_err();
+    assert!(matches!(error, EventStoreError::Serialization { phase: actual, .. } if *actual == phase));
+    let cause = error.source().unwrap().downcast_ref::<std::io::Error>().unwrap();
+    assert_eq!(cause.kind(), std::io::ErrorKind::InvalidData);
+    assert_eq!(cause.to_string(), "SERIALIZER_CAUSE");
+    assert!(!error.to_string().contains("SERIALIZER_CAUSE"));
+    assert_eq!(event_serializer.calls.load(Ordering::SeqCst), event_calls);
+    assert_eq!(snapshot_serializer.calls.load(Ordering::SeqCst), snapshot_calls);
+    let traces = observed.take();
+    assert!(traces.is_empty());
+    let after = fixture.state("Account-pair-serialization").await;
+    assert_eq!(after, before);
+    fixture.record(&format!("pair-serialize-failure-{name}"), &traces, &json!({"before": before, "after": after, "event_serializer_calls": event_calls, "snapshot_serializer_calls": snapshot_calls, "result": result_json(&result)}));
+  }
+  fixture.close().await;
+}
+
+#[tokio::test]
+async fn should_reject_each_pair_item_size_overflow_without_requests_or_partial_commit() {
+  let fixture = Fixture::new().await;
+  let event_serializer = Arc::new(BytesSerializer::default());
+  let snapshot_serializer = Arc::new(BytesSerializer::default());
+  let (store, observed) = fixture
+    .open_opaque_pair(event_serializer.clone(), snapshot_serializer.clone())
+    .await;
+  let short_id = Id::new("Account", "pair-size");
+  let long_id = Id::new(&"x".repeat(1022), "");
+  for id in [&short_id, &long_id] {
+    store
+      .persist_event_and_snapshot(
+        event(id.clone(), 1, Opaque(vec![1])),
+        SnapshotEnvelope::new(Opaque(vec![11]), 1),
+      )
+      .await
+      .unwrap();
+  }
+  observed.take();
+  for (name, id, event_manifest, snapshot_manifest, event_len, snapshot_len) in [
+    (
+      "journal-payload",
+      short_id.clone(),
+      String::new(),
+      String::new(),
+      409600,
+      1,
+    ),
+    (
+      "journal-manifest",
+      short_id.clone(),
+      "界".repeat(136534),
+      String::new(),
+      0,
+      1,
+    ),
+    ("head-overhead", long_id, String::new(), String::new(), 408002, 1),
+    (
+      "current-payload",
+      short_id.clone(),
+      String::new(),
+      String::new(),
+      1,
+      409600,
+    ),
+    (
+      "current-manifest",
+      short_id.clone(),
+      String::new(),
+      "界".repeat(136534),
+      1,
+      0,
+    ),
+    // currentの上界は409588、追加履歴属性を含むhistoryの上界は409630。
+    ("history-overhead", short_id, String::new(), String::new(), 1, 409465),
+  ] {
+    let aid = format!("{}-{}", id.type_name, id.value);
+    let before = fixture.state(&aid).await;
+    let event_calls = event_serializer.calls.load(Ordering::SeqCst);
+    let snapshot_calls = snapshot_serializer.calls.load(Ordering::SeqCst);
+    let result = store
+      .persist_event_and_snapshot(
+        event(id, 2, Opaque(vec![1; event_len])).with_manifest(event_manifest),
+        SnapshotEnvelope::new(Opaque(vec![2; snapshot_len]), 2).with_manifest(snapshot_manifest),
+      )
+      .await;
+    assert!(matches!(
+      &result,
+      Err(EventStoreError::ContractViolation {
+        rule: ContractRule::ItemSizeLimit,
+        seq_nr: Some(2),
+        ..
+      })
+    ));
+    assert_eq!(result_json(&result)["rule"], "D-7");
+    assert_eq!(event_serializer.calls.load(Ordering::SeqCst), event_calls + 1);
+    assert_eq!(snapshot_serializer.calls.load(Ordering::SeqCst), snapshot_calls + 1);
+    let traces = observed.take();
+    assert!(traces.is_empty());
+    let after = fixture.state(&aid).await;
+    assert_eq!(after, before);
+    fixture.record(&format!("pair-size-{name}"), &traces, &json!({"before": before, "after": after, "event_bytes": event_len, "snapshot_bytes": snapshot_len, "result": result_json(&result)}));
+  }
+  fixture.close().await;
+}
+
+#[tokio::test]
+async fn should_classify_real_pair_cancellations_using_old_head_without_reading() {
+  let fixture = Fixture::new().await;
+  let (store, observed) = fixture.open_json().await;
+  for seq_nr in [1, 2, 3] {
+    store
+      .persist_event_and_snapshot(
+        event(Id::new("Account", "pair-cancel"), seq_nr, json!({"event": seq_nr})),
+        SnapshotEnvelope::new(json!({"state": seq_nr}), seq_nr),
+      )
+      .await
+      .unwrap();
+  }
+  observed.take();
+  for (name, value, seq_nr, expected) in [
+    (
+      "new-head",
+      "pair-cancel",
+      1,
+      json!({"error": "optimistic-lock", "aid": "Account-pair-cancel", "seq_nr": 1, "head_seq_nr": null}),
+    ),
+    (
+      "duplicate",
+      "pair-cancel",
+      3,
+      json!({"error": "optimistic-lock", "aid": "Account-pair-cancel", "seq_nr": 3, "head_seq_nr": 3}),
+    ),
+    (
+      "older",
+      "pair-cancel",
+      2,
+      json!({"error": "optimistic-lock", "aid": "Account-pair-cancel", "seq_nr": 2, "head_seq_nr": 3}),
+    ),
+    (
+      "gap",
+      "pair-cancel",
+      5,
+      json!({"error": "contract-violation", "rule": "W-8", "seq_nr": 5}),
+    ),
+    (
+      "no-head",
+      "pair-absent",
+      2,
+      json!({"error": "contract-violation", "rule": "W-8", "seq_nr": 2}),
+    ),
+  ] {
+    let aid = format!("Account-{value}");
+    let before = fixture.state(&aid).await;
+    let result = store
+      .persist_event_and_snapshot(
+        event(Id::new("Account", value), seq_nr, json!("loser-event")),
+        SnapshotEnvelope::new(json!("loser-snapshot"), seq_nr),
+      )
+      .await;
+    assert_eq!(result_json(&result), expected);
+    let traces = observed.take();
+    assert_eq!(traces.len(), 1);
+    pair_actions(&fixture, &traces[0], true);
+    assert_eq!(traces[0]["upstream_status"], 400);
+    assert_eq!(traces[0]["upstream_body"], traces[0]["delivered_body"]);
+    assert!(traces[0]["injected_response"].is_null());
+    let body: Value = serde_json::from_str(traces[0]["upstream_body"].as_str().unwrap()).unwrap();
+    let writes = traces[0]["input"]["TransactItems"].as_array().unwrap();
+    assert_eq!(body["CancellationReasons"].as_array().unwrap().len(), writes.len());
+    for (position, write) in writes.iter().enumerate() {
+      let action = write.get("Put").or_else(|| write.get("Update")).unwrap();
+      if action["TableName"] == fixture.tables.head_table_name {
+        assert_eq!(body["CancellationReasons"][position]["Code"], "ConditionalCheckFailed");
+        if value == "pair-cancel" {
+          assert_eq!(
+            body["CancellationReasons"][position]["Item"]["seq_nr"],
+            json!({"N": "3"})
+          );
+        } else {
+          assert!(body["CancellationReasons"][position]["Item"].is_null());
+        }
+      } else if action["TableName"] == fixture.tables.snapshot_table_name {
+        assert_eq!(body["CancellationReasons"][position]["Code"], "None");
+      }
+    }
+    let after = fixture.state(&aid).await;
+    assert_eq!(after, before);
+    fixture.record(
+      &format!("pair-real-{name}"),
+      &traces,
+      &json!({"before": before, "after": after, "result": result_json(&result)}),
+    );
+  }
+  let mut duplicate = fixture
+    .query(&fixture.tables.journal_table_name, "Account-pair-cancel")
+    .await
+    .pop()
+    .unwrap();
+  duplicate.insert("seq_nr".into(), AttributeValue::N("4".into()));
+  fixture.put(&fixture.tables.journal_table_name, duplicate).await;
+  let before = fixture.state("Account-pair-cancel").await;
+  let result = store
+    .persist_event_and_snapshot(
+      event(Id::new("Account", "pair-cancel"), 4, json!("loser-event")),
+      SnapshotEnvelope::new(json!("loser-snapshot"), 4),
+    )
+    .await;
+  assert_eq!(
+    result_json(&result),
+    json!({"error": "optimistic-lock", "aid": "Account-pair-cancel", "seq_nr": 4, "head_seq_nr": null})
+  );
+  let traces = observed.take();
+  assert_eq!(traces.len(), 1);
+  pair_actions(&fixture, &traces[0], true);
+  assert_eq!(traces[0]["upstream_status"], 400);
+  assert!(traces[0]["injected_response"].is_null());
+  let body: Value = serde_json::from_str(traces[0]["upstream_body"].as_str().unwrap()).unwrap();
+  for (position, write) in traces[0]["input"]["TransactItems"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .enumerate()
+  {
+    let table = &write.get("Put").or_else(|| write.get("Update")).unwrap()["TableName"];
+    assert_eq!(
+      body["CancellationReasons"][position]["Code"],
+      if table == &fixture.tables.journal_table_name {
+        "ConditionalCheckFailed"
+      } else {
+        "None"
+      }
+    );
+  }
+  let after = fixture.state("Account-pair-cancel").await;
+  assert_eq!(after, before);
+  fixture.record(
+    "pair-real-journal",
+    &traces,
+    &json!({"before": before, "after": after, "result": result_json(&result)}),
+  );
+  fixture.close().await;
+}
+
+#[tokio::test]
+async fn should_classify_pair_cancellation_positions_and_priorities_with_original_sdk_causes() {
+  for keep_history in [false, true] {
+    let fixture = Fixture::new().await;
+    let retention = if keep_history {
+      options().retention
+    } else {
+      RetentionSettings::current_only()
+    };
+    let (store, observed) = fixture.open_json_with_retention(retention).await;
+    let aid = "Account-pair-injection";
+    store
+      .persist_event_and_snapshot(
+        event(Id::new("Account", "pair-injection"), 1, json!("committed-event")),
+        SnapshotEnvelope::new(json!("committed-state"), 1),
+      )
+      .await
+      .unwrap();
+    observed.take();
+    let actual = store
+      .persist_event_and_snapshot(
+        event(Id::new("Account", "pair-injection"), 1, json!("duplicate-event")),
+        SnapshotEnvelope::new(json!("duplicate-state"), 1),
+      )
+      .await;
+    assert!(matches!(&actual, Err(EventStoreError::OptimisticLock { .. })));
+    let traces = observed.take();
+    assert_eq!(traces.len(), 1);
+    pair_actions(&fixture, &traces[0], keep_history);
+    assert_eq!(traces[0]["upstream_status"], 400);
+    assert!(traces[0]["injected_response"].is_null());
+    let template: Value = serde_json::from_str(traces[0]["upstream_body"].as_str().unwrap()).unwrap();
+    let head_position = traces[0]["input"]["TransactItems"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .position(|write| {
+        write.get("Put").or_else(|| write.get("Update")).unwrap()["TableName"] == fixture.tables.head_table_name
+      })
+      .unwrap();
+    let old_head = template["CancellationReasons"][head_position]["Item"].clone();
+    assert_eq!(old_head["seq_nr"], json!({"N": "1"}));
+    fixture.record(
+      "pair-injection-template-real",
+      &traces,
+      &json!({"result": result_json(&actual)}),
+    );
+    let before = fixture.state(aid).await;
+    let target = |table: &str, skey, code: &str| (table.to_owned(), skey, code.to_owned());
+    let journal = &fixture.tables.journal_table_name;
+    let head = &fixture.tables.head_table_name;
+    let snapshot = &fixture.tables.snapshot_table_name;
+    let lock = json!({"error": "optimistic-lock", "aid": aid, "seq_nr": 3, "head_seq_nr": null});
+    let gap = json!({"error": "contract-violation", "rule": "W-8", "seq_nr": 3});
+    let mut cases = vec![
+      (
+        "journal-conflict",
+        vec![
+          target(journal, None, "TransactionConflict"),
+          target(head, None, "ConditionalCheckFailed"),
+        ],
+        3,
+        Some(old_head.clone()),
+        lock.clone(),
+      ),
+      (
+        "head-conflict",
+        vec![
+          target(journal, None, "ConditionalCheckFailed"),
+          target(head, None, "TransactionConflict"),
+        ],
+        3,
+        None,
+        lock.clone(),
+      ),
+      (
+        "current-conflict-before-head-gap",
+        vec![
+          target(head, None, "ConditionalCheckFailed"),
+          target(snapshot, Some(0), "TransactionConflict"),
+        ],
+        3,
+        Some(old_head.clone()),
+        lock.clone(),
+      ),
+      (
+        "head-before-journal-and-current",
+        vec![
+          target(journal, None, "ConditionalCheckFailed"),
+          target(head, None, "ConditionalCheckFailed"),
+          target(snapshot, Some(0), "ThrottlingError"),
+        ],
+        3,
+        Some(old_head.clone()),
+        gap.clone(),
+      ),
+      (
+        "journal-before-current",
+        vec![
+          target(journal, None, "ConditionalCheckFailed"),
+          target(snapshot, Some(0), "ThrottlingError"),
+        ],
+        3,
+        None,
+        lock.clone(),
+      ),
+      (
+        "current-storage",
+        vec![target(snapshot, Some(0), "ProvisionedThroughputExceeded")],
+        2,
+        None,
+        json!({"error":"storage","operation":"append"}),
+      ),
+      (
+        "unexpected-head-before-journal",
+        vec![
+          target(journal, None, "ConditionalCheckFailed"),
+          target(head, None, "ConditionalCheckFailed"),
+        ],
+        2,
+        Some(old_head.clone()),
+        json!({"error":"storage","operation":"append"}),
+      ),
+    ];
+    if keep_history {
+      cases.extend([
+        (
+          "history-conflict-before-head-gap",
+          vec![
+            target(head, None, "ConditionalCheckFailed"),
+            target(snapshot, Some(3), "TransactionConflict"),
+          ],
+          3,
+          Some(old_head.clone()),
+          lock,
+        ),
+        (
+          "history-storage",
+          vec![target(snapshot, Some(2), "ThrottlingError")],
+          2,
+          None,
+          json!({"error":"storage","operation":"append"}),
+        ),
+        (
+          "current-conflict-before-history-storage",
+          vec![
+            target(snapshot, Some(0), "TransactionConflict"),
+            target(snapshot, Some(3), "ThrottlingError"),
+          ],
+          3,
+          None,
+          json!({"error":"optimistic-lock","aid":aid,"seq_nr":3,"head_seq_nr":null}),
+        ),
+      ]);
+    }
+    for (name, codes, seq_nr, old, expected) in cases {
+      *observed.injection.lock().unwrap() = Some(Injection::Cancellation {
+        template: template.clone(),
+        codes: codes.clone(),
+        old_head: old,
+      });
+      let result = store
+        .persist_event_and_snapshot(
+          event(
+            Id::new("Account", "pair-injection"),
+            seq_nr,
+            json!("never-committed-event"),
+          ),
+          SnapshotEnvelope::new(json!("never-committed-state"), seq_nr),
+        )
+        .await;
+      let actual = result_json(&result);
+      for (key, value) in expected.as_object().unwrap() {
+        assert_eq!(&actual[key], value, "{name}:{key}");
+      }
+      let error = result.as_ref().unwrap_err();
+      assert!(!error.to_string().contains("SDK_SENTINEL"));
+      let traces = observed.take();
+      assert_eq!(traces.len(), 1);
+      pair_actions(&fixture, &traces[0], keep_history);
+      assert!(traces[0]["upstream_body"].is_null());
+      assert_eq!(traces[0]["delivered_status"], 400);
+      assert!(observed.injection.lock().unwrap().is_none());
+      let delivered: Value = serde_json::from_str(traces[0]["delivered_body"].as_str().unwrap()).unwrap();
+      assert_eq!(&delivered, &traces[0]["injected_response"]);
+      let writes = traces[0]["input"]["TransactItems"].as_array().unwrap();
+      assert_eq!(delivered["CancellationReasons"].as_array().unwrap().len(), writes.len());
+      for (table, skey, code) in &codes {
+        let position = writes
+          .iter()
+          .position(|write| {
+            let action = write.get("Put").or_else(|| write.get("Update")).unwrap();
+            let key = action.get("Item").or_else(|| action.get("Key")).unwrap();
+            action["TableName"] == *table
+              && skey.is_none_or(|number| {
+                key["skey"]["N"].as_str().and_then(|value| value.parse::<u64>().ok()) == Some(number)
+              })
+          })
+          .unwrap();
+        assert_eq!(delivered["CancellationReasons"][position]["Code"], *code);
+      }
+      if expected["error"] == "storage" {
+        let sdk = error
+          .source()
+          .unwrap()
+          .downcast_ref::<SdkError<TransactWriteItemsError>>()
+          .unwrap();
+        let Some(TransactWriteItemsError::TransactionCanceledException(canceled)) = sdk.as_service_error() else {
+          panic!("{sdk:?}")
+        };
+        assert_eq!(canceled.cancellation_reasons().len(), writes.len());
+        for (position, reason) in canceled.cancellation_reasons().iter().enumerate() {
+          assert_eq!(
+            reason.code(),
+            delivered["CancellationReasons"][position]["Code"].as_str()
+          );
+        }
+        assert_eq!(
+          sdk.raw_response().unwrap().body().bytes().unwrap(),
+          traces[0]["delivered_body"].as_str().unwrap().as_bytes()
+        );
+      } else {
+        assert!(error.source().is_none());
+        if expected["error"] == "contract-violation" {
+          assert!(error.to_string().contains("W-8"));
+        }
+      }
+      let after = fixture.state(aid).await;
+      assert_eq!(after, before);
+      fixture.record(
+        &format!("pair-injected-{name}"),
+        &traces,
+        &json!({"before":before,"after":after,"expected":expected,"result":actual}),
+      );
+    }
+    for (name, injection) in [
+      (
+        "missing-reasons",
+        Injection::Response(
+          json!({"__type":template["__type"],"Message":"TransactionConflict ConditionalCheckFailed SDK_SENTINEL"}),
+        ),
+      ),
+      (
+        "other-service",
+        Injection::Response(
+          json!({"__type":"InternalServerError","Message":"TransactionConflict ConditionalCheckFailed SDK_SENTINEL"}),
+        ),
+      ),
+      ("communication", Injection::Communication),
+    ] {
+      *observed.injection.lock().unwrap() = Some(injection);
+      let result = store
+        .persist_event_and_snapshot(
+          event(Id::new("Account", "pair-injection"), 2, json!("never-committed-event")),
+          SnapshotEnvelope::new(json!("never-committed-state"), 2),
+        )
+        .await;
+      let error = result.as_ref().unwrap_err();
+      assert!(matches!(
+        error,
+        EventStoreError::Storage {
+          operation: StorageOperation::Append,
+          ..
+        }
+      ));
+      let sdk = error
+        .source()
+        .unwrap()
+        .downcast_ref::<SdkError<TransactWriteItemsError>>()
+        .unwrap();
+      match (name, sdk) {
+        ("communication", SdkError::DispatchFailure(failure)) => {
+          let cause = failure
+            .as_connector_error()
+            .unwrap()
+            .source()
+            .unwrap()
+            .downcast_ref::<std::io::Error>()
+            .unwrap();
+          assert_eq!(cause.kind(), std::io::ErrorKind::ConnectionReset);
+          assert_eq!(cause.to_string(), "COMMUNICATION_CAUSE");
+        }
+        ("missing-reasons", _) => {
+          let Some(TransactWriteItemsError::TransactionCanceledException(canceled)) = sdk.as_service_error() else {
+            panic!("{sdk:?}")
+          };
+          assert!(canceled.cancellation_reasons().is_empty());
+        }
+        ("other-service", _) => assert!(matches!(
+          sdk.as_service_error(),
+          Some(TransactWriteItemsError::InternalServerError(_))
+        )),
+        _ => panic!("{sdk:?}"),
+      }
+      assert!(!error.to_string().contains("SDK_SENTINEL"));
+      let traces = observed.take();
+      assert_eq!(traces.len(), 1);
+      pair_actions(&fixture, &traces[0], keep_history);
+      assert!(traces[0]["upstream_body"].is_null());
+      if name != "communication" {
+        assert_eq!(
+          sdk.raw_response().unwrap().body().bytes().unwrap(),
+          traces[0]["delivered_body"].as_str().unwrap().as_bytes()
+        );
+      }
+      let after = fixture.state(aid).await;
+      assert_eq!(after, before);
+      fixture.record(
+        &format!("pair-injected-{name}"),
+        &traces,
+        &json!({"before":before,"after":after,"result":result_json(&result)}),
+      );
+    }
+    fixture.close().await;
+  }
+}
+
+#[tokio::test]
+async fn should_commit_exactly_one_complete_pair_for_parallel_new_and_existing_head() {
+  for retention in [RetentionSettings::current_only(), options().retention] {
+    let keep_history = retention.keep_snapshot_count().is_some();
+    let fixture = Fixture::new().await;
+    let (store, observed) = fixture.open_json_with_retention(retention).await;
+    let aid = "Account-pair-parallel";
+    let mut previous = fixture.state(aid).await;
+    for seq_nr in [1, 2] {
+      let payloads = [
+        json!({"event":"left","seq":seq_nr}),
+        json!({"event":"right","seq":seq_nr}),
+      ];
+      let aggregates = [
+        json!({"state":"left","seq":seq_nr}),
+        json!({"state":"right","seq":seq_nr}),
+      ];
+      let (left, right) = tokio::join!(
+        store.persist_event_and_snapshot(
+          event(Id::new("Account", "pair-parallel"), seq_nr, payloads[0].clone()),
+          SnapshotEnvelope::new(aggregates[0].clone(), seq_nr)
+        ),
+        store.persist_event_and_snapshot(
+          event(Id::new("Account", "pair-parallel"), seq_nr, payloads[1].clone()),
+          SnapshotEnvelope::new(aggregates[1].clone(), seq_nr)
+        ),
+      );
+      let results = [left, right];
+      assert_eq!(results.iter().filter(|result| result.is_ok()).count(), 1);
+      let winner = results.iter().position(Result::is_ok).unwrap();
+      assert!(matches!(
+        results[1 - winner].as_ref().unwrap_err(),
+        EventStoreError::OptimisticLock { .. }
+      ));
+      let after = fixture.state(aid).await;
+      assert_eq!(after["journal"].as_array().unwrap().len(), seq_nr as usize);
+      assert_saved_event(
+        &after["journal"][(seq_nr - 1) as usize],
+        aid,
+        seq_nr,
+        -876543211,
+        "",
+        &serde_json::to_vec(&payloads[winner]).unwrap(),
+      );
+      assert_head_matches_journal(&after, "Account");
+      assert_eq!(
+        after["snapshot"].as_array().unwrap().len(),
+        if keep_history { seq_nr as usize + 1 } else { 1 }
+      );
+      assert_saved_snapshot(
+        &after["snapshot"][0],
+        aid,
+        seq_nr,
+        -877,
+        "",
+        &serde_json::to_vec(&aggregates[winner]).unwrap(),
+        false,
+      );
+      if keep_history {
+        assert_saved_snapshot(
+          &after["snapshot"][seq_nr as usize],
+          aid,
+          seq_nr,
+          -877,
+          "",
+          &serde_json::to_vec(&aggregates[winner]).unwrap(),
+          true,
+        );
+      }
+      if seq_nr == 2 {
+        assert_eq!(after["journal"][0], previous["journal"][0]);
+        if keep_history {
+          assert_eq!(after["snapshot"][1], previous["snapshot"][1]);
+        }
+      }
+      assert_eq!(after["configuration"], previous["configuration"]);
+      let traces = observed.take();
+      assert_eq!(traces.len(), 2);
+      assert_eq!(traces.iter().filter(|trace| trace["upstream_status"] == 200).count(), 1);
+      assert_eq!(traces.iter().filter(|trace| trace["upstream_status"] == 400).count(), 1);
+      for trace in &traces {
+        pair_actions(&fixture, trace, keep_history);
+        assert!(trace["injected_response"].is_null());
+        assert_eq!(trace["upstream_body"], trace["delivered_body"]);
+        if trace["upstream_status"] == 200 {
+          assert_pair_request_matches_saved(&fixture, trace);
+        }
+      }
+      fixture.record(&format!("pair-parallel-{seq_nr}"), &traces, &json!({"before":previous,"after":after,"results":results.iter().map(result_json).collect::<Vec<_>>(),"winner":winner}));
+      previous = after;
+    }
+    fixture.close().await;
+  }
+}
+
+#[tokio::test]
+async fn should_keep_event_only_actions_and_snapshot_unchanged_after_pair_commit() {
+  let fixture = Fixture::new().await;
+  let serializer = Arc::new(BytesSerializer::default());
+  let (pair_store, pair_observed) = fixture
+    .open_opaque_pair(serializer.clone(), Arc::new(BytesSerializer::default()))
+    .await;
+  pair_store
+    .persist_event_and_snapshot(
+      event(Id::new("Account", "pair-event-only"), 1, Opaque(vec![1])),
+      SnapshotEnvelope::new(Opaque(vec![11]), 1),
+    )
+    .await
+    .unwrap();
+  pair_observed.take();
+  let (store, observed) = fixture.open_opaque(serializer).await;
+  let before = fixture.state("Account-pair-event-only").await;
+  let result = store
+    .persist_event(event(Id::new("Account", "pair-event-only"), 2, Opaque(vec![2])))
+    .await;
+  assert!(result.is_ok(), "{result:?}");
+  let traces = observed.take();
+  assert_eq!(traces.len(), 1);
+  actions(&fixture, &traces[0]);
+  let after = fixture.state("Account-pair-event-only").await;
+  assert_eq!(after["snapshot"], before["snapshot"]);
+  assert_eq!(after["configuration"], before["configuration"]);
+  assert_eq!(after["journal"].as_array().unwrap().len(), 2);
+  assert_eq!(after["journal"][0], before["journal"][0]);
+  assert_saved_event(&after["journal"][1], "Account-pair-event-only", 2, -876543211, "", &[2]);
+  assert_head_matches_journal(&after, "Account");
+  fixture.record(
+    "pair-event-only",
+    &traces,
+    &json!({"before":before,"after":after,"result":result_json(&result)}),
+  );
+  for seq_nr in [2, 4] {
+    let result = store
+      .persist_event(event(Id::new("Account", "pair-event-only"), seq_nr, Opaque(vec![99])))
+      .await;
+    if seq_nr == 2 {
+      assert!(matches!(
+        &result,
+        Err(EventStoreError::OptimisticLock {
+          head_seq_nr: Some(2),
+          ..
+        })
+      ));
+    } else {
+      assert!(matches!(
+        &result,
+        Err(EventStoreError::ContractViolation {
+          rule: ContractRule::W8Gap,
+          ..
+        })
+      ));
+    }
+    let traces = observed.take();
+    assert_eq!(traces.len(), 1);
+    actions(&fixture, &traces[0]);
+    let saved = fixture.state("Account-pair-event-only").await;
+    assert_eq!(saved, after);
+    fixture.record(
+      &format!("pair-event-only-cancel-{seq_nr}"),
+      &traces,
+      &json!({"before":after,"after":saved,"result":result_json(&result)}),
+    );
+  }
+  fixture.close().await;
 }
 
 #[tokio::test]
@@ -1148,8 +2482,8 @@ async fn should_classify_injected_typed_reasons_and_keep_original_failure_causes
     *observed.injection.lock().unwrap() = Some(Injection::Cancellation {
       template: template.clone(),
       codes: vec![
-        (fixture.tables.journal_table_name.clone(), journal.into()),
-        (fixture.tables.head_table_name.clone(), head.into()),
+        (fixture.tables.journal_table_name.clone(), None, journal.into()),
+        (fixture.tables.head_table_name.clone(), None, head.into()),
       ],
       old_head: old,
     });

@@ -9,8 +9,8 @@ use super::item_size::{item_size_upper_bound, ITEM_SIZE_LIMIT};
 use super::{DynamoDbTables, EventStoreForDynamoDB};
 use crate::next::aggregate_id::{AggregateId, AidString};
 use crate::next::error::{ContractRule, EventStoreError, StorageOperation};
-use crate::next::event_envelope::EventEnvelope;
-use crate::next::generic_event_store::check_event;
+use crate::next::event_envelope::{EventEnvelope, SnapshotEnvelope};
+use crate::next::generic_event_store::{check_event, check_event_and_snapshot};
 use crate::next::seq_nr::{SeqNr, SEQ_NR_MAX};
 
 // この順で組み立てた要求のアクションだけを取消理由に対応付ける。
@@ -23,13 +23,43 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
     let aid = check_event(&event)?;
     let payload = self.event_serializer.serialize(event.payload())?;
     let writes = transaction_items(&self.tables, &aid, &event, payload)?;
+    let action_count = writes.len();
     self
       .client
       .transact_write_items()
       .set_transact_items(Some(writes))
       .send()
       .await
-      .map_err(|error| classify_append_error(error, &aid, event.seq_nr()))?;
+      .map_err(|error| classify_append_error(error, &aid, event.seq_nr(), action_count))?;
+    Ok(())
+  }
+
+  /// イベント・ヘッド・現在のsnapshotと、保持件数設定時の履歴を原子的に確定する（H-1・W-9）。
+  pub async fn persist_event_and_snapshot(
+    &self,
+    event: EventEnvelope<AID, P>,
+    snapshot: SnapshotEnvelope<A>,
+  ) -> Result<(), EventStoreError> {
+    let aid = check_event_and_snapshot(&event, &snapshot)?;
+    let event_payload = self.event_serializer.serialize(event.payload())?.to_vec();
+    let snapshot_payload = self.snapshot_serializer.serialize(snapshot.aggregate())?.to_vec();
+    let mut writes = transaction_items(&self.tables, &aid, &event, event_payload)?;
+    writes.extend(snapshot_transaction_items(
+      &self.tables,
+      &aid,
+      &snapshot,
+      event.occurred_at().timestamp_millis(),
+      snapshot_payload,
+      self.options.retention.keep_snapshot_count().is_some(),
+    )?);
+    let action_count = writes.len();
+    self
+      .client
+      .transact_write_items()
+      .set_transact_items(Some(writes))
+      .send()
+      .await
+      .map_err(|error| classify_append_error(error, &aid, event.seq_nr(), action_count))?;
     Ok(())
   }
 }
@@ -115,6 +145,50 @@ fn transaction_items<AID, P>(
   Ok(vec![TransactWriteItem::builder().put(journal_put).build(), head_write])
 }
 
+fn snapshot_transaction_items<A>(
+  tables: &DynamoDbTables,
+  aid: &AidString,
+  snapshot: &SnapshotEnvelope<A>,
+  last_updated_at: i64,
+  payload: Vec<u8>,
+  keep_history: bool,
+) -> Result<Vec<TransactWriteItem>, EventStoreError> {
+  let seq_nr = snapshot.seq_nr();
+  let current = HashMap::from([
+    ("aid".into(), AttributeValue::S(aid.as_str().into())),
+    ("skey".into(), AttributeValue::N("0".into())),
+    ("seq_nr".into(), AttributeValue::N(seq_nr.to_string())),
+    ("manifest".into(), AttributeValue::S(snapshot.manifest().into())),
+    ("payload".into(), AttributeValue::B(Blob::new(payload))),
+    ("last_updated_at".into(), AttributeValue::N(last_updated_at.to_string())),
+  ]);
+  let mut items = vec![current];
+  if keep_history {
+    let mut history = items[0].clone();
+    history.insert("skey".into(), AttributeValue::N(seq_nr.to_string()));
+    history.insert("active_history_seq_nr".into(), AttributeValue::N(seq_nr.to_string()));
+    items.push(history);
+  }
+  items
+    .into_iter()
+    .map(|item| {
+      if item_size_upper_bound(&item) > ITEM_SIZE_LIMIT {
+        return Err(EventStoreError::ContractViolation {
+          rule: ContractRule::ItemSizeLimit,
+          seq_nr: Some(seq_nr),
+          snapshot_seq_nr: None,
+        });
+      }
+      let put = Put::builder()
+        .table_name(&tables.snapshot_table_name)
+        .set_item(Some(item))
+        .build()
+        .map_err(storage)?;
+      Ok(TransactWriteItem::builder().put(put).build())
+    })
+    .collect()
+}
+
 fn optimistic_lock(aid: &AidString, seq_nr: SeqNr, head_seq_nr: Option<SeqNr>) -> EventStoreError {
   EventStoreError::OptimisticLock {
     aid: aid.as_str().into(),
@@ -123,12 +197,17 @@ fn optimistic_lock(aid: &AidString, seq_nr: SeqNr, head_seq_nr: Option<SeqNr>) -
   }
 }
 
-fn classify_append_error(error: SdkError<TransactWriteItemsError>, aid: &AidString, seq_nr: SeqNr) -> EventStoreError {
+fn classify_append_error(
+  error: SdkError<TransactWriteItemsError>,
+  aid: &AidString,
+  seq_nr: SeqNr,
+  action_count: usize,
+) -> EventStoreError {
   if let Some(TransactWriteItemsError::TransactionCanceledException(canceled)) = error.as_service_error() {
     let reasons = canceled.cancellation_reasons();
     if reasons
       .iter()
-      .take(HEAD_POSITION + 1)
+      .take(action_count)
       .any(|reason| reason.code() == Some("TransactionConflict"))
     {
       return optimistic_lock(aid, seq_nr, None);

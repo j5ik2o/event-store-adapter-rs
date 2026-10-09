@@ -3,6 +3,11 @@ use aws_sdk_dynamodb::types::CancellationReason;
 use aws_smithy_runtime_api::http::{Response, StatusCode};
 use aws_smithy_types::body::SdkBody;
 use chrono::{DateTime, Utc};
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Arc;
+
+use crate::next::error::SerializationPhase;
+use crate::next::serializer::{EventSerializer, SnapshotSerializer};
 
 use super::*;
 
@@ -133,7 +138,236 @@ fn cancellation(journal: &str, head: &str, old: Option<AttributeValue>) -> SdkEr
 
 fn classify(journal: &str, head: &str, old: Option<AttributeValue>, seq_nr: SeqNr) -> EventStoreError {
   let aid = check_event(&event(seq_nr)).unwrap();
-  classify_append_error(cancellation(journal, head, old), &aid, seq_nr)
+  classify_append_error(cancellation(journal, head, old), &aid, seq_nr, 2)
+}
+
+#[test]
+fn should_prepare_unconditional_current_and_optional_history_snapshot_items() {
+  for seq_nr in [1, 2] {
+    let event = event(seq_nr);
+    let aid = check_event(&event).unwrap();
+    let snapshot = SnapshotEnvelope::new((), seq_nr).with_manifest("snapshot:e\u{301}🙂");
+    for keep_history in [false, true] {
+      let writes = snapshot_transaction_items(
+        &tables(),
+        &aid,
+        &snapshot,
+        event.occurred_at().timestamp_millis(),
+        vec![255, 0, 128],
+        keep_history,
+      )
+      .unwrap();
+      assert_eq!(writes.len(), if keep_history { 2 } else { 1 });
+      for (position, write) in writes.iter().enumerate() {
+        let put = write.put().unwrap();
+        assert_eq!(put.table_name(), "second");
+        assert_eq!(put.condition_expression(), None);
+        let mut expected = HashMap::from([
+          ("aid".into(), AttributeValue::S(aid.as_str().into())),
+          ("skey".into(), AttributeValue::N("0".into())),
+          ("seq_nr".into(), AttributeValue::N(seq_nr.to_string())),
+          ("manifest".into(), AttributeValue::S("snapshot:e\u{301}🙂".into())),
+          ("payload".into(), AttributeValue::B(Blob::new(vec![255, 0, 128]))),
+          ("last_updated_at".into(), AttributeValue::N("-877".into())),
+        ]);
+        if position == 1 {
+          expected.insert("skey".into(), AttributeValue::N(seq_nr.to_string()));
+          expected.insert("active_history_seq_nr".into(), AttributeValue::N(seq_nr.to_string()));
+        }
+        assert_eq!(put.item(), &expected);
+      }
+    }
+  }
+}
+
+#[test]
+fn should_check_snapshot_manifest_payload_and_history_overhead_before_sending() {
+  let aid = check_event(&event(2)).unwrap();
+  for (manifest, payload_len) in [(String::new(), ITEM_SIZE_LIMIT), ("界".repeat(136534), 0)] {
+    let snapshot = SnapshotEnvelope::new((), 2).with_manifest(manifest);
+    assert!(matches!(
+      snapshot_transaction_items(&tables(), &aid, &snapshot, -877, vec![0; payload_len], false),
+      Err(EventStoreError::ContractViolation {
+        rule: ContractRule::ItemSizeLimit,
+        seq_nr: Some(2),
+        ..
+      })
+    ));
+  }
+  let snapshot = SnapshotEnvelope::new((), 2);
+  let small = snapshot_transaction_items(&tables(), &aid, &snapshot, -877, Vec::new(), true).unwrap();
+  let current_overhead = item_size_upper_bound(small[0].put().unwrap().item());
+  let history_overhead = item_size_upper_bound(small[1].put().unwrap().item());
+  assert!(history_overhead > current_overhead);
+  let payload = vec![0; ITEM_SIZE_LIMIT - current_overhead];
+  let current = snapshot_transaction_items(&tables(), &aid, &snapshot, -877, payload.clone(), false).unwrap();
+  assert_eq!(item_size_upper_bound(current[0].put().unwrap().item()), ITEM_SIZE_LIMIT);
+  assert!(matches!(
+    snapshot_transaction_items(&tables(), &aid, &snapshot, -877, payload, true),
+    Err(EventStoreError::ContractViolation {
+      rule: ContractRule::ItemSizeLimit,
+      ..
+    })
+  ));
+}
+
+#[test]
+fn should_prioritize_transaction_conflict_at_every_requested_action_position() {
+  let aid = check_event(&event(3)).unwrap();
+  for action_count in [2, 3, 4] {
+    for position in 0..action_count {
+      let mut reasons = vec![CancellationReason::builder().code("None").build(); action_count];
+      reasons[HEAD_POSITION] = CancellationReason::builder().code("ConditionalCheckFailed").build();
+      reasons[position] = CancellationReason::builder().code("TransactionConflict").build();
+      let canceled = TransactionCanceledException::builder()
+        .set_cancellation_reasons(Some(reasons))
+        .build();
+      let error = SdkError::service_error(
+        TransactWriteItemsError::TransactionCanceledException(canceled),
+        Response::new(StatusCode::try_from(400).unwrap(), SdkBody::empty()),
+      );
+      assert!(matches!(
+        classify_append_error(error, &aid, 3, action_count),
+        EventStoreError::OptimisticLock {
+          seq_nr: 3,
+          head_seq_nr: None,
+          ..
+        }
+      ));
+    }
+  }
+}
+
+#[derive(Debug)]
+struct CountingSerializer {
+  calls: AtomicUsize,
+  fail: bool,
+}
+
+impl EventSerializer<()> for CountingSerializer {
+  fn serialize(&self, _: &()) -> Result<Vec<u8>, EventStoreError> {
+    self.calls.fetch_add(1, Ordering::SeqCst);
+    if self.fail {
+      return Err(EventStoreError::Serialization {
+        phase: SerializationPhase::SerializeEvent,
+        source: Box::new(std::io::Error::other("event cause")),
+      });
+    }
+    Ok(vec![1])
+  }
+
+  fn deserialize(&self, _: &[u8]) -> Result<(), EventStoreError> {
+    panic!("書込みの検証でdeserializeしない")
+  }
+}
+
+impl SnapshotSerializer<()> for CountingSerializer {
+  fn serialize(&self, _: &()) -> Result<Vec<u8>, EventStoreError> {
+    self.calls.fetch_add(1, Ordering::SeqCst);
+    if self.fail {
+      return Err(EventStoreError::Serialization {
+        phase: SerializationPhase::SerializeSnapshot,
+        source: Box::new(std::io::Error::other("snapshot cause")),
+      });
+    }
+    Ok(vec![2])
+  }
+
+  fn deserialize(&self, _: &[u8]) -> Result<(), EventStoreError> {
+    panic!("書込みの検証でdeserializeしない")
+  }
+}
+
+#[tokio::test]
+async fn should_validate_pair_then_serialize_event_then_snapshot_before_sending() {
+  use aws_sdk_dynamodb::config::{BehaviorVersion, Credentials, Region};
+  use aws_smithy_runtime_api::client::http::{http_client_fn, HttpConnector, HttpConnectorFuture, SharedHttpConnector};
+  use aws_smithy_runtime_api::client::orchestrator::HttpRequest;
+
+  #[derive(Debug)]
+  struct NoRequests;
+  impl HttpConnector for NoRequests {
+    fn call(&self, _: HttpRequest) -> HttpConnectorFuture {
+      panic!("共通検査またはserializerの失敗時は送信0")
+    }
+  }
+  let client = aws_sdk_dynamodb::Client::from_conf(
+    aws_sdk_dynamodb::Config::builder()
+      .behavior_version(BehaviorVersion::latest())
+      .region(Region::new("us-west-1"))
+      .credentials_provider(Credentials::new("x", "x", None, None, "unit-test"))
+      .http_client(http_client_fn(|_, _| SharedHttpConnector::new(NoRequests)))
+      .build(),
+  );
+  for (snapshot_seq_nr, fail_event, fail_snapshot, event_calls, snapshot_calls) in
+    [(1, true, true, 0, 0), (2, true, false, 1, 0), (2, false, true, 1, 1)]
+  {
+    let event_serializer = Arc::new(CountingSerializer {
+      calls: AtomicUsize::new(0),
+      fail: fail_event,
+    });
+    let snapshot_serializer = Arc::new(CountingSerializer {
+      calls: AtomicUsize::new(0),
+      fail: fail_snapshot,
+    });
+    let store = EventStoreForDynamoDB {
+      client: client.clone(),
+      tables: tables(),
+      options: crate::next::dynamodb::DynamoDbOptions::default(),
+      store_id: "unit".into(),
+      event_serializer: event_serializer.clone(),
+      snapshot_serializer: snapshot_serializer.clone(),
+      _aggregate_id: std::marker::PhantomData,
+    };
+    let result = store
+      .persist_event_and_snapshot(event(2), SnapshotEnvelope::new((), snapshot_seq_nr))
+      .await;
+    if snapshot_seq_nr == 1 {
+      assert!(matches!(
+        result,
+        Err(EventStoreError::ContractViolation {
+          rule: ContractRule::W9,
+          seq_nr: Some(2),
+          snapshot_seq_nr: Some(1)
+        })
+      ));
+    } else {
+      let expected_phase = if fail_event {
+        SerializationPhase::SerializeEvent
+      } else {
+        SerializationPhase::SerializeSnapshot
+      };
+      assert!(matches!(result, Err(EventStoreError::Serialization { phase, .. }) if phase == expected_phase));
+    }
+    assert_eq!(event_serializer.calls.load(Ordering::SeqCst), event_calls);
+    assert_eq!(snapshot_serializer.calls.load(Ordering::SeqCst), snapshot_calls);
+  }
+}
+
+#[test]
+fn should_reject_head_overhead_when_the_complete_journal_fits() {
+  let event = EventEnvelope::new(Id("x".repeat(1022), "".into()), 2, Utc::now(), ());
+  let aid = check_event(&event).unwrap();
+  let small = transaction_items(&tables(), &aid, &event, Vec::new()).unwrap();
+  let mut journal = small[0].put().unwrap().item().clone();
+  journal.insert("payload".into(), AttributeValue::B(Blob::new(vec![0; 408002])));
+  assert!(item_size_upper_bound(&journal) <= ITEM_SIZE_LIMIT);
+  let mut metadata = journal.clone();
+  metadata.remove("aid");
+  let head = HashMap::from([
+    ("aid".into(), journal["aid"].clone()),
+    ("type_name".into(), AttributeValue::S("x".repeat(1022))),
+    ("seq_nr".into(), journal["seq_nr"].clone()),
+    ("events".into(), AttributeValue::L(vec![AttributeValue::M(metadata)])),
+  ]);
+  assert!(item_size_upper_bound(&head) > ITEM_SIZE_LIMIT);
+  assert!(matches!(
+    transaction_items(&tables(), &aid, &event, vec![0; 408002]),
+    Err(EventStoreError::ContractViolation {
+      rule: ContractRule::ItemSizeLimit,
+      ..
+    })
+  ));
 }
 
 #[test]
