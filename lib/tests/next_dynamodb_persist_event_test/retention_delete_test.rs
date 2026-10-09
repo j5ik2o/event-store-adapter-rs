@@ -404,11 +404,10 @@ async fn append(store: &JsonStore, value: &str, number: u64, pair: bool) -> Resu
 struct AppendCase<'a> {
   value: &'a str,
   number: u64,
-  pair: bool,
   steps: Vec<Step>,
 }
 
-async fn perform(fixture: &Fixture, store: &JsonStore, observed: &Observed, mut case: AppendCase<'_>) -> Value {
+async fn perform_pair(fixture: &Fixture, store: &JsonStore, observed: &Observed, mut case: AppendCase<'_>) -> Value {
   let aid = format!("Account-{}", case.value);
   let before = fixture.state(&aid).await;
   let entered = Arc::new(Notify::new());
@@ -430,7 +429,7 @@ async fn perform(fixture: &Fixture, store: &JsonStore, observed: &Observed, mut 
   observed.sleep.0.lock().unwrap().clear();
   let notices = Arc::new(Mutex::new(Vec::new()));
   let subscriber = tracing_subscriber::registry().with(Capture(notices.clone()));
-  let write = append(store, case.value, case.number, case.pair).with_subscriber(subscriber);
+  let write = append(store, case.value, case.number, true).with_subscriber(subscriber);
   let (result, committed) = tokio::join!(write, async {
     entered.notified().await;
     let state = fixture.state(&aid).await;
@@ -441,11 +440,7 @@ async fn perform(fixture: &Fixture, store: &JsonStore, observed: &Observed, mut 
   let traces = observed.take();
   assert_eq!(traces[0]["api"], "TransactWriteItems");
   assert_eq!(traces[0]["upstream_status"], 200);
-  if case.pair {
-    pair_actions(fixture, &traces[0], true);
-  } else {
-    actions(fixture, &traces[0]);
-  }
+  pair_actions(fixture, &traces[0], true);
   let after = fixture.state(&aid).await;
   assert_retention_only(&committed, &after);
   assert_head_matches_journal(&after, "Account");
@@ -454,6 +449,59 @@ async fn perform(fixture: &Fixture, store: &JsonStore, observed: &Observed, mut 
     "plan": observed.retention_report(), "waits_ms": observed.sleep.0.lock().unwrap().iter().map(|delay| delay.as_millis() as u64).collect::<Vec<_>>(), "traces": traces});
   fixture.record(&format!("retention-{}-{}", case.value, case.number), &traces, &result);
   assert_public_reads(fixture, store, observed, case.value, &after).await;
+  result
+}
+
+async fn perform_event_only(
+  fixture: &Fixture,
+  store: &JsonStore,
+  observed: &Observed,
+  value: &str,
+  number: u64,
+) -> Value {
+  let aid = format!("Account-{value}");
+  let before = fixture.state(&aid).await;
+  observed.install_retention(vec![Step::MissingIndex, Step::MissingTable]);
+  observed.sleep.0.lock().unwrap().clear();
+  let notices = Arc::new(Mutex::new(Vec::new()));
+  let subscriber = tracing_subscriber::registry().with(Capture(notices.clone()));
+  let result = append(store, value, number, false).with_subscriber(subscriber).await;
+  assert!(result.is_ok(), "{result:?}");
+  let traces = observed.take();
+  assert_eq!(traces.len(), 1);
+  assert_eq!(traces[0]["api"], "TransactWriteItems");
+  assert_eq!(traces[0]["upstream_status"], 200);
+  assert!(traces[0]["injected_response"].is_null());
+  assert_eq!(traces[0]["upstream_body"], traces[0]["delivered_body"]);
+  actions(fixture, &traces[0]);
+  let after = fixture.state(&aid).await;
+  assert_eq!(after["snapshot"], before["snapshot"]);
+  assert_eq!(after["configuration"], before["configuration"]);
+  let previous_events = before["journal"].as_array().unwrap();
+  let saved_events = after["journal"].as_array().unwrap();
+  assert_eq!(saved_events.len(), previous_events.len() + 1);
+  assert_eq!(&saved_events[..previous_events.len()], previous_events);
+  assert_saved_event(
+    saved_events.last().unwrap(),
+    &aid,
+    number,
+    -876543211,
+    &format!("event-{number}"),
+    &serde_json::to_vec(&json!({"event": number})).unwrap(),
+  );
+  assert_eq!(after["head"]["seq_nr"], json!({"N": number.to_string()}));
+  assert_head_matches_journal(&after, "Account");
+  let plan = observed.retention_report();
+  assert_eq!(plan["declared"], 2);
+  assert_eq!(plan["fired"], 0);
+  assert_eq!(plan["applied"], 0);
+  assert_eq!(plan["unfired"], 2);
+  assert!(notices.lock().unwrap().is_empty());
+  assert!(observed.sleep.0.lock().unwrap().is_empty());
+  let result = json!({"before": before, "after": after, "result": result_json(&result),
+    "notifications": *notices.lock().unwrap(), "plan": plan, "waits_ms": [], "traces": traces});
+  fixture.record(&format!("retention-event-only-{value}-{number}"), &traces, &result);
+  assert_public_reads(fixture, store, observed, value, &after).await;
   result
 }
 
@@ -577,6 +625,45 @@ async fn should_skip_retention_for_both_writes_without_a_count_or_in_ttl_mode() 
 }
 
 #[tokio::test]
+async fn should_leave_excess_history_unchanged_on_event_only_until_the_same_store_snapshot_append() {
+  for keep in [1, 3] {
+    let fixture = Fixture::new().await;
+    let count = if keep == 1 { 2 } else { 5 };
+    seed(&fixture, "event-only", count).await;
+    let (store, observed) = fixture
+      .open_json_with_retention(RetentionSettings::keep_latest(keep))
+      .await;
+    let first = perform_event_only(&fixture, &store, &observed, "event-only", count + 1).await;
+    assert_eq!(history_numbers(&first["after"]), (1..=count).collect::<Vec<_>>());
+    let second = perform_event_only(&fixture, &store, &observed, "event-only", count + 2).await;
+    assert_eq!(second["before"], first["after"]);
+    assert_eq!(history_numbers(&second["after"]), (1..=count).collect::<Vec<_>>());
+    let recovered = perform_pair(
+      &fixture,
+      &store,
+      &observed,
+      AppendCase {
+        value: "event-only",
+        number: count + 3,
+        steps: Vec::new(),
+      },
+    )
+    .await;
+    assert_eq!(recovered["before"], second["after"]);
+    assert_eq!(
+      history_numbers(&recovered["after"]),
+      if keep == 1 { vec![5] } else { vec![4, 5, 8] }
+    );
+    assert_eq!(
+      recovered["after"]["head"]["seq_nr"],
+      json!({"N": (count + 3).to_string()})
+    );
+    assert!(recovered["notifications"].as_array().unwrap().is_empty());
+    fixture.close().await;
+  }
+}
+
+#[tokio::test]
 async fn should_select_latest_one_or_multiple_from_all_real_gsi_pages_with_a_missing_written_history() {
   for keep in [1, 3] {
     let fixture = Fixture::new().await;
@@ -586,14 +673,13 @@ async fn should_select_latest_one_or_multiple_from_all_real_gsi_pages_with_a_mis
     let (store, observed) = fixture
       .open_json_with_retention(RetentionSettings::keep_latest(keep))
       .await;
-    let result = perform(
+    let result = perform_pair(
       &fixture,
       &store,
       &observed,
       AppendCase {
         value: "pages",
         number: 6,
-        pair: true,
         steps: vec![Step::Query {
           limit: Some(2),
           omit: vec![6],
@@ -691,14 +777,13 @@ async fn should_deduplicate_the_written_history_and_split_thirty_real_deletes_in
   let (store, observed) = fixture
     .open_json_with_retention(RetentionSettings::keep_latest(1))
     .await;
-  let result = perform(
+  let result = perform_pair(
     &fixture,
     &store,
     &observed,
     AppendCase {
       value: "batches",
       number: 31,
-      pair: true,
       steps: vec![Step::Query {
         limit: None,
         omit: Vec::new(),
@@ -751,66 +836,62 @@ async fn should_deduplicate_the_written_history_and_split_thirty_real_deletes_in
 
 #[tokio::test]
 async fn should_retry_all_then_partial_unprocessed_real_deletes_with_finite_capped_waits() {
-  for pair in [true, false] {
-    let fixture = Fixture::new().await;
-    seed(&fixture, "retries", if pair { 6 } else { 7 }).await;
-    let (store, observed) = fixture
-      .open_json_with_options(DynamoDbOptions {
-        retention: RetentionSettings::keep_latest(2),
-        unprocessed_retry_limit: 3,
-        unprocessed_retry_max_delay: Duration::from_millis(120),
-        ..DynamoDbOptions::default()
-      })
-      .await;
-    let number = if pair { 7 } else { 8 };
-    let result = perform(
-      &fixture,
-      &store,
-      &observed,
-      AppendCase {
-        value: "retries",
-        number,
-        pair,
-        steps: vec![
-          Step::Unprocessed(vec![5, 4, 3, 2, 1]),
-          Step::Unprocessed(vec![3, 1]),
-          Step::Unprocessed(vec![1]),
-        ],
-      },
-    )
+  let fixture = Fixture::new().await;
+  seed(&fixture, "retries", 6).await;
+  let (store, observed) = fixture
+    .open_json_with_options(DynamoDbOptions {
+      retention: RetentionSettings::keep_latest(2),
+      unprocessed_retry_limit: 3,
+      unprocessed_retry_max_delay: Duration::from_millis(120),
+      ..DynamoDbOptions::default()
+    })
     .await;
-    assert_eq!(history_numbers(&result["after"]), vec![6, 7]);
-    assert_eq!(result["waits_ms"], json!([50, 100, 120]));
-    assert!(result["notifications"].as_array().unwrap().is_empty());
-    let batches = batch_traces(&result);
-    assert_eq!(batches.len(), 4);
-    let table = &fixture.tables.snapshot_table_name;
-    for (trace, expected) in batches
-      .iter()
-      .zip([vec![5, 4, 3, 2, 1], vec![5, 4, 3, 2, 1], vec![3, 1], vec![1]])
-    {
-      assert_eq!(batch_numbers(trace, "input", table), expected);
-    }
-    for pair in batches.windows(2) {
-      assert_eq!(
-        pair[1]["input"]["RequestItems"],
-        response_body(pair[0], "delivered_body")["UnprocessedItems"]
-      );
-    }
-    assert!(batches[0]["forwarded_input"].is_null());
-    assert_eq!(batch_numbers(batches[1], "forwarded_input", table), vec![5, 4, 2]);
-    assert_eq!(batch_numbers(batches[2], "forwarded_input", table), vec![3]);
-    assert_eq!(batch_numbers(batches[3], "forwarded_input", table), vec![1]);
-    assert_eq!(result["plan"]["declared"], 4);
-    assert_eq!(result["plan"]["fired"], 4);
-    assert_eq!(result["plan"]["applied"], 4);
-    assert_eq!(result["plan"]["unfired"], 0);
-    fixture.close().await;
+  let result = perform_pair(
+    &fixture,
+    &store,
+    &observed,
+    AppendCase {
+      value: "retries",
+      number: 7,
+      steps: vec![
+        Step::Unprocessed(vec![5, 4, 3, 2, 1]),
+        Step::Unprocessed(vec![3, 1]),
+        Step::Unprocessed(vec![1]),
+      ],
+    },
+  )
+  .await;
+  assert_eq!(history_numbers(&result["after"]), vec![6, 7]);
+  assert_eq!(result["waits_ms"], json!([50, 100, 120]));
+  assert!(result["notifications"].as_array().unwrap().is_empty());
+  let batches = batch_traces(&result);
+  assert_eq!(batches.len(), 4);
+  let table = &fixture.tables.snapshot_table_name;
+  for (trace, expected) in batches
+    .iter()
+    .zip([vec![5, 4, 3, 2, 1], vec![5, 4, 3, 2, 1], vec![3, 1], vec![1]])
+  {
+    assert_eq!(batch_numbers(trace, "input", table), expected);
   }
+  for pair in batches.windows(2) {
+    assert_eq!(
+      pair[1]["input"]["RequestItems"],
+      response_body(pair[0], "delivered_body")["UnprocessedItems"]
+    );
+  }
+  assert!(batches[0]["forwarded_input"].is_null());
+  assert_eq!(batch_numbers(batches[1], "forwarded_input", table), vec![5, 4, 2]);
+  assert_eq!(batch_numbers(batches[2], "forwarded_input", table), vec![3]);
+  assert_eq!(batch_numbers(batches[3], "forwarded_input", table), vec![1]);
+  assert_eq!(result["plan"]["declared"], 4);
+  assert_eq!(result["plan"]["fired"], 4);
+  assert_eq!(result["plan"]["applied"], 4);
+  assert_eq!(result["plan"]["unfired"], 0);
+  fixture.close().await;
 }
 
 #[tokio::test]
-async fn should_stop_at_zero_or_positive_retry_limits_and_recover_on_the_same_store_event_only_append() {
+async fn should_stop_at_zero_or_positive_retry_limits_and_recover_on_the_same_store_snapshot_append() {
   for limit in [0, 2] {
     let fixture = Fixture::new().await;
     seed(&fixture, "limit", 30).await;
@@ -824,14 +905,13 @@ async fn should_stop_at_zero_or_positive_retry_limits_and_recover_on_the_same_st
     let mut steps = vec![Step::Unprocessed((6..=30).rev().collect())];
     steps.extend((0..limit).map(|_| Step::Unprocessed(vec![30])));
     steps.push(Step::MissingTable);
-    let failed = perform(
+    let failed = perform_pair(
       &fixture,
       &store,
       &observed,
       AppendCase {
         value: "limit",
         number: 31,
-        pair: true,
         steps,
       },
     )
@@ -865,22 +945,23 @@ async fn should_stop_at_zero_or_positive_retry_limits_and_recover_on_the_same_st
         response_body(requests[0], "delivered_body")["UnprocessedItems"]
       );
     }
-    let recovered = perform(
+    let event_only = perform_event_only(&fixture, &store, &observed, "limit", 32).await;
+    assert_eq!(event_only["before"], failed["after"]);
+    let recovered = perform_pair(
       &fixture,
       &store,
       &observed,
       AppendCase {
         value: "limit",
-        number: 32,
-        pair: false,
+        number: 33,
         steps: Vec::new(),
       },
     )
     .await;
-    assert_eq!(recovered["before"], failed["after"]);
-    assert_eq!(history_numbers(&recovered["after"]), vec![31]);
-    assert_eq!(recovered["after"]["snapshot"][0], failed["after"]["snapshot"][0]);
-    assert_eq!(recovered["after"]["head"]["seq_nr"], json!({"N": "32"}));
+    assert_eq!(recovered["before"], event_only["after"]);
+    assert_eq!(history_numbers(&recovered["after"]), vec![33]);
+    assert_eq!(recovered["after"]["snapshot"][0]["seq_nr"], json!({"N": "33"}));
+    assert_eq!(recovered["after"]["head"]["seq_nr"], json!({"N": "33"}));
     assert!(recovered["notifications"].as_array().unwrap().is_empty());
     assert!(recovered["waits_ms"].as_array().unwrap().is_empty());
     for number in 6..=29 {
@@ -915,140 +996,136 @@ fn assert_original_failure(observation: &Value) {
 }
 
 #[tokio::test]
-async fn should_keep_both_writes_committed_on_a_later_query_page_failure_and_recover_on_the_same_store() {
-  for pair in [true, false] {
-    let fixture = Fixture::new().await;
-    seed(&fixture, "query-failure", 3).await;
-    let (store, observed) = fixture
-      .open_json_with_retention(RetentionSettings::keep_latest(1))
-      .await;
-    let failed = perform(
-      &fixture,
-      &store,
-      &observed,
-      AppendCase {
-        value: "query-failure",
-        number: 4,
-        pair,
-        steps: vec![Step::Query {
-          limit: Some(2),
-          omit: Vec::new(),
-          duplicate: Vec::new(),
-          continue_pages: false,
-          fail_next_page: true,
-        }],
-      },
-    )
+async fn should_keep_a_snapshot_append_committed_on_a_later_query_page_failure_and_recover_on_the_same_store() {
+  let fixture = Fixture::new().await;
+  seed(&fixture, "query-failure", 3).await;
+  let (store, observed) = fixture
+    .open_json_with_retention(RetentionSettings::keep_latest(1))
     .await;
-    assert_warning(&failed, "Account-query-failure", 4, "retention-query");
-    assert_original_failure(&failed);
-    assert_eq!(failed["after"], failed["committed"]);
-    assert_eq!(failed["after"]["head"]["seq_nr"], json!({"N": "4"}));
-    assert!(batch_traces(&failed).is_empty());
-    let queries = failed["traces"]
-      .as_array()
-      .unwrap()
-      .iter()
-      .filter(|trace| trace["api"] == "Query")
-      .collect::<Vec<_>>();
-    assert_eq!(queries.len(), 2);
-    assert_eq!(
-      queries[1]["input"]["ExclusiveStartKey"],
-      response_body(queries[0], "upstream_body")["LastEvaluatedKey"]
-    );
-    assert_ne!(
-      queries[1]["forwarded_input"]["IndexName"],
-      queries[1]["input"]["IndexName"]
-    );
-    assert_eq!(failed["plan"]["declared"], 2);
-    assert_eq!(failed["plan"]["applied"], 2);
-    assert!(failed["waits_ms"].as_array().unwrap().is_empty());
-    let recovered = perform(
-      &fixture,
-      &store,
-      &observed,
-      AppendCase {
-        value: "query-failure",
-        number: 5,
-        pair: true,
-        steps: Vec::new(),
-      },
-    )
-    .await;
-    assert_eq!(recovered["before"], failed["after"]);
-    assert_eq!(history_numbers(&recovered["after"]), vec![5]);
-    assert!(recovered["notifications"].as_array().unwrap().is_empty());
-    fixture.close().await;
-  }
+  let failed = perform_pair(
+    &fixture,
+    &store,
+    &observed,
+    AppendCase {
+      value: "query-failure",
+      number: 4,
+      steps: vec![Step::Query {
+        limit: Some(2),
+        omit: Vec::new(),
+        duplicate: Vec::new(),
+        continue_pages: false,
+        fail_next_page: true,
+      }],
+    },
+  )
+  .await;
+  assert_warning(&failed, "Account-query-failure", 4, "retention-query");
+  assert_original_failure(&failed);
+  assert_eq!(failed["after"], failed["committed"]);
+  assert_eq!(failed["after"]["head"]["seq_nr"], json!({"N": "4"}));
+  assert!(batch_traces(&failed).is_empty());
+  let queries = failed["traces"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .filter(|trace| trace["api"] == "Query")
+    .collect::<Vec<_>>();
+  assert_eq!(queries.len(), 2);
+  assert_eq!(
+    queries[1]["input"]["ExclusiveStartKey"],
+    response_body(queries[0], "upstream_body")["LastEvaluatedKey"]
+  );
+  assert_ne!(
+    queries[1]["forwarded_input"]["IndexName"],
+    queries[1]["input"]["IndexName"]
+  );
+  assert_eq!(failed["plan"]["declared"], 2);
+  assert_eq!(failed["plan"]["applied"], 2);
+  assert!(failed["waits_ms"].as_array().unwrap().is_empty());
+  let event_only = perform_event_only(&fixture, &store, &observed, "query-failure", 5).await;
+  assert_eq!(event_only["before"], failed["after"]);
+  let recovered = perform_pair(
+    &fixture,
+    &store,
+    &observed,
+    AppendCase {
+      value: "query-failure",
+      number: 6,
+      steps: Vec::new(),
+    },
+  )
+  .await;
+  assert_eq!(recovered["before"], event_only["after"]);
+  assert_eq!(history_numbers(&recovered["after"]), vec![6]);
+  assert!(recovered["notifications"].as_array().unwrap().is_empty());
+  fixture.close().await;
 }
 
 #[tokio::test]
 async fn should_preserve_successful_deletions_before_a_final_delete_failure_and_recover_on_the_same_store() {
-  for pair in [true, false] {
-    let fixture = Fixture::new().await;
-    seed(&fixture, "delete-failure", if pair { 30 } else { 31 }).await;
-    let (store, observed) = fixture
-      .open_json_with_retention(RetentionSettings::keep_latest(1))
-      .await;
-    let number = if pair { 31 } else { 32 };
-    let failed = perform(
-      &fixture,
-      &store,
-      &observed,
-      AppendCase {
-        value: "delete-failure",
-        number,
-        pair,
-        steps: vec![
-          Step::Unprocessed(Vec::new()),
-          Step::MissingTable,
-          Step::Unprocessed(Vec::new()),
-        ],
-      },
-    )
+  let fixture = Fixture::new().await;
+  seed(&fixture, "delete-failure", 30).await;
+  let (store, observed) = fixture
+    .open_json_with_retention(RetentionSettings::keep_latest(1))
     .await;
-    assert_warning(&failed, "Account-delete-failure", number, "retention-delete");
-    assert_original_failure(&failed);
-    let batches = batch_traces(&failed);
-    assert_eq!(batches.len(), 2);
-    let table = &fixture.tables.snapshot_table_name;
-    assert_eq!(
-      batch_numbers(batches[0], "input", table),
-      (6..=30).rev().collect::<Vec<_>>()
-    );
-    assert_eq!(
-      batch_numbers(batches[1], "input", table),
-      (1..=5).rev().collect::<Vec<_>>()
-    );
-    assert_eq!(batches[0]["upstream_status"], 200);
-    assert_eq!(batches[1]["upstream_status"], 400);
-    assert_eq!(history_numbers(&failed["after"]), vec![1, 2, 3, 4, 5, 31]);
-    assert_eq!(failed["plan"]["unfired"], 1);
-    assert!(failed["waits_ms"].as_array().unwrap().is_empty());
-    let recovered = perform(
-      &fixture,
-      &store,
-      &observed,
-      AppendCase {
-        value: "delete-failure",
-        number: number + 1,
-        pair: false,
-        steps: Vec::new(),
-      },
-    )
-    .await;
-    assert_eq!(recovered["before"], failed["after"]);
-    assert_eq!(history_numbers(&recovered["after"]), vec![31]);
-    assert_eq!(recovered["after"]["snapshot"][0], failed["after"]["snapshot"][0]);
-    assert!(recovered["notifications"].as_array().unwrap().is_empty());
-    let batches = batch_traces(&recovered);
-    assert_eq!(batches.len(), 1);
-    assert_eq!(
-      batch_numbers(batches[0], "input", table),
-      (1..=5).rev().collect::<Vec<_>>()
-    );
-    fixture.close().await;
+  let failed = perform_pair(
+    &fixture,
+    &store,
+    &observed,
+    AppendCase {
+      value: "delete-failure",
+      number: 31,
+      steps: vec![
+        Step::Unprocessed(Vec::new()),
+        Step::MissingTable,
+        Step::Unprocessed(Vec::new()),
+      ],
+    },
+  )
+  .await;
+  assert_warning(&failed, "Account-delete-failure", 31, "retention-delete");
+  assert_original_failure(&failed);
+  let batches = batch_traces(&failed);
+  assert_eq!(batches.len(), 2);
+  let table = &fixture.tables.snapshot_table_name;
+  assert_eq!(
+    batch_numbers(batches[0], "input", table),
+    (6..=30).rev().collect::<Vec<_>>()
+  );
+  assert_eq!(
+    batch_numbers(batches[1], "input", table),
+    (1..=5).rev().collect::<Vec<_>>()
+  );
+  assert_eq!(batches[0]["upstream_status"], 200);
+  assert_eq!(batches[1]["upstream_status"], 400);
+  assert_eq!(history_numbers(&failed["after"]), vec![1, 2, 3, 4, 5, 31]);
+  assert_eq!(failed["plan"]["unfired"], 1);
+  assert!(failed["waits_ms"].as_array().unwrap().is_empty());
+  let event_only = perform_event_only(&fixture, &store, &observed, "delete-failure", 32).await;
+  assert_eq!(event_only["before"], failed["after"]);
+  let recovered = perform_pair(
+    &fixture,
+    &store,
+    &observed,
+    AppendCase {
+      value: "delete-failure",
+      number: 33,
+      steps: Vec::new(),
+    },
+  )
+  .await;
+  assert_eq!(recovered["before"], event_only["after"]);
+  assert_eq!(history_numbers(&recovered["after"]), vec![33]);
+  assert!(recovered["notifications"].as_array().unwrap().is_empty());
+  let batches = batch_traces(&recovered);
+  assert_eq!(batches.len(), 1);
+  assert_eq!(batch_numbers(batches[0], "input", table), vec![31, 5, 4, 3, 2, 1]);
+  for number in 6..=30 {
+    assert!(!history_numbers(&failed["after"]).contains(&number));
+    assert!(!history_numbers(&event_only["after"]).contains(&number));
+    assert!(!history_numbers(&recovered["after"]).contains(&number));
   }
+  fixture.close().await;
 }
 
 #[test]
@@ -1098,14 +1175,13 @@ async fn should_preserve_the_actual_upstream_unprocessed_response_when_another_p
   .unwrap();
   fixture.record("retention-upstream-open", &observed.take(), &json!(null));
   inner_traces.lock().unwrap().clear();
-  let result = perform(
+  let result = perform_pair(
     &fixture,
     &store,
     &observed,
     AppendCase {
       value: "upstream",
       number: 5,
-      pair: true,
       steps: vec![Step::Unprocessed(vec![4])],
     },
   )

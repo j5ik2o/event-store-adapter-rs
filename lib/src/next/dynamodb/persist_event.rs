@@ -18,7 +18,7 @@ const JOURNAL_POSITION: usize = 0;
 const HEAD_POSITION: usize = 1;
 
 impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> EventStoreForDynamoDB<AID, A, P> {
-  /// イベント1件とヘッドを原子的に確定し、Delete保持の取り残しを処理する（H-1・S-4）。
+  /// イベント1件とヘッドを原子的に確定する（H-1・D-9）。
   pub async fn persist_event(&self, event: EventEnvelope<AID, P>) -> Result<(), EventStoreError> {
     let aid = check_event(&event)?;
     let payload = self.event_serializer.serialize(event.payload())?;
@@ -31,7 +31,6 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
       .send()
       .await
       .map_err(|error| classify_append_error(error, &aid, event.seq_nr(), action_count))?;
-    notify_retention_failure(self.retain_history_after_append(&aid, event.seq_nr(), None).await);
     Ok(())
   }
 
@@ -61,11 +60,7 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
       .send()
       .await
       .map_err(|error| classify_append_error(error, &aid, event.seq_nr(), action_count))?;
-    notify_retention_failure(
-      self
-        .retain_history_after_append(&aid, event.seq_nr(), Some(snapshot.seq_nr()))
-        .await,
-    );
+    notify_retention_failure(self.retain_history_after_append(&aid, event.seq_nr()).await);
     Ok(())
   }
 }

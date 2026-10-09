@@ -205,13 +205,11 @@ async fn should_skip_delete_retention_without_a_count_or_in_ttl_mode() {
       },
       Vec::new(),
     );
-    for just_written in [None, Some(4)] {
-      assert!(store
-        .retain_history_after_append(&aid(), 4, just_written)
-        .await
-        .retention_failure
-        .is_none());
-    }
+    assert!(store
+      .retain_history_after_append(&aid(), 4)
+      .await
+      .retention_failure
+      .is_none());
     assert!(script.inputs.lock().unwrap().is_empty());
     assert!(sleep.0.lock().unwrap().is_empty());
   }
@@ -231,7 +229,7 @@ async fn should_read_all_pages_before_selecting_with_missing_or_duplicate_writte
       vec![(200, first), page(&[4, 3]), (200, json!({}))],
     );
     assert!(store
-      .retain_history_after_append(&aid(), 6, Some(6))
+      .retain_history_after_append(&aid(), 6)
       .await
       .retention_failure
       .is_none());
@@ -255,7 +253,7 @@ async fn should_read_all_pages_before_selecting_with_missing_or_duplicate_writte
 }
 
 #[tokio::test]
-async fn should_continue_an_empty_page_and_not_add_event_only_numbers() {
+async fn should_continue_an_empty_history_page_before_selection() {
   let first = json!({"Items": [], "LastEvaluatedKey": history(4)});
   let (store, script, _) = setup(
     DynamoDbOptions {
@@ -265,13 +263,13 @@ async fn should_continue_an_empty_page_and_not_add_event_only_numbers() {
     vec![(200, first), page(&[4, 3, 2]), (200, json!({}))],
   );
   assert!(store
-    .retain_history_after_append(&aid(), 5, None)
+    .retain_history_after_append(&aid(), 5)
     .await
     .retention_failure
     .is_none());
   let inputs = script.inputs.lock().unwrap();
   assert_eq!(inputs.len(), 3);
-  assert_eq!(requested_numbers(&inputs[2]), vec![2]);
+  assert_eq!(requested_numbers(&inputs[2]), vec![3, 2]);
 }
 
 #[tokio::test]
@@ -288,7 +286,7 @@ async fn should_split_thirty_expired_histories_into_twenty_five_and_five() {
     ],
   );
   assert!(store
-    .retain_history_after_append(&aid(), 31, Some(31))
+    .retain_history_after_append(&aid(), 31)
     .await
     .retention_failure
     .is_none());
@@ -316,7 +314,7 @@ async fn should_retry_only_unprocessed_deletes_with_capped_exponential_waits() {
     ],
   );
   assert!(store
-    .retain_history_after_append(&aid(), 4, Some(4))
+    .retain_history_after_append(&aid(), 4)
     .await
     .retention_failure
     .is_none());
@@ -345,7 +343,7 @@ async fn should_stop_at_the_retry_limit_without_sending_the_next_batch() {
       responses,
     );
     let failure = store
-      .retain_history_after_append(&aid(), 31, Some(31))
+      .retain_history_after_append(&aid(), 31)
       .await
       .retention_failure
       .unwrap();
@@ -379,7 +377,7 @@ async fn should_preserve_query_and_delete_causes_in_the_receipt() {
       responses,
     );
     let failure = store
-      .retain_history_after_append(&aid(), 2, Some(2))
+      .retain_history_after_append(&aid(), 2)
       .await
       .retention_failure
       .unwrap();

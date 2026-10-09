@@ -14,12 +14,7 @@ use crate::next::storage_backend::AppendReceipt;
 type Item = HashMap<String, AttributeValue>;
 
 impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> EventStoreForDynamoDB<AID, A, P> {
-  pub(super) async fn retain_history_after_append(
-    &self,
-    aid: &AidString,
-    seq_nr: SeqNr,
-    just_written: Option<SeqNr>,
-  ) -> AppendReceipt {
+  pub(super) async fn retain_history_after_append(&self, aid: &AidString, seq_nr: SeqNr) -> AppendReceipt {
     let Some(keep) = self.options.retention.keep_snapshot_count() else {
       return AppendReceipt {
         retention_failure: None,
@@ -32,7 +27,7 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
     }
     let result = match query_history(&self.client, &self.tables, aid).await {
       Ok(visible) => {
-        let expired = select_expired_history_after_append(&visible, just_written, keep);
+        let expired = select_expired_history_after_append(&visible, Some(seq_nr), keep);
         delete_history(&self.client, &self.tables, &self.options, aid, &expired)
           .await
           .map_err(|error| ("retention-delete", error))
