@@ -17,9 +17,13 @@ pub use execute::Execution;
 pub use request::{RequestLayout, RequestObservation};
 pub use transport::{FaultTransport, OperationGuard, OperationReport, TransportError};
 
+#[cfg(not(feature = "dynamodb"))]
 use crate::data::Case;
+#[cfg(not(feature = "dynamodb"))]
 use crate::report::CaseOutcome;
-use crate::runner::{PreparedCase, Target};
+#[cfg(not(feature = "dynamodb"))]
+use crate::runner::PreparedCase;
+use crate::runner::Target;
 
 /// DynamoDB の保存先を表す。
 ///
@@ -30,18 +34,8 @@ pub const TARGET: Target = Target {
   has_layout: true,
 };
 
-/// 単独のケースを実Localで実行する。全宣言は同じExecutionを保持して実行する。
-pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
-  #[cfg(feature = "dynamodb")]
-  {
-    match Execution::start() {
-      Ok(execution) => execution.run_case(case, prepared),
-      Err(e) => crate::case::unverified(&e),
-    }
-  }
-  #[cfg(not(feature = "dynamodb"))]
-  {
-    let _ = (case, prepared);
-    crate::case::unverified("dynamodb featureが無効なので実DynamoDBを実行できない")
-  }
+/// DynamoDBが無効なケースを、理由付きの未検証として返す。
+#[cfg(not(feature = "dynamodb"))]
+pub fn run_case(_case: &Case, _prepared: PreparedCase) -> CaseOutcome {
+  crate::case::unverified("dynamodb featureが無効なので実DynamoDBを実行できない")
 }
