@@ -1778,6 +1778,68 @@ fn should_reject_unconnected_faults_and_invalid_layouts() {
 }
 
 #[test]
+fn should_replace_only_unprocessed_deletes_before_transfer_and_keep_exact_application_counts() {
+  run(async {
+    for (count, forwarded) in [(1, 1), (2, 0)] {
+      let (transport, client, recorder) = fixture();
+      let declaration = json!({"operation":1,"phase":"retention-delete","kind":"sdk-response","injection":"replace-request",
+        "repeat":{"mode":"count","count":1},"details":{"unprocessed_first_n":count}});
+      let guard = transport.begin_operation(&plan(vec![declaration]), 1).unwrap();
+      let requests = (1..=2)
+        .map(|seq| {
+          WriteRequest::builder()
+            .delete_request(
+              DeleteRequest::builder()
+                .set_key(Some(key(AID, Some(("skey", &seq.to_string())))))
+                .build()
+                .unwrap(),
+            )
+            .build()
+        })
+        .collect();
+      let output = client
+        .batch_write_item()
+        .request_items(SNAPSHOT, requests)
+        .send()
+        .await
+        .unwrap();
+      assert_eq!(output.unprocessed_items().unwrap()[SNAPSHOT].len(), count);
+      assert_eq!(recorder.calls.load(Ordering::SeqCst), forwarded);
+      let report = guard.finish();
+      assert!(report.unfired.is_empty());
+      assert_eq!(report.applications[0].applied, 1);
+      assert_eq!(report.requests.len(), 1);
+      assert_eq!(report.responses[0]["upstream_request"].is_null(), forwarded == 0);
+      if forwarded != 0 {
+        assert_eq!(
+          recorder.completed.lock().unwrap()[0]["RequestItems"][SNAPSHOT]
+            .as_array()
+            .unwrap()
+            .len(),
+          1
+        );
+      }
+    }
+  });
+}
+
+#[test]
+fn should_apply_serialization_faults_in_order_without_forwarding_sdk_requests() {
+  let (transport, _, recorder) = fixture();
+  let declaration = json!({"operation":1,"phase":"serialize-event","kind":"serialization-error","injection":"replace-request",
+    "repeat":{"mode":"count","count":2},"details":{"message":"failure"}});
+  let guard = transport.begin_operation(&plan(vec![declaration]), 1).unwrap();
+  assert!(transport.inject_serialization(Phase::SerializeSnapshot).is_ok());
+  assert!(transport.inject_serialization(Phase::SerializeEvent).is_err());
+  assert!(transport.inject_serialization(Phase::SerializeEvent).is_err());
+  assert!(transport.inject_serialization(Phase::SerializeEvent).is_ok());
+  assert_eq!(recorder.calls.load(Ordering::SeqCst), 0);
+  let report = guard.finish();
+  assert_eq!(report.applications[0].applied, 2);
+  assert!(report.unfired.is_empty());
+}
+
+#[test]
 fn should_keep_request_credentials_and_fault_details_out_of_debug() {
   run(async {
     let (transport, client, _) = fixture();
@@ -2087,5 +2149,176 @@ fn should_leave_history_response_unfired_without_a_successful_transfer_and_saved
       assert_eq!(upstream.calls.load(Ordering::SeqCst), 1);
       assert_eq!(operation.finish().unfired[0].applied, 0);
     }
+  });
+}
+
+#[test]
+fn should_validate_history_omission_against_the_actual_committed_snapshot() {
+  run(async {
+    for (pages, committed, valid) in [
+      (json!([[1]]), true, true),
+      (json!([[1], [2]]), true, false),
+      (json!([[1]]), false, false),
+    ] {
+      let (transport, client, upstream, saved) = history_fixture();
+      *saved.body.lock().unwrap() = Some(saved_history("1"));
+      let mut declaration = history_fault(pages, 1);
+      declaration["details"]["omit_just_written_history"] = json!(true);
+      let operation = transport.begin_operation(&plan(vec![declaration]), 1).unwrap();
+      if committed {
+        client
+          .transact_write_items()
+          .transact_items(put(SNAPSHOT, AID, Some(("skey", "2"))))
+          .send()
+          .await
+          .unwrap();
+      }
+      let result = client
+        .query()
+        .table_name(SNAPSHOT)
+        .index_name(INDEX)
+        .key_condition_expression("aid = :aid")
+        .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+        .send()
+        .await;
+      assert_eq!(result.is_ok(), valid);
+      let report = operation.finish();
+      assert_eq!(report.applications[0].applied, u32::from(valid));
+      assert_eq!(report.unfired.is_empty(), valid);
+      assert_eq!(
+        upstream.calls.load(Ordering::SeqCst),
+        usize::from(committed) + usize::from(valid)
+      );
+      assert_eq!(saved.calls.load(Ordering::SeqCst), usize::from(valid));
+    }
+  });
+}
+
+#[test]
+fn should_correct_real_event_pages_and_record_original_responses_and_next_real_requests() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let binary = aws_smithy_types::base64::encode(vec![0xA5; 320022]);
+    let items: Vec<Value> = (1..=4)
+      .map(|seq| {
+        json!({"aid":{"S":AID},"seq_nr":{"N":seq.to_string()},
+        "occurred_at":{"N":"1740000000000000000"},"manifest":{"S":""},"payload":{"B":binary}})
+      })
+      .collect();
+    let original = json!({"Items":items,"Count":4,"ScannedCount":4});
+    *recorder.body.lock().unwrap() = Some(original.clone());
+    let operation = transport.begin_operation(&plan(vec![]), 1).unwrap();
+    let first = client
+      .query()
+      .table_name(JOURNAL)
+      .consistent_read(true)
+      .scan_index_forward(true)
+      .key_condition_expression("aid = :aid AND seq_nr >= :seq_nr")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .expression_attribute_values(":seq_nr", AttributeValue::N("1".into()))
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(first.items().len(), 3);
+    assert_eq!(first.count(), 3);
+    assert_eq!(first.scanned_count(), 3);
+    assert_eq!(first.last_evaluated_key(), Some(&key(AID, Some(("seq_nr", "3")))));
+    let terminal = json!({"Items":[items[3]],"Count":1,"ScannedCount":1});
+    *recorder.body.lock().unwrap() = Some(terminal.clone());
+    let second = client
+      .query()
+      .table_name(JOURNAL)
+      .consistent_read(true)
+      .scan_index_forward(true)
+      .key_condition_expression("aid = :aid AND seq_nr >= :seq_nr")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .expression_attribute_values(":seq_nr", AttributeValue::N("1".into()))
+      .set_exclusive_start_key(first.last_evaluated_key().cloned())
+      .send()
+      .await
+      .unwrap();
+    assert!(second.last_evaluated_key().is_none());
+    let mut restored = first.items().to_vec();
+    restored.extend_from_slice(second.items());
+    assert_eq!(restored.len(), 4);
+    for (position, item) in restored.iter().enumerate() {
+      assert_eq!(item["seq_nr"], AttributeValue::N((position + 1).to_string()));
+      assert_eq!(item["payload"].as_b().unwrap().as_ref().len(), 320022);
+    }
+    let report = operation.finish();
+    assert!(report.unfired.is_empty());
+    assert!(report.applications.is_empty());
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
+    assert_eq!(report.responses.len(), 2);
+    let delivered: Value = serde_json::from_str(report.responses[0]["delivered"]["body"].as_str().unwrap()).unwrap();
+    assert_eq!(
+      serde_json::from_str::<Value>(report.responses[0]["upstream"]["body"].as_str().unwrap()).unwrap(),
+      original
+    );
+    assert_eq!(delivered["Items"], json!(items[..3]));
+    assert_eq!(
+      report.requests[1].body["ExclusiveStartKey"],
+      delivered["LastEvaluatedKey"]
+    );
+    assert_eq!(
+      recorder.completed.lock().unwrap()[1]["ExclusiveStartKey"],
+      delivered["LastEvaluatedKey"]
+    );
+    assert_eq!(
+      serde_json::from_str::<Value>(report.responses[1]["delivered"]["body"].as_str().unwrap()).unwrap(),
+      terminal
+    );
+    assert_eq!(report.responses[1]["upstream"], report.responses[1]["delivered"]);
+    for request in report.requests {
+      assert_eq!(request.phase, Some(Phase::ReadEvents));
+      assert!(request.body.get("Limit").is_none());
+    }
+  });
+}
+
+#[test]
+fn should_preserve_event_fault_counts_when_correcting_later_successful_responses() {
+  run(async {
+    let (transport, client, recorder) = fixture();
+    let binary = aws_smithy_types::base64::encode(vec![0; 320022]);
+    *recorder.body.lock().unwrap() = Some(json!({"Items":(1..=4)
+      .map(|seq|json!({"aid":{"S":AID},"seq_nr":{"N":seq.to_string()},"payload":{"B":binary}}))
+      .collect::<Vec<_>>(),"Count":4,"ScannedCount":4}));
+    let operation = transport
+      .begin_operation(
+        &plan(vec![once(
+          1,
+          "read-events",
+          "replace-response",
+          json!({"code":"InternalServerError"}),
+        )]),
+        1,
+      )
+      .unwrap();
+    let error = client
+      .query()
+      .table_name(JOURNAL)
+      .key_condition_expression("aid = :aid")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .send()
+      .await
+      .unwrap_err();
+    assert_eq!(error.as_service_error().unwrap().code(), Some("InternalServerError"));
+    let output = client
+      .query()
+      .table_name(JOURNAL)
+      .key_condition_expression("aid = :aid")
+      .expression_attribute_values(":aid", AttributeValue::S(AID.into()))
+      .send()
+      .await
+      .unwrap();
+    assert_eq!(output.items().len(), 3);
+    let report = operation.finish();
+    assert_eq!(report.applications.len(), 1);
+    assert_eq!(report.applications[0].applied, 1);
+    assert!(report.unfired.is_empty());
+    assert_eq!(report.responses[0]["fault_index"], 0);
+    assert!(report.responses[1]["fault_index"].is_null());
+    assert_eq!(recorder.calls.load(Ordering::SeqCst), 2);
   });
 }

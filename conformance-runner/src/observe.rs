@@ -5,7 +5,32 @@ use std::collections::BTreeSet;
 use serde_json::Value;
 
 /// 実装済みの条件の語。語は、その語を使うケースを通す変更で足す（設計 5.5.1 節の表）。
-pub const IMPLEMENTED_CONSTRAINT_WORDS: &[&str] = &[];
+pub const IMPLEMENTED_CONSTRAINT_WORDS: &[&str] = &[
+  "condition",
+  "consistent_read",
+  "consistent_read_all_tables",
+  "expires",
+  "exponential_backoff",
+  "expression_attribute_names",
+  "follow_last_evaluated_key",
+  "head_and_current_snapshot",
+  "head_return_values_on_condition_check_failure",
+  "include_just_written_history",
+  "index",
+  "initial_batch_sizes",
+  "key_condition",
+  "keys",
+  "layout_version",
+  "only_unprocessed_keys",
+  "projection",
+  "put_tables",
+  "retry_unprocessed_items",
+  "same_store_id",
+  "scan_index_forward",
+  "table",
+  "target_seq_nrs",
+  "update",
+];
 
 fn collect_words(observe: Option<&Value>, words: &mut BTreeSet<String>) {
   let Some(requests) = observe

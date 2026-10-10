@@ -1,15 +1,29 @@
-//! DynamoDB の保存先の、ケースの分類に必要な値。
+//! DynamoDBの公開生成と実操作、SDK要求と別clientの保存観測を接続する。
 
+#[cfg(feature = "dynamodb")]
+mod check_requests;
+#[cfg(feature = "dynamodb")]
+mod execute;
+mod items;
+#[cfg(feature = "dynamodb")]
+mod layout;
 mod request;
 mod response;
 mod transport;
 
+#[cfg(feature = "dynamodb")]
+pub use execute::Execution;
+
 pub use request::{RequestLayout, RequestObservation};
 pub use transport::{FaultTransport, OperationGuard, OperationReport, TransportError};
 
+#[cfg(not(feature = "dynamodb"))]
 use crate::data::Case;
-use crate::report::{CaseOutcome, UnverifiedReason};
-use crate::runner::{PreparedCase, Target};
+#[cfg(not(feature = "dynamodb"))]
+use crate::report::CaseOutcome;
+#[cfg(not(feature = "dynamodb"))]
+use crate::runner::PreparedCase;
+use crate::runner::Target;
 
 /// DynamoDB の保存先を表す。
 ///
@@ -20,11 +34,8 @@ pub const TARGET: Target = Target {
   has_layout: true,
 };
 
-/// 未接続のDynamoDBのケースを未検証として返す。
+/// DynamoDBが無効なケースを、理由付きの未検証として返す。
+#[cfg(not(feature = "dynamodb"))]
 pub fn run_case(_case: &Case, _prepared: PreparedCase) -> CaseOutcome {
-  CaseOutcome::Unverified {
-    reason: UnverifiedReason::NotExecuted {
-      detail: "保存先が未接続（実行器の骨格）なので、実行していない".to_string(),
-    },
-  }
+  crate::case::unverified("dynamodb featureが無効なので実DynamoDBを実行できない")
 }

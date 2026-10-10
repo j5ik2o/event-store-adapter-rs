@@ -6,9 +6,92 @@ use aws_smithy_types::body::SdkBody;
 use serde_json::{json, Value};
 
 use super::request::{ConfigurationKey, ParsedRequest};
-use super::transport::TransportError;
+use super::transport::{replace_body, TransportError};
 use crate::fault::{Fault, FaultKind, Phase};
 use crate::number::to_integer;
+
+const QUERY_PAGE_BYTES: usize = 1048576;
+
+fn journal_item_bytes(item: &Value) -> Result<usize, TransportError> {
+  item
+    .as_object()
+    .ok_or_else(|| invalid("イベントQueryの実項目がオブジェクトではない"))?
+    .iter()
+    .try_fold(0, |size, (name, value)| {
+      let attribute = value
+        .as_object()
+        .filter(|attribute| attribute.len() == 1)
+        .ok_or_else(|| invalid("イベントQueryの実属性型が一意ではない"))?;
+      let (kind, value) = attribute.iter().next().expect("1型を確認済み");
+      let written = value
+        .as_str()
+        .ok_or_else(|| invalid("journalの実S/N/B属性が文字列ではない"))?;
+      let bytes = match kind.as_str() {
+        "S" | "N" => written.len(),
+        "B" => aws_smithy_types::base64::decode(written)
+          .map_err(|_| invalid("journalの実B属性がbase64ではない"))?
+          .len(),
+        _ => return Err(invalid("journalの実属性がS/N/Bではない")),
+      };
+      Ok(size + name.len() + bytes)
+    })
+}
+
+/// 実Localの越境応答だけを、実項目の連続prefixと実キーで1MiB頁へ補正する。
+pub(super) fn event_page_response(
+  request: &ParsedRequest,
+  response: HttpResponse,
+) -> Result<HttpResponse, TransportError> {
+  if request.observation.phase != Some(Phase::ReadEvents) || !response.status().is_success() {
+    return Ok(response);
+  }
+  let mut body: Value = serde_json::from_slice(
+    response
+      .body()
+      .bytes()
+      .ok_or_else(|| invalid("イベントQueryの実応答がバッファではない"))?,
+  )
+  .map_err(|_| invalid("イベントQueryの実応答がJSONではない"))?;
+  let Some(items) = body.get("Items") else {
+    return Ok(response);
+  };
+  let items = items
+    .as_array()
+    .ok_or_else(|| invalid("イベントQueryの実Itemsが配列ではない"))?;
+  let mut bytes = 0;
+  let mut prefix = 0;
+  for item in items {
+    bytes += journal_item_bytes(item)?;
+    if bytes <= QUERY_PAGE_BYTES {
+      prefix += 1;
+    }
+  }
+  if prefix == items.len() {
+    return Ok(response);
+  }
+  if prefix == 0 {
+    return Err(invalid("実journalの1項目だけで1MiBを超えている"));
+  }
+  let last = &items[prefix - 1];
+  let aid = last
+    .get("aid")
+    .filter(|value| value.get("S").is_some_and(Value::is_string))
+    .ok_or_else(|| invalid("補正頁の実aidキーがない"))?;
+  let sequence = last
+    .get("seq_nr")
+    .filter(|value| value.get("N").is_some_and(Value::is_string))
+    .ok_or_else(|| invalid("補正頁の実seq_nrキーがない"))?;
+  let continuation = json!({"aid":aid,"seq_nr":sequence});
+  let returned = items[..prefix].to_vec();
+  body["Items"] = json!(returned);
+  body["LastEvaluatedKey"] = continuation;
+  for count in ["Count", "ScannedCount"] {
+    if body.get(count).is_some() {
+      body[count] = json!(prefix);
+    }
+  }
+  Ok(replace_body(&response, body))
+}
 
 /// 宣言したページの実キーを本体から読み、古い GSI 応答を組み立てる。
 pub(super) async fn history_page_response(
@@ -91,6 +174,56 @@ pub(super) async fn history_page_response(
 
 fn invalid(message: &'static str) -> TransportError {
   TransportError::InvalidFault(message)
+}
+
+pub(super) fn validate_history_omission(
+  request: &ParsedRequest,
+  fault: &Fault,
+  responses: &[Value],
+) -> Result<(), TransportError> {
+  if fault.details.get("omit_just_written_history").and_then(Value::as_bool) != Some(true) {
+    return Ok(());
+  }
+  let table = request.observation.body.get("TableName").and_then(Value::as_str);
+  let aid = request.observation.body.pointer("/ExpressionAttributeValues/:aid/S");
+  let just_written = responses
+    .iter()
+    .rev()
+    .find_map(|response| {
+      if response["phase"] != "commit" || response.pointer("/upstream/status") != Some(&json!(200)) {
+        return None;
+      }
+      response
+        .pointer("/upstream_request/TransactItems")?
+        .as_array()?
+        .iter()
+        .find_map(|action| {
+          let put = action.get("Put")?;
+          if put.get("TableName").and_then(Value::as_str) != table || put.pointer("/Item/aid/S") != aid {
+            return None;
+          }
+          put
+            .pointer("/Item/skey/N")?
+            .as_str()?
+            .parse::<u64>()
+            .ok()
+            .filter(|seq| *seq > 0)
+        })
+    })
+    .ok_or_else(|| invalid("省略対象の履歴を実確定要求から確認できない"))?;
+  let pages = fault
+    .details
+    .get("history_pages")
+    .and_then(Value::as_array)
+    .ok_or_else(|| invalid("history_pagesが配列ではない"))?;
+  for page in pages {
+    for number in page.as_array().ok_or_else(|| invalid("履歴ページが配列ではない"))? {
+      if to_integer(number) == Some(i128::from(just_written)) {
+        return Err(invalid("省略指定の応答計画に今書いた履歴が含まれる"));
+      }
+    }
+  }
+  Ok(())
 }
 
 fn cancellation_reasons(request: &ParsedRequest, details: &Value) -> Result<Vec<Value>, TransportError> {
@@ -185,7 +318,7 @@ pub(super) fn error_response(request: &ParsedRequest, fault: &Fault) -> Result<H
 
 pub(super) enum ResponseReplacement {
   Error(HttpResponse),
-  Configuration {
+  BatchGet {
     responses: Vec<ConfigurationKey>,
     unprocessed: Vec<ConfigurationKey>,
   },
@@ -195,8 +328,11 @@ pub(super) fn prepare_response(request: &ParsedRequest, fault: &Fault) -> Result
   if fault.kind != FaultKind::SdkResponse {
     return error_response(request, fault).map(ResponseReplacement::Error);
   }
-  if request.observation.phase != Some(Phase::ConfigurationRead) {
-    return Err(invalid("設定読み取り以外の応答計画"));
+  if !matches!(
+    request.observation.phase,
+    Some(Phase::ConfigurationRead | Phase::ReadSnapshot)
+  ) {
+    return Err(invalid("BatchGetItem読み取り以外の応答計画"));
   }
   let declared_responses = fault
     .details
@@ -212,8 +348,12 @@ pub(super) fn prepare_response(request: &ParsedRequest, fault: &Fault) -> Result
   let mut selected = HashSet::new();
   let mut responses = Vec::new();
   for (table, source) in declared_responses {
-    if source.as_str() != Some("seed-config") {
-      return Err(invalid("設定応答の参照がseed-configではない"));
+    if !matches!(
+      (request.observation.phase, table.as_str(), source.as_str()),
+      (Some(Phase::ConfigurationRead), _, Some("seed-config"))
+        | (Some(Phase::ReadSnapshot), "head", Some("stored-head"))
+    ) {
+      return Err(invalid("応答の参照が段階と一致しない"));
     }
     let key = keys
       .iter()
@@ -236,7 +376,7 @@ pub(super) fn prepare_response(request: &ParsedRequest, fault: &Fault) -> Result
     }
     unprocessed.push(key.clone());
   }
-  Ok(ResponseReplacement::Configuration { responses, unprocessed })
+  Ok(ResponseReplacement::BatchGet { responses, unprocessed })
 }
 
 fn contains_key(item: &Value, key: &Value) -> bool {
@@ -266,7 +406,7 @@ impl ResponseReplacement {
   pub(super) fn apply(self, upstream: &HttpResponse) -> Result<HttpResponse, TransportError> {
     let (responses, unprocessed) = match self {
       Self::Error(response) => return Ok(response),
-      Self::Configuration { responses, unprocessed } => (responses, unprocessed),
+      Self::BatchGet { responses, unprocessed } => (responses, unprocessed),
     };
     if !upstream.status().is_success() {
       return Err(invalid("設定応答の実転送が成功していない"));
@@ -312,3 +452,7 @@ impl ResponseReplacement {
     Ok(response)
   }
 }
+
+#[cfg(test)]
+#[path = "response_test.rs"]
+mod tests;

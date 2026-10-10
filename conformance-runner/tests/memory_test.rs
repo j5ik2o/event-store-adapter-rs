@@ -3,6 +3,8 @@ use event_store_adapter_conformance_rs::report::{CaseOutcome, NotApplicableReaso
 use event_store_adapter_conformance_rs::runner::{run, run_case};
 use event_store_adapter_conformance_rs::{target_dynamodb, target_memory};
 use serde_json::json;
+#[cfg(feature = "dynamodb")]
+use serde_json::Value;
 use std::path::Path;
 
 fn scenario() -> Case {
@@ -39,6 +41,25 @@ fn execute(case: &Case) -> CaseOutcome {
 fn should_memory_execute_real_operations_with_null_payload() {
   let case = scenario();
   assert_eq!(execute(&case), CaseOutcome::Passed { values: None });
+}
+
+#[test]
+fn should_record_real_memory_results_fault_counts_and_continuous_retention_recovery() {
+  let case = retention_case("core-retention-failure-after-commit");
+  let mut observations = Vec::new();
+  let outcome = target_memory::run_case_observed(
+    &case,
+    event_store_adapter_conformance_rs::runner::prepare(&case).unwrap(),
+    &mut observations,
+  );
+  assert_eq!(outcome, CaseOutcome::Passed { values: None });
+  let failed_retention = observations.iter().find(|v| v["operation"] == 2).unwrap();
+  assert_eq!(failed_retention["actual"], json!({"result":"success"}));
+  assert_eq!(failed_retention["notifications"], json!(["retention-failure"]));
+  assert_eq!(failed_retention["observed"]["history"]["active"], json!([1, 2]));
+  assert_eq!(failed_retention["fault_applications"][0]["applied"], 1);
+  let recovered = observations.iter().find(|v| v["operation"] == 5).unwrap();
+  assert_eq!(recovered["observed"]["history"]["active"], json!([3]));
 }
 #[test]
 fn should_memory_not_report_missing_payload_or_aggregate_as_success() {
@@ -343,19 +364,50 @@ fn should_not_connect_unsupported_retention_fault_methods() {
 #[test]
 fn should_dynamodb_not_inherit_memory_passed_cases() {
   let data = load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")).unwrap();
-  let reports = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
-  for report in reports
-    .iter()
-    .filter(|report| matches!(report.outcome, CaseOutcome::Passed { .. }))
+  #[cfg(feature = "dynamodb")]
   {
-    let case = data.cases.iter().find(|case| case.id == report.id).unwrap();
-    assert_eq!(case.body["operation"], "buildAid");
+    let execution = target_dynamodb::Execution::start().unwrap();
+    let reports = run(&data, &target_dynamodb::TARGET, |case, prepared| {
+      execution.run_case(case, prepared)
+    });
+    let observations = execution.observations();
+    for report in reports
+      .iter()
+      .filter(|r| matches!(r.outcome, CaseOutcome::Passed { .. }))
+    {
+      let case = data.cases.iter().find(|c| c.id == report.id).unwrap();
+      if case.body["operation"] != "buildAid" && case.kind != event_store_adapter_conformance_rs::data::CaseKind::Layout
+      {
+        assert!(
+          observations[&report.id].iter().any(|operation| operation["requests"]
+            .as_array()
+            .is_some_and(|v| !v.is_empty())
+            || operation.pointer("/actual/category").and_then(Value::as_str) == Some("configuration")),
+          "{}: 実SDK要求または公開生成のnative設定エラーが必要",
+          report.id
+        );
+      }
+    }
+    assert!(!reports
+      .iter()
+      .any(|r| matches!(r.outcome, CaseOutcome::Unverified { .. })));
   }
-  assert_eq!(
-    reports
+  #[cfg(not(feature = "dynamodb"))]
+  {
+    let reports = run(&data, &target_dynamodb::TARGET, target_dynamodb::run_case);
+    for report in reports
       .iter()
       .filter(|report| matches!(report.outcome, CaseOutcome::Passed { .. }))
-      .count(),
-    9
-  );
+    {
+      let case = data.cases.iter().find(|case| case.id == report.id).unwrap();
+      assert_eq!(case.body["operation"], "buildAid");
+    }
+    assert_eq!(
+      reports
+        .iter()
+        .filter(|report| matches!(report.outcome, CaseOutcome::Passed { .. }))
+        .count(),
+      9
+    );
+  }
 }

@@ -42,6 +42,56 @@ fn tables() -> DynamoDbTables {
   }
 }
 
+#[tokio::test]
+async fn should_delegate_all_event_store_trait_operations_to_native_validation() {
+  use crate::next::event_store::EventStore;
+  let store = EventStoreForDynamoDB::<Id, (), ()> {
+    client: aws_sdk_dynamodb::Client::from_conf(
+      aws_sdk_dynamodb::Config::builder()
+        .behavior_version_latest()
+        .region(aws_sdk_dynamodb::config::Region::new("us-west-1"))
+        .build(),
+    ),
+    tables: tables(),
+    options: crate::next::dynamodb::DynamoDbOptions::default(),
+    store_id: "unit".into(),
+    event_serializer: Arc::new(crate::next::serializer::JsonEventSerializer::new()),
+    snapshot_serializer: Arc::new(crate::next::serializer::JsonSnapshotSerializer::new()),
+    clock: Arc::new(super::super::clock::SystemClock),
+    _aggregate_id: std::marker::PhantomData,
+  };
+  assert!(matches!(
+    EventStore::persist_event(&store, event(0)).await,
+    Err(EventStoreError::ContractViolation {
+      rule: ContractRule::W6,
+      ..
+    })
+  ));
+  assert!(matches!(
+    EventStore::persist_event_and_snapshot(&store, event(1), SnapshotEnvelope::new((), 2)).await,
+    Err(EventStoreError::ContractViolation {
+      rule: ContractRule::W9,
+      ..
+    })
+  ));
+  let invalid = Id("type-with-hyphen".into(), "1".into());
+  assert!(matches!(
+    EventStore::get_latest_snapshot_by_id(&store, &invalid).await,
+    Err(EventStoreError::ContractViolation {
+      rule: ContractRule::T11,
+      ..
+    })
+  ));
+  assert!(matches!(
+    EventStore::get_events_by_id_since_seq_nr(&store, event(1).aggregate_id(), crate::next::seq_nr::SEQ_NR_MAX + 1)
+      .await,
+    Err(EventStoreError::ContractViolation {
+      rule: ContractRule::T9,
+      ..
+    })
+  ));
+}
+
 #[test]
 fn should_prepare_two_conditional_actions_and_preserve_event_attributes() {
   let event = event(1).with_manifest("e\u{301}🙂");

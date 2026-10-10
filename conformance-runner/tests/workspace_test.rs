@@ -143,7 +143,12 @@ fn should_dynamodb_local_tests_require_the_opt_in_dynamodb_feature() {
   assert_eq!(package["features"]["default"], json!([]));
   assert_eq!(
     package["features"]["dynamodb"],
-    json!(["event-store-adapter-rs/dynamodb"])
+    json!([
+      "event-store-adapter-rs/dynamodb",
+      "dep:event-store-adapter-test-utils-rs",
+      "dep:testcontainers",
+      "dep:aws-smithy-http-client"
+    ])
   );
   assert!(!requested_features(&package, "event-store-adapter-rs").contains(&"dynamodb".to_string()));
   for name in ["dynamodb_config_read_test", "dynamodb_retention_ttl_test"] {
