@@ -7,8 +7,8 @@ use super::inspect::{reject, Aggregates};
 use super::legacy;
 use super::scan::Scan;
 use super::{LegacyDynamoDbTables, MigrationError, MigrationReport};
-use crate::next::dynamodb::items::Item;
-use crate::next::dynamodb::DynamoDbTables;
+use crate::dynamodb::items::Item;
+use crate::dynamodb::DynamoDbTables;
 
 pub(super) async fn write(
   client: &Client,

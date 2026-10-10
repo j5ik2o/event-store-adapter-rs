@@ -1,7 +1,7 @@
 #[path = "../../lib/tests/dynamodb_migration_test/support.rs"]
 mod support;
 
-use event_store_adapter_rs::migration::MigrationReport;
+use event_store_adapter_rs::MigrationReport;
 use serde_json::json;
 use std::process::{Command, Output};
 use support::*;

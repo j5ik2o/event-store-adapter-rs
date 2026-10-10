@@ -7,7 +7,7 @@ use crate::{
   report::{CaseOutcome, ObservedValues, UnverifiedReason},
 };
 use chrono::{DateTime, SecondsFormat, Utc};
-use event_store_adapter_rs::next::{
+use event_store_adapter_rs::{
   aggregate_id::AggregateId,
   error::EventStoreError,
   event_envelope::{EventEnvelope, SnapshotEnvelope},

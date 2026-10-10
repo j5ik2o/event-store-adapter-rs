@@ -6,10 +6,10 @@ use aws_sdk_dynamodb::Client;
 use super::legacy;
 use super::scan::Scan;
 use super::{LegacyDynamoDbTables, MigrationError, MigrationRejection, MigrationReport};
-use crate::next::aggregate_id::AidString;
-use crate::next::dynamodb::item_size::{item_size_upper_bound, ITEM_SIZE_LIMIT};
-use crate::next::dynamodb::items::Item;
-use crate::next::dynamodb::DynamoDbTables;
+use crate::aggregate_id::AidString;
+use crate::dynamodb::item_size::{item_size_upper_bound, ITEM_SIZE_LIMIT};
+use crate::dynamodb::items::Item;
+use crate::dynamodb::DynamoDbTables;
 
 pub(super) struct AggregateSummary {
   pub pkey: String,

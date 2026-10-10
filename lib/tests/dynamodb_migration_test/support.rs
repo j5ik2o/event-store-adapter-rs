@@ -3,19 +3,24 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use aws_sdk_dynamodb::config::{AsyncSleep, Credentials, Region, Sleep};
+use aws_sdk_dynamodb::operation::create_table::CreateTableOutput;
 use aws_sdk_dynamodb::primitives::Blob;
 use aws_sdk_dynamodb::types::AttributeValue as A;
+use aws_sdk_dynamodb::types::{
+  AttributeDefinition, GlobalSecondaryIndex, KeySchemaElement, KeyType, Projection, ProjectionType,
+  ProvisionedThroughput, ScalarAttributeType, TimeToLiveSpecification,
+};
 use aws_sdk_dynamodb::Client;
 use aws_smithy_runtime_api::client::http::{
   http_client_fn, HttpClient, HttpConnector, HttpConnectorFuture, SharedHttpConnector,
 };
 use aws_smithy_runtime_api::client::orchestrator::HttpRequest;
 use aws_smithy_types::{body::SdkBody, byte_stream::ByteStream, retry::RetryConfig};
-use event_store_adapter_rs::migration::LegacyDynamoDbTables;
-use event_store_adapter_rs::next::aggregate_id::AggregateId;
-use event_store_adapter_rs::next::dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
-use event_store_adapter_rs::next::error::EventStoreError;
-use event_store_adapter_rs::next::serializer::{EventSerializer, SnapshotSerializer};
+use event_store_adapter_rs::AggregateId;
+use event_store_adapter_rs::EventStoreError;
+use event_store_adapter_rs::LegacyDynamoDbTables;
+use event_store_adapter_rs::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
+use event_store_adapter_rs::{EventSerializer, SnapshotSerializer};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
 use testcontainers::{ContainerAsync, GenericImage};
@@ -208,10 +213,10 @@ impl Fixture {
       journal_table_name: format!("{prefix}-old-journal"),
       snapshot_table_name: format!("{prefix}-old-snapshot"),
     };
-    dynamodb::create_journal_table(&raw, &legacy.journal_table_name, &format!("{prefix}-old-events-index"))
+    create_journal_table(&raw, &legacy.journal_table_name, &format!("{prefix}-old-events-index"))
       .await
       .unwrap();
-    dynamodb::create_snapshot_table(&raw, &legacy.snapshot_table_name, &format!("{prefix}-old-state-index"))
+    create_snapshot_table(&raw, &legacy.snapshot_table_name, &format!("{prefix}-old-state-index"))
       .await
       .unwrap();
     Self {
@@ -364,4 +369,167 @@ pub fn assert_shapes(item: &Item, expected: &[(&str, &str)]) {
   for (name, kind) in expected {
     assert_eq!(wire(item)[*name].as_object().unwrap().keys().next().unwrap(), kind);
   }
+}
+
+// 旧表はmigration入力fixture専用で、通常の保存先補助には公開しない。
+async fn create_journal_table(
+  client: &Client,
+  table_name: &str,
+  gsi_name: &str,
+) -> Result<CreateTableOutput, Box<dyn std::error::Error + Send + Sync>> {
+  let pkey_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("pkey")
+    .attribute_type(ScalarAttributeType::S)
+    .build()?;
+
+  let skey_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("skey")
+    .attribute_type(ScalarAttributeType::S)
+    .build()?;
+
+  let pkey_schema = KeySchemaElement::builder()
+    .attribute_name("pkey")
+    .key_type(KeyType::Hash)
+    .build()?;
+
+  let skey_schema = KeySchemaElement::builder()
+    .attribute_name("skey")
+    .key_type(KeyType::Range)
+    .build()?;
+
+  let aid_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("aid")
+    .attribute_type(ScalarAttributeType::S)
+    .build()?;
+
+  let seq_nr_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("seq_nr")
+    .attribute_type(ScalarAttributeType::N)
+    .build()?;
+
+  let provisioned_throughput = ProvisionedThroughput::builder()
+    .read_capacity_units(10)
+    .write_capacity_units(5)
+    .build()?;
+
+  let gsi = GlobalSecondaryIndex::builder()
+    .index_name(gsi_name)
+    .key_schema(
+      KeySchemaElement::builder()
+        .attribute_name("aid")
+        .key_type(KeyType::Hash)
+        .build()?,
+    )
+    .key_schema(
+      KeySchemaElement::builder()
+        .attribute_name("seq_nr")
+        .key_type(KeyType::Range)
+        .build()?,
+    )
+    .projection(Projection::builder().projection_type(ProjectionType::All).build())
+    .provisioned_throughput(provisioned_throughput.clone())
+    .build()?;
+
+  let result = client
+    .create_table()
+    .table_name(table_name)
+    .attribute_definitions(pkey_attribute_definition)
+    .attribute_definitions(skey_attribute_definition)
+    .attribute_definitions(aid_attribute_definition)
+    .attribute_definitions(seq_nr_attribute_definition)
+    .key_schema(pkey_schema)
+    .key_schema(skey_schema)
+    .global_secondary_indexes(gsi)
+    .provisioned_throughput(provisioned_throughput)
+    .send()
+    .await?;
+
+  Ok(result)
+}
+
+async fn create_snapshot_table(
+  client: &Client,
+  table_name: &str,
+  gsi_name: &str,
+) -> Result<CreateTableOutput, Box<dyn std::error::Error + Send + Sync>> {
+  let pkey_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("pkey")
+    .attribute_type(ScalarAttributeType::S)
+    .build()?;
+
+  let skey_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("skey")
+    .attribute_type(ScalarAttributeType::S)
+    .build()?;
+
+  let aid_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("aid")
+    .attribute_type(ScalarAttributeType::S)
+    .build()?;
+
+  let seq_nr_attribute_definition = AttributeDefinition::builder()
+    .attribute_name("seq_nr")
+    .attribute_type(ScalarAttributeType::N)
+    .build()?;
+
+  let pkey_schema = KeySchemaElement::builder()
+    .attribute_name("pkey")
+    .key_type(KeyType::Hash)
+    .build()?;
+
+  let skey_schema = KeySchemaElement::builder()
+    .attribute_name("skey")
+    .key_type(KeyType::Range)
+    .build()?;
+
+  let provisioned_throughput = ProvisionedThroughput::builder()
+    .read_capacity_units(10)
+    .write_capacity_units(5)
+    .build()?;
+
+  let gsi = GlobalSecondaryIndex::builder()
+    .index_name(gsi_name)
+    .key_schema(
+      KeySchemaElement::builder()
+        .attribute_name("aid")
+        .key_type(KeyType::Hash)
+        .build()?,
+    )
+    .key_schema(
+      KeySchemaElement::builder()
+        .attribute_name("seq_nr")
+        .key_type(KeyType::Range)
+        .build()?,
+    )
+    .projection(Projection::builder().projection_type(ProjectionType::All).build())
+    .provisioned_throughput(provisioned_throughput.clone())
+    .build()?;
+
+  let result = client
+    .create_table()
+    .table_name(table_name)
+    .attribute_definitions(pkey_attribute_definition)
+    .attribute_definitions(skey_attribute_definition)
+    .attribute_definitions(aid_attribute_definition)
+    .attribute_definitions(seq_nr_attribute_definition)
+    .key_schema(pkey_schema)
+    .key_schema(skey_schema)
+    .global_secondary_indexes(gsi)
+    .provisioned_throughput(provisioned_throughput)
+    .send()
+    .await?;
+
+  client
+    .update_time_to_live()
+    .table_name(table_name)
+    .time_to_live_specification(
+      TimeToLiveSpecification::builder()
+        .enabled(true)
+        .attribute_name("ttl")
+        .build()?,
+    )
+    .send()
+    .await?;
+
+  Ok(result)
 }

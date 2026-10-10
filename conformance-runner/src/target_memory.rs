@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use event_store_adapter_rs::next::{
+use event_store_adapter_rs::{
   aggregate_id::AidString,
   error::{EventStoreError, SerializationPhase, StorageOperation},
   memory::{EventStoreForMemory, MemoryStorage, MemoryTestHooks},

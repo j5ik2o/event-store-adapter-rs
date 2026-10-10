@@ -2,8 +2,8 @@ use std::collections::HashMap;
 use std::process::ExitCode;
 
 use aws_sdk_dynamodb::config::Region;
-use event_store_adapter_rs::migration::{migrate_v3_dynamodb, LegacyDynamoDbTables};
-use event_store_adapter_rs::next::dynamodb::DynamoDbTables;
+use event_store_adapter_rs::DynamoDbTables;
+use event_store_adapter_rs::{migrate_v3_dynamodb, LegacyDynamoDbTables};
 
 const PRECONDITION: &str = "運用前提: 実行前に旧2表への書込を停止してください。このツールは書込停止を強制しません。";
 const HELP: &str = "v3既定DynamoDB配置を全件検査して新版へ移行します。

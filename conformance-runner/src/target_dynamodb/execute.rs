@@ -12,7 +12,7 @@ use aws_sdk_dynamodb::{
   Client,
 };
 use aws_smithy_types::timeout::TimeoutConfig;
-use event_store_adapter_rs::next::{
+use event_store_adapter_rs::{
   aggregate_id::AidString,
   dynamodb::{Clock, DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB},
   error::EventStoreError,
@@ -225,7 +225,7 @@ impl Execution {
   ) -> Result<CaseOutcome, String> {
     let body = &prepared.body;
     let settings = if case.kind == CaseKind::ValueTable {
-      event_store_adapter_rs::next::retention::RetentionSettings::current_only()
+      event_store_adapter_rs::retention::RetentionSettings::current_only()
     } else {
       case::settings(body)?
     };

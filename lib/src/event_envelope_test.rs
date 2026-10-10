@@ -1,112 +1,55 @@
 use chrono::{DateTime, TimeZone, Utc};
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
 
-use crate::event_envelope::{EventEnvelope, SnapshotEnvelope};
-use crate::types::AggregateId;
-use std::fmt::{Display, Formatter};
+use crate::event_envelope::{EventEnvelope, SnapshotEnvelope, SnapshotRead};
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-struct TestId(String);
-
-impl Display for TestId {
-  fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-    write!(f, "{}", self.0)
-  }
-}
-
-impl AggregateId for TestId {
-  fn type_name(&self) -> String {
-    "TestAggregate".to_string()
-  }
-
-  fn value(&self) -> String {
-    self.0.clone()
-  }
-}
-
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq)]
 struct TestPayload {
   name: String,
 }
 
 fn fixed_occurred_at() -> DateTime<Utc> {
-  Utc.with_ymd_and_hms(2026, 8, 27, 12, 34, 56).unwrap()
+  Utc.with_ymd_and_hms(2026, 8, 27, 0, 0, 0).unwrap()
 }
 
-// AC1.1.2 / US1.1: 封筒構築とアクセサの読取（メタデータ 4 点 + payload の運搬）
+// T-2 / T-4: manifest の省略時は空文字列になる。
 #[test]
-fn test_event_envelope_construction_and_accessors() {
-  let occurred_at = fixed_occurred_at();
+fn should_event_envelope_default_manifest_to_empty_string() {
   let envelope = EventEnvelope::new(
-    TestId("a-1".to_string()),
-    1,
-    occurred_at,
-    TestPayload {
-      name: "created".to_string(),
-    },
-  );
-
-  assert_eq!(envelope.aggregate_id(), &TestId("a-1".to_string()));
-  assert_eq!(envelope.seq_nr(), 1);
-  // BR1.3: occurred_at はドメイン供給値のまま維持される
-  assert_eq!(envelope.occurred_at(), &occurred_at);
-  assert_eq!(envelope.payload().name, "created");
-}
-
-// BR1.1 / FR1.2: manifest 省略時は空文字列
-#[test]
-fn test_event_envelope_manifest_defaults_to_empty_string() {
-  let envelope = EventEnvelope::new(
-    TestId("a-1".to_string()),
+    "Order-1".to_string(),
     1,
     fixed_occurred_at(),
     TestPayload {
       name: "created".to_string(),
     },
   );
+
   assert_eq!(envelope.manifest(), "");
+  assert_eq!(envelope.seq_nr(), 1);
+  assert_eq!(envelope.payload().name, "created");
+  assert_eq!(envelope.aggregate_id(), "Order-1");
 }
 
-// BR1.2: with_manifest で設定した値が同値で読み取れる（ライブラリは値を解釈しない）
+// T-4: `with_manifest` は値を解釈せず、そのまま運搬する。
 #[test]
-fn test_event_envelope_with_manifest_carries_value_verbatim() {
+fn should_event_envelope_carry_manifest_verbatim() {
   let envelope = EventEnvelope::new(
-    TestId("a-1".to_string()),
+    "Order-1".to_string(),
     2,
     fixed_occurred_at(),
     TestPayload {
       name: "renamed".to_string(),
     },
   )
-  .with_manifest("com.example.UserAccountEvent.Renamed#v2");
-  assert_eq!(envelope.manifest(), "com.example.UserAccountEvent.Renamed#v2");
+  .with_manifest("com.example.OrderEvent.Renamed#v2");
+
+  assert_eq!(envelope.manifest(), "com.example.OrderEvent.Renamed#v2");
 }
 
-// FR7.4 / AC1.2.1: manifest ラウンドトリップ — serde 往復で封筒全体が同値
+// T-2: 封筒を消費して payload の所有権を返す。
 #[test]
-fn test_event_envelope_manifest_serde_round_trip() {
+fn should_event_envelope_into_payload_moves_ownership() {
   let envelope = EventEnvelope::new(
-    TestId("a-1".to_string()),
-    3,
-    fixed_occurred_at(),
-    TestPayload {
-      name: "renamed".to_string(),
-    },
-  )
-  .with_manifest("manifest-v1");
-
-  let json = serde_json::to_string(&envelope).unwrap();
-  let restored: EventEnvelope<TestId, TestPayload> = serde_json::from_str(&json).unwrap();
-  assert_eq!(restored, envelope);
-  assert_eq!(restored.manifest(), "manifest-v1");
-}
-
-// FR7.4 / FR1.2: 省略時の空文字列 manifest も同値でラウンドトリップする
-#[test]
-fn test_event_envelope_default_manifest_serde_round_trip() {
-  let envelope = EventEnvelope::new(
-    TestId("a-1".to_string()),
+    "Order-1".to_string(),
     1,
     fixed_occurred_at(),
     TestPayload {
@@ -114,70 +57,93 @@ fn test_event_envelope_default_manifest_serde_round_trip() {
     },
   );
 
-  let json = serde_json::to_string(&envelope).unwrap();
-  let restored: EventEnvelope<TestId, TestPayload> = serde_json::from_str(&json).unwrap();
-  assert_eq!(restored, envelope);
-  assert_eq!(restored.manifest(), "");
+  let payload = envelope.into_payload();
+
+  assert_eq!(payload.name, "created");
 }
 
-// FR2.1: SnapshotEnvelope の構築とアクセサ（公開昇格した封筒の形状）
+// T-10: スナップショット封筒は `new(aggregate, seq_nr)` で作り、version を持たない。
 #[test]
-fn test_snapshot_envelope_construction_and_accessors() {
+fn should_snapshot_envelope_carry_seq_nr_without_version() {
   let snapshot = SnapshotEnvelope::new(
     TestPayload {
       name: "current".to_string(),
     },
-    2,
-    5,
+    7,
   );
+
+  assert_eq!(snapshot.seq_nr(), 7);
   assert_eq!(snapshot.aggregate().name, "current");
-  assert_eq!(snapshot.seq_nr(), 2);
-  assert_eq!(snapshot.version(), 5);
+  assert_eq!(snapshot.manifest(), "");
   assert_eq!(snapshot.into_aggregate().name, "current");
 }
 
-// FR7.3 ① / AC1.1.1 / NFR2: 型レベル検証 — derive(Serialize, Deserialize) のみの
-// プレーン型（Debug / Clone なし）が payload 最小境界を満たし、封筒を構築できる
+// T-10: スナップショット封筒の manifest は `with_manifest` で設定する。
 #[test]
-fn test_plain_serde_type_satisfies_minimal_payload_bound() {
-  // Debug / Clone を持たないプレーン型（ライブラリ trait 非実装）
-  #[derive(Serialize, Deserialize)]
+fn should_snapshot_envelope_carry_manifest_verbatim() {
+  let snapshot = SnapshotEnvelope::new(
+    TestPayload {
+      name: "current".to_string(),
+    },
+    3,
+  )
+  .with_manifest("snapshot-v1");
+
+  assert_eq!(snapshot.manifest(), "snapshot-v1");
+}
+
+// R-2 / R-3: `SnapshotRead` はスナップショット封筒（なくてもよい）とヘッドの seq_nr を返す。
+#[test]
+fn should_snapshot_read_return_snapshot_and_head_seq_nr() {
+  let snapshot = SnapshotEnvelope::new(
+    TestPayload {
+      name: "current".to_string(),
+    },
+    4,
+  );
+  let read = SnapshotRead::new(Some(snapshot), 5);
+
+  assert_eq!(read.head_seq_nr(), 5);
+  assert_eq!(read.snapshot().expect("スナップショットがある").seq_nr(), 4);
+  let (snapshot, head_seq_nr) = read.into_parts();
+  assert_eq!(head_seq_nr, 5);
+  assert_eq!(snapshot.expect("スナップショットがある").seq_nr(), 4);
+
+  // スナップショットがなくても、ヘッドの seq_nr を返す。
+  let read: SnapshotRead<TestPayload> = SnapshotRead::new(None, 9);
+  assert!(read.snapshot().is_none());
+  assert_eq!(read.head_seq_nr(), 9);
+}
+
+// T-6: 封筒は payload に serde（Serialize）や Clone を要求しない。
+// どちらも実装しない `PlainPayload` を載せた封筒が構築・読取できることのコンパイル検証。
+#[test]
+fn should_event_envelope_not_require_serialize_or_clone_on_payload() {
+  #[derive(Debug, PartialEq)]
   struct PlainPayload {
-    value: String,
+    name: String,
   }
 
-  #[derive(Serialize, Deserialize)]
+  #[derive(Debug, PartialEq)]
   struct PlainAggregate {
-    value: String,
+    name: String,
   }
-
-  // payload 最小境界（Serialize + DeserializeOwned + Send + Sync + 'static — BR1.6）を
-  // 満たすことのコンパイル検証
-  fn assert_minimal_payload_bound<T: Serialize + DeserializeOwned + Send + Sync + 'static>() {}
-  assert_minimal_payload_bound::<PlainPayload>();
-  assert_minimal_payload_bound::<PlainAggregate>();
 
   let envelope = EventEnvelope::new(
-    TestId("a-1".to_string()),
+    "Order-1".to_string(),
     1,
     fixed_occurred_at(),
     PlainPayload {
-      value: "plain".to_string(),
+      name: "created".to_string(),
     },
-  )
-  .with_manifest("plain-v1");
-  assert_eq!(envelope.seq_nr(), 1);
-  assert_eq!(envelope.manifest(), "plain-v1");
-  assert_eq!(envelope.payload().value, "plain");
-  assert_eq!(envelope.into_payload().value, "plain");
+  );
+  assert_eq!(envelope.payload().name, "created");
 
   let snapshot = SnapshotEnvelope::new(
     PlainAggregate {
-      value: "plain".to_string(),
+      name: "current".to_string(),
     },
     1,
-    1,
   );
-  assert_eq!(snapshot.aggregate().value, "plain");
-  assert_eq!(snapshot.into_aggregate().value, "plain");
+  assert_eq!(snapshot.aggregate().name, "current");
 }

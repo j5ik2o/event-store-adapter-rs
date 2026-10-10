@@ -57,23 +57,13 @@ jobs:
       matrix:
         include:
           # Docker-free configurations run build + tests; the Docker-backed
-          # integration tests (dynamodb / bigtable / all-features) stay in
+          # integration tests (dynamodb / all-features) stay in
           # test-lib, so those configurations are build-only here.
           - name: no-features
             flags: --no-default-features
             mode: test
-          - name: sqlite
-            flags: --no-default-features --features sqlite
-            mode: test
-          - name: sqlite-system
-            flags: --no-default-features --features sqlite-system
-            mode: test
-            system-sqlite: true
           - name: dynamodb
             flags: --no-default-features --features dynamodb
-            mode: build
-          - name: bigtable
-            flags: --no-default-features --features bigtable
             mode: build
           - name: all-features
             flags: --all-features
@@ -84,8 +74,6 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - if: matrix.system-sqlite
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
       - if: matrix.mode == 'build'
         run: cargo build --verbose -p event-store-adapter-rs ${{ matrix.flags }}
       - if: matrix.mode == 'test'
@@ -95,13 +83,6 @@ jobs:
         run: |
           if cargo tree -p event-store-adapter-rs -e normal --no-default-features | grep -E "aws-|tonic|googleapis"; then
             echo "cloud SDK crates leaked into the featureless dependency graph"
-            exit 1
-          fi
-      - name: hashlink must be absent from the sqlite graph
-        if: matrix.name == 'sqlite'
-        run: |
-          if cargo tree -p event-store-adapter-rs -e normal --no-default-features --features sqlite | grep hashlink; then
-            echo "hashlink leaked into the sqlite dependency graph"
             exit 1
           fi
       - name: no hand-written unsafe impl
@@ -117,8 +98,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # FR8.5 / NFR6.12: lint every backend, bigtable included. The examples are
-        # workspace members that enable the dynamodb / sqlite features of the library,
+        # FR8.5 / NFR6.12: lint every supported backend. The examples are
+        # workspace members that enable the dynamodb feature of the library,
         # so feature unification widens the effective feature set of each configuration;
         # the per-feature isolation of the library graph stays with the feature-matrix job.
         include:
@@ -126,13 +107,6 @@ jobs:
             flags: --no-default-features
           - name: dynamodb
             flags: --no-default-features --features dynamodb
-          - name: bigtable
-            flags: --no-default-features --features bigtable
-          - name: sqlite
-            flags: --no-default-features --features sqlite
-          - name: sqlite-system
-            flags: --no-default-features --features sqlite-system
-            system-sqlite: true
           - name: all-features
             flags: --all-features
     name: clippy (${{ matrix.name }})
@@ -142,8 +116,6 @@ jobs:
         with:
           toolchain: stable
           components: clippy
-      - if: matrix.system-sqlite
-        run: sudo apt-get update && sudo apt-get install -y libsqlite3-dev
       - run: cargo clippy --workspace --all-targets ${{ matrix.flags }} -- -D warnings
   audit:
     timeout-minutes: 5

@@ -16,11 +16,11 @@ use aws_smithy_runtime_api::client::orchestrator::HttpRequest;
 use aws_smithy_types::timeout::TimeoutConfig;
 use event_store_adapter_conformance_rs::fault::{FaultPlan, Phase};
 use event_store_adapter_conformance_rs::target_dynamodb::{FaultTransport, OperationReport, RequestLayout};
-use event_store_adapter_rs::next::dynamodb::{
+use event_store_adapter_rs::dynamodb::{
   read_configuration_for_test, ConfigurationRead, DynamoDbOptions, DynamoDbTables, RetrySleeper,
 };
-use event_store_adapter_rs::next::error::{ConfigurationReason, EventStoreError, StorageOperation};
-use event_store_adapter_rs::next::retention::{RetentionMode, RetentionSettings};
+use event_store_adapter_rs::error::{ConfigurationReason, EventStoreError, StorageOperation};
+use event_store_adapter_rs::retention::{RetentionMode, RetentionSettings};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
 use testcontainers::{ContainerAsync, GenericImage};

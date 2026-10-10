@@ -1,7 +1,7 @@
 use aws_sdk_dynamodb::Client;
 
 use super::{MigrationError, MigrationReport};
-use crate::next::dynamodb::items::Item;
+use crate::dynamodb::items::Item;
 
 pub(super) struct Scan<'a> {
   client: &'a Client,

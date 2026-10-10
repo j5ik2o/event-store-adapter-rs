@@ -193,8 +193,8 @@ impl FaultTransport {
   }
 
   /// HTTP差し込みと同じOperationFaultsでserializer失敗を数える。
-  pub fn inject_serialization(&self, phase: Phase) -> Result<(), event_store_adapter_rs::next::error::EventStoreError> {
-    use event_store_adapter_rs::next::error::{EventStoreError, SerializationPhase};
+  pub fn inject_serialization(&self, phase: Phase) -> Result<(), event_store_adapter_rs::error::EventStoreError> {
+    use event_store_adapter_rs::error::{EventStoreError, SerializationPhase};
     let mut active = self.state.active.lock().expect("操作状態のロック");
     let Some(fault) = active
       .as_mut()
