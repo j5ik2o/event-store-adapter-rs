@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use aws_sdk_dynamodb::types::error::TransactionCanceledException;
 use aws_sdk_dynamodb::types::CancellationReason;
 use aws_smithy_runtime_api::http::{Response, StatusCode};

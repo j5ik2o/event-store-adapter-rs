@@ -2,13 +2,13 @@ use std::collections::HashMap;
 
 use aws_sdk_dynamodb::types::AttributeValue;
 
-pub(super) const ITEM_SIZE_LIMIT: usize = 409600;
+pub(crate) const ITEM_SIZE_LIMIT: usize = 409600;
 
 // DynamoDBの最大38桁と符号を含む固定上界。実際の数値表現の長さに依存しない。
 const NUMBER_MAX_BYTES: usize = 21;
 
 /// 属性名・値・入れ子のオーバーヘッドから、保存項目のサイズ上界を返す（D-7）。
-pub(super) fn item_size_upper_bound(item: &HashMap<String, AttributeValue>) -> usize {
+pub(crate) fn item_size_upper_bound(item: &HashMap<String, AttributeValue>) -> usize {
   item.iter().fold(0usize, |size, (name, value)| {
     size.saturating_add(name.len()).saturating_add(value_size(value))
   })
