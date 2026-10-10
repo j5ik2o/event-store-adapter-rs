@@ -1,209 +1,94 @@
-# Database schemas used by the event stores (v3)
+# DynamoDB storage schema (4.x)
 
-**This document is informational.** It describes how each backend lays out the v3
-envelope types (`EventEnvelope` / `SnapshotEnvelope`) physically. The envelope metadata
-(`aggregate_id` / `seq_nr` / `occurred_at` / `manifest` for events, `seq_nr` / `version`
-for snapshots) is stored in dedicated columns/attributes/cells, and the payload
-column holds **pure domain content only** — the library no longer injects `version`,
-`seq_nr`, or timestamps into the serialized payload.
+This document describes the layout used by the public `EventStoreForDynamoDB`. The runnable [user-account example](../examples/user-account/src/main.rs) provisions it with [the table helper](../test-utils/src/dynamodb.rs). Table creation, Streams, and TTL configuration remain the caller's responsibility.
 
-> The v3 layout differs from the v2 layout (the journal gained a `manifest`
-> column, `occurred_at` became nanosecond-precision, the snapshot payload lost the
-> injected metadata, and the current/history discrimination moved to the key). Reading
-> rows written by v2 is not supported; see
-> [MIGRATION_GUIDE_v3.md](MIGRATION_GUIDE_v3.md) for the migration stance.
+The regular store reads only this layout. For v3's default two-table layout, use the explicit [migration procedure](MIGRATION_GUIDE_v4.md). SQLite and Bigtable users should stay on 3.x.
 
-### Snapshot retention across backends
+## Tables and index
 
-When `with_keep_snapshot_count(Some(n))` is enabled, **DynamoDB / Bigtable / SQLite**
-all keep the **newest `n`** history snapshots and remove the oldest excess.
+All three table names must be distinct. There are no logical shards, `pkey`, or journal GSI.
 
-DynamoDB deletes the oldest excess items or, when `with_delete_ttl` is configured,
-sets a future `ttl` value so DynamoDB expires them. Bigtable and SQLite delete the
-oldest excess rows.
+| Table | Partition key | Sort key | Additional configuration |
+|:------|:--------------|:---------|:-------------------------|
+| Journal | `aid` (S) | `seq_nr` (N) | Replay queries the base table |
+| Snapshot | `aid` (S) | `skey` (N) | History GSI below; enable TTL on `ttl` when using TTL retention |
+| Head | `aid` (S) | none | Streams with `NEW_IMAGE` |
 
-## DynamoDB table schema used by EventStore
+The snapshot history GSI uses `aid` (S) and `active_history_seq_nr` (N), with `KEYS_ONLY` projection. Its name is `DynamoDbTables::snapshot_history_index_name`.
 
-- Journal
-- Snapshot
+`aid` is the UTF-8 string `type_name-value`, assembled from `AggregateId`. The type name cannot contain a hyphen; the value may. The complete string is limited to 1024 bytes. An empty type name or value is allowed.
 
-The key design assumption for both tables is that writes are distributed to the greatest extent possible within the logical shard. Table creation stays outside the library (see `test-utils` for a reference definition).
+## Configuration records
 
-### Journal table
+The asynchronous `open`/`open_with_serializers` reads all three configuration records with a strongly consistent `BatchGetItem`:
 
-The table used to store events that have occurred in an aggregate. In principle, this event is used to replay the aggregate state. One `EventEnvelope` maps to one item.
+| Table | Configuration key |
+|:------|:------------------|
+| Journal | `aid = "__config__"`, `seq_nr = 0` |
+| Snapshot | `aid = "__config__"`, `skey = 0` |
+| Head | `aid = "__config__"` |
 
-| attribute name | type | description | example |
-|:------------|:----|:---------------------------------------------------------------------|:--------|
-| pkey        | S | Partition key (`${aggregate-type-name}-hash($aid) % logical-shard-size`) | `user-account-1` |
-| skey        | S | Sort key (`${aggregate-type-name}-${aid.value}-${seq_nr}`) | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z-12345` |
-| aid         | S | Aggregate ID | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z` |
-| seq_nr      | N | Sequence number (origin=1, domain-numbered) | `12345` |
-| payload     | B | Event payload — pure domain content, serialized JSON by default | `{"Created":{"name":"test"}}` |
-| occurred_at | N | Occurred datetime of the event in Unix epoch **nanoseconds** (domain-supplied; round-trips exactly) | `1688009557404481000` |
-| manifest    | S | User-supplied, free-form type discriminator carried by the envelope (empty string when omitted) | `user-account-created/v1` |
+Each record contains the same `store_id` (S, a generated UUID) and `layout_version` (N, 1). If all are absent, `open` creates them together using conditional `TransactWriteItems`. Partial configuration, different store IDs, unsupported layout versions, duplicate table names, or a missing SDK retry sleeper cause a configuration error. Client options are not persisted as configuration attributes.
 
-A GSI on `(aid, seq_nr)` is used during replay.
+Unprocessed reads are retried with strong consistency and bounded backoff. Defaults are 10 retries, an initial delay of 50 ms, and a maximum delay of 2 seconds; `DynamoDbOptions` allows callers to set them.
 
-### Snapshot table
+## Journal items
 
-This table is used to store aggregate state and to speed up replay of aggregates. It may not represent the latest aggregate state because events are saved even after the snapshot is saved.
+One event envelope becomes one item.
 
-| attribute name | type | description | example |
-|:------------|:----|:-----------------------------------------------------------------------------------------------|:--------|
-| pkey        | S | Partition key (`${aggregate-type-name}-hash($aid) % logical-shard-size`) | `user-account-1` |
-| skey        | S | Sort key (`${aggregate-type-name}-${aid.value}-${seq_nr}`). The current snapshot lives in the slot whose skey is formatted with the **marker `0`**; history items use the event's seq_nr | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z-0` |
-| aid         | S | Aggregate ID | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z` |
-| seq_nr      | N | Sequence number the snapshot reflects. **Unlike v2, the current item stores the real value** (the marker `0` appears only inside the skey) | `12345` |
-| version     | N | Version for optimistic locking (origin=1). The column value is authoritative — it is never recovered from the payload | `1` |
-| payload     | B | State of the aggregate — pure domain content, serialized JSON by default (no injected `version` / `seq_nr`) | `{"id":{"value":"..."},"name":"test"}` |
-| ttl         | N | TTL for deletion in epoch seconds (`0` = no expiry; set on excess history items when `with_delete_ttl` is configured) | `1624980000` |
-| last_updated_at | N | Last updated datetime in Unix epoch milliseconds (derived from the event's `occurred_at`) | `1688009557404` |
+| Attribute | Type | Meaning |
+|:----------|:-----|:--------|
+| `aid` | S | Complete aggregate ID |
+| `seq_nr` | N | Domain-supplied event number, 1 through `SEQ_NR_MAX` |
+| `occurred_at` | N | Signed 64-bit Unix epoch nanoseconds supplied by the event |
+| `manifest` | S | Envelope manifest; empty when omitted |
+| `payload` | B | Serializer output for the event payload only |
 
-- The current snapshot is read by a strongly consistent `GetItem` on the primary key
-  (`pkey` + the marker-`0` skey); its `version` is what callers pass back as
-  `expected_version` on the next write.
-- History items (skey = event seq_nr) are written **only when
-  `with_keep_snapshot_count(Some(n))` is enabled**, inside the same transaction as the
-  current item and the journal item.
-- The GSI on `(aid, seq_nr)` is used by the retention query; the newest `n` history
-  items are retained, and the oldest excess is either deleted or, when
-  `with_delete_ttl` is configured, given a future `ttl` value so DynamoDB expires
-  the items.
+Replay uses a strongly consistent, ascending base-table `Query` on `aid` and `seq_nr >= lower_bound`, following all pages. A lower bound of 0 reads from the beginning. Payload bytes and nanosecond timestamps round-trip through the selected serializer and envelope; metadata is not injected into the payload.
 
-### Writing events and snapshots
+## Head items
 
-1. When the command is accepted by the aggregate, the domain produces the next event
-   and wraps it in an `EventEnvelope` with `seq_nr` numbered by the domain (origin=1).
-2. The journal Put and the snapshot write always run in one `TransactWriteItems`.
-   The first event of a stream (seq_nr=1, expected_version=0) creates both items with
-   condition `attribute_not_exists`; every later write updates the current snapshot item
-   under the condition `version = expected_version` and sets `version = expected_version + 1`.
-   A failed condition surfaces as `OptimisticLockError`.
+| Attribute | Type | Meaning |
+|:----------|:-----|:--------|
+| `aid` | S | Complete aggregate ID |
+| `type_name` | S | Aggregate type name |
+| `seq_nr` | N | Last committed event number |
+| `events` | L | One M containing the just-appended event's `seq_nr`, `occurred_at`, `manifest`, and `payload` |
 
-### Replaying an aggregate with events and snapshots
+The head is updated on every append, including appends without a snapshot. Its `events` supplies the appended event to the head table's stream.
 
-1. Specify the ID of the aggregate and get the latest `SnapshotEnvelope`.
-2. Read the events after the envelope's `seq_nr` from the journal table.
-3. Apply the read events to the snapshot state to obtain the latest aggregate state;
-   pass the envelope's `version` as `expected_version` on the next write.
+## Snapshot items
 
-## Bigtable table schema used by EventStoreForBigtable
+| Attribute | Type | Meaning |
+|:----------|:-----|:--------|
+| `aid` | S | Complete aggregate ID |
+| `skey` | N | 0 for current; actual snapshot sequence number for history |
+| `seq_nr` | N | Sequence number reflected in the snapshot |
+| `manifest` | S | Snapshot envelope manifest; empty when omitted |
+| `payload` | B | Serializer output for the aggregate only |
+| `last_updated_at` | N | Event occurrence time in Unix epoch milliseconds |
+| `active_history_seq_nr` | N | Actual history sequence number while active; absent from current and TTL-marked history |
+| `ttl` | N | Expiry in epoch seconds for TTL-marked history only |
 
-- journal table — column family `event`
-- snapshot table — column family `snapshot`
+The current snapshot has no `version`, `ttl`, or `active_history_seq_nr`. Active history is written only when `RetentionSettings::keep_latest(n)` is configured. TTL-marked history retains its payload, manifest, sequence number, and update time; marking removes `active_history_seq_nr`, so it disappears from the history GSI before physical deletion by DynamoDB.
 
-All values are stored as bytes; numeric cells hold decimal strings. Reads and the
-CAS predicate use a cells-per-column limit of 1, so the latest cell of each column
-is authoritative.
+## Writes and reads
 
-### journal table (Bigtable)
+`persist_event` commits exactly two actions in a single `TransactWriteItems`: journal Put and head Put/Update. Sequence 1 creates the head conditionally; later appends require `head.seq_nr == event.seq_nr - 1`. The journal Put also asserts absence of its key.
 
-Row key: `${partition-key}#${aggregate-type-name}#${aid.value}#${seq_nr zero-padded to 20 digits}`
-(the partition key is `${aggregate-type-name}-hash($aid) % shard-count`). One `EventEnvelope` maps to one row.
+`persist_event_and_snapshot` additionally puts the current snapshot. With history enabled it also puts the history snapshot: three or four actions in the same transaction. Event and snapshot sequence numbers must match. Event-only appends leave the snapshot table unchanged. The caller supplies no optimistic-lock version.
 
-| column (family `event`) | description | example |
-|:------------|:---------------------------------------------------------------------|:--------|
-| payload     | Event payload — pure domain content, serialized JSON by default | `{"Created":{"name":"test"}}` |
-| aggregate_id | Aggregate ID value part | `01H42K4ABWQ5V2XQEP3A48VE0Z` |
-| seq_nr      | Sequence number (origin=1, domain-numbered) | `12345` |
-| occurred_at | Occurred datetime as an RFC 3339 string with **nanosecond** precision (domain-supplied; round-trips exactly) | `2023-06-29T03:32:37.404481000Z` |
-| manifest    | User-supplied, free-form type discriminator (empty string when omitted) | `user-account-created/v1` |
+`get_latest_snapshot_by_id` uses a strongly consistent `BatchGetItem` for the head and current snapshot, with finite retries for unprocessed keys. No head returns `None`. A head without a snapshot returns `SnapshotRead::new(None, head_seq_nr)`. Head and snapshot have independent sequence numbers; a concurrent read can observe values from different writes. The [repository example](../examples/user-account/src/user_account_repository.rs) replays after the snapshot, or from creation when it is absent, and checks that replay reaches the observed head.
 
-The zero-padded seq_nr keeps the row keys of one aggregate contiguous and ordered,
-so replay is a prefix range scan.
+Items are checked against the 409600-byte size limit before the transaction; an oversized journal, head, current snapshot, or history snapshot returns a contract violation without a partial write.
 
-### snapshot table (Bigtable)
+## Retention
 
-Current row key: `${partition-key}#${aggregate-type-name}#${aid.value}`.
-History row key: current row key + `#` + zero-padded seq_nr (key order = oldest first).
+When a history count is configured, retention runs only after an append that writes a history snapshot commits. It queries the snapshot GSI, combines its results with the just-written history sequence number, and keeps the newest configured count. Event-only appends do not run retention. `keep_latest(0)` is invalid.
 
-| column (family `snapshot`) | description | example |
-|:------------|:---------------------------------------------------------------------|:--------|
-| payload     | State of the aggregate — pure domain content (no injected `version` / `seq_nr`) | `{"id":{"value":"..."},"name":"test"}` |
-| seq_nr      | Sequence number the snapshot reflects | `12345` |
-| version     | Version for optimistic locking (origin=1); the cell value is authoritative | `1` |
-| last_updated_at | Last updated datetime in Unix epoch milliseconds | `1688009557404` |
+- `RetentionMode::Delete` deletes excess history using bounded batches and retries.
+- `RetentionMode::Ttl { grace_seconds }` marks excess history with expiry equal to the marking clock's epoch seconds plus grace, using `SET ttl = expiry REMOVE active_history_seq_nr`. Configure DynamoDB TTL separately. Grace can be 0.
+- `current_only()` writes no history. Current snapshots never expire through this policy.
+- Retention errors emit a `tracing` warning with aid, seq_nr, phase, and error; the append already committed and continues to return success.
 
-- Writes go through `CheckAndMutateRow` (single-row atomic CAS): creation asserts the
-  absence of the `version` cell; updates assert `version == expected_version` byte-exactly
-  and set `version = expected_version + 1`. A failed predicate surfaces as
-  `OptimisticLockError`.
-- History rows are written **only when `with_keep_snapshot_count(Some(n))` is enabled**:
-  the CAS winner copies the pre-image of the current row to the history row key in a
-  separate best-effort write.
-- Retention keeps the newest `n` history rows and deletes the oldest excess
-  (`DeleteFromRow`); `with_delete_ttl` additionally deletes history rows whose
-  `last_updated_at` is older than the TTL.
-
-## SQLite table schema used by EventStoreForSqlite
-
-- journal
-- snapshot
-
-The tables and indexes are created automatically by the library when the store is constructed (idempotent `CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`) — no user DDL is required or expected.
-
-The key design mirrors the DynamoDB tables: `pkey` / `skey` form the write address (`PRIMARY KEY (pkey, skey)`) and distribute writes across logical shards, while `(aid, seq_nr)` is the read key used for replay.
-
-```sql
-CREATE TABLE IF NOT EXISTS journal (
-  pkey TEXT NOT NULL,
-  skey TEXT NOT NULL,
-  aid TEXT NOT NULL,
-  seq_nr INTEGER NOT NULL,
-  payload BLOB NOT NULL,
-  occurred_at INTEGER NOT NULL,
-  manifest TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (pkey, skey)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS journal_aid_seq_nr_idx ON journal (aid, seq_nr);
-CREATE TABLE IF NOT EXISTS snapshot (
-  pkey TEXT NOT NULL,
-  skey TEXT NOT NULL,
-  aid TEXT NOT NULL,
-  seq_nr INTEGER NOT NULL,
-  version INTEGER NOT NULL,
-  payload BLOB NOT NULL,
-  last_updated_at INTEGER NOT NULL,
-  PRIMARY KEY (pkey, skey)
-);
-CREATE INDEX IF NOT EXISTS snapshot_aid_seq_nr_idx ON snapshot (aid, seq_nr);
-```
-
-### journal table (SQLite)
-
-| column name | type | description |
-|:------------|:-----|:------------|
-| pkey | TEXT | Partition key (`${aggregate-type-name}-hash($aid) % shard-count`) — write-distribution key, part of the primary key |
-| skey | TEXT | Sort key (`${aggregate-type-name}-${aid.value}-${seq_nr}`) — part of the primary key |
-| aid | TEXT | Aggregate ID |
-| seq_nr | INTEGER | Sequence number (origin=1, domain-numbered) |
-| payload | BLOB | Event payload — pure domain content (serialized JSON by default) |
-| occurred_at | INTEGER | Occurred datetime of the event in Unix epoch **nanoseconds** (domain-supplied; round-trips exactly; out-of-range values are rejected at write time) |
-| manifest | TEXT | User-supplied, free-form type discriminator carried by the envelope (empty string when omitted) |
-
-A unique index on `(aid, seq_nr)` plays the role of the DynamoDB GSI and is used during replay.
-
-### snapshot table (SQLite)
-
-| column name | type | description |
-|:------------|:-----|:------------|
-| pkey | TEXT | Partition key (`${aggregate-type-name}-hash($aid) % shard-count`) — write-distribution key, part of the primary key |
-| skey | TEXT | Sort key (`${aggregate-type-name}-${aid.value}-${seq_nr}`). The current snapshot lives in the slot whose skey is formatted with the **marker `0`**; history rows use the event's seq_nr |
-| aid | TEXT | Aggregate ID |
-| seq_nr | INTEGER | Sequence number the snapshot reflects. **Unlike v2, the current row stores the real value** (the marker `0` appears only inside the skey; current/history discrimination is by skey, not by this column) |
-| version | INTEGER | Version for optimistic locking (origin=1); the column value is authoritative — it is never recovered from the payload |
-| payload | BLOB | State of the aggregate — pure domain content (serialized JSON by default, no injected `version` / `seq_nr`) |
-| last_updated_at | INTEGER | Last updated datetime in Unix epoch milliseconds; also used to evaluate the snapshot retention TTL |
-
-An index on `(aid, seq_nr)` is used during replay.
-
-- Optimistic-lock verification and writes happen inside a single SQLite transaction:
-  the journal insert and the conditional snapshot update (`WHERE version = expected`)
-  either commit together or roll back together. The first event of a stream
-  (seq_nr=1, expected_version=0) inserts both rows; a primary-key / unique-index
-  conflict on that path surfaces as `OptimisticLockError` with `expected_version=0`.
-- History rows are inserted **only when `with_keep_snapshot_count(Some(n))` is enabled**,
-  in the same transaction. Retention keeps the newest `n` history rows and deletes the
-  oldest excess (`ORDER BY seq_nr ASC LIMIT excess`); `with_delete_ttl` additionally
-  deletes history rows whose `last_updated_at` is older than the TTL.
+Memory uses the same public envelopes and sequence rules, but stores serialized bytes in `MemoryStorage` rather than these tables. A storage clone shares state; a separately created storage is isolated. Memory rejects TTL combined with a history count.

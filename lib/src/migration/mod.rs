@@ -15,7 +15,7 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::Client;
 use serde::{Deserialize, Serialize};
 
-use crate::next::dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
+use crate::dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
 
 /// 移行元の既定配置の2表を指定する。
 #[derive(Debug, Clone)]

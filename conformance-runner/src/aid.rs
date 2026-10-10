@@ -6,8 +6,8 @@
 
 use std::fmt::{Display, Formatter};
 
-use event_store_adapter_rs::next::aggregate_id::{AggregateId, AidString};
-use event_store_adapter_rs::next::error::EventStoreError;
+use event_store_adapter_rs::aggregate_id::{AggregateId, AidString};
+use event_store_adapter_rs::error::EventStoreError;
 use serde_json::{json, Value};
 
 use crate::report::{CaseOutcome, ObservedValues};

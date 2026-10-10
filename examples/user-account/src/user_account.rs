@@ -1,19 +1,18 @@
-use event_store_adapter_rs::types::AggregateId;
+use event_store_adapter_rs::AggregateId;
 use serde::{Deserialize, Serialize};
 use std::fmt::{Display, Formatter};
 
-// FR8.4 / FR3.1 / FR3.2: v3 example domain model. The `Event` / `Aggregate` traits are gone;
-// the event and the aggregate state are plain serde types (payloads), and the metadata
-// (aggregate_id / seq_nr / occurred_at / manifest) travels in the envelopes.
-
-/// Manifest value carried by the creation event envelope (FR1.2 — user-supplied, free-form).
+/// Manifest value carried by the creation event envelope.
 pub const CREATED_MANIFEST: &str = "user-account-created/v1";
 /// Manifest value carried by the rename event envelope.
 pub const RENAMED_MANIFEST: &str = "user-account-renamed/v1";
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum UserAccountError {
-  AlreadyRenamed(#[allow(dead_code)] String),
+  #[error("account already has name {0}")]
+  AlreadyRenamed(String),
+  #[error("invalid event replay: {0}")]
+  InvalidReplay(&'static str),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -43,16 +42,14 @@ impl AggregateId for UserAccountId {
   }
 }
 
-/// Event payload: pure domain content only — no event ID, no seq_nr, no timestamp.
-/// The envelope carries those (FR1.1).
+/// Event payload. The envelope carries the ID, sequence number, timestamp and manifest.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum UserAccountEvent {
   Created { name: String },
   Renamed { name: String },
 }
 
-/// Aggregate payload: pure domain state only — no seq_nr, no version, no last_updated_at.
-/// The snapshot envelope carries seq_nr / version (FR2.1 / FR3.2).
+/// Aggregate state. The snapshot envelope carries the replay position.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct UserAccount {
   id: UserAccountId,
@@ -65,17 +62,25 @@ impl UserAccount {
     (my_self, UserAccountEvent::Created { name })
   }
 
-  pub fn replay(events: impl IntoIterator<Item = UserAccountEvent>, snapshot: UserAccount) -> Self {
-    events.into_iter().fold(snapshot, |mut result, event| {
-      result.apply_event(&event);
-      result
-    })
-  }
-
-  fn apply_event(&mut self, event: &UserAccountEvent) {
-    if let UserAccountEvent::Renamed { name } = event {
-      self.name = name.clone();
+  pub fn replay_from(
+    id: &UserAccountId,
+    snapshot: Option<Self>,
+    events: impl IntoIterator<Item = UserAccountEvent>,
+  ) -> Result<Self, UserAccountError> {
+    let mut state = snapshot;
+    for event in events {
+      match (state.as_mut(), event) {
+        (None, UserAccountEvent::Created { name }) => state = Some(Self { id: id.clone(), name }),
+        (Some(account), UserAccountEvent::Renamed { name }) => account.name = name,
+        (None, UserAccountEvent::Renamed { .. }) => {
+          return Err(UserAccountError::InvalidReplay("rename before creation"));
+        }
+        (Some(_), UserAccountEvent::Created { .. }) => {
+          return Err(UserAccountError::InvalidReplay("duplicate creation"));
+        }
+      }
     }
+    state.ok_or(UserAccountError::InvalidReplay("creation event is missing"))
   }
 
   pub fn rename(&mut self, name: &str) -> Result<UserAccountEvent, UserAccountError> {
@@ -86,3 +91,7 @@ impl UserAccount {
     Ok(UserAccountEvent::Renamed { name: name.to_string() })
   }
 }
+
+#[cfg(test)]
+#[path = "user_account_test.rs"]
+mod tests;

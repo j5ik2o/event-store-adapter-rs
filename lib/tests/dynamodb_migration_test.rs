@@ -4,7 +4,7 @@
 mod support;
 
 use aws_sdk_dynamodb::{primitives::Blob, types::AttributeValue as A};
-use event_store_adapter_rs::migration::migrate_v3_dynamodb;
+use event_store_adapter_rs::migrate_v3_dynamodb;
 use serde_json::{json, Value};
 use std::collections::HashMap;
 use support::*;

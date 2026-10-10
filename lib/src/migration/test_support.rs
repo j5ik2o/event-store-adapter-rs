@@ -9,7 +9,7 @@ use aws_smithy_runtime_api::http::{Response, StatusCode};
 use aws_smithy_types::{body::SdkBody, retry::RetryConfig};
 use serde_json::{json, Value};
 
-use crate::next::dynamodb::items::Item;
+use crate::dynamodb::items::Item;
 
 #[derive(Debug, Clone)]
 pub(super) struct Replay {

@@ -127,7 +127,7 @@ pub(super) async fn history_page_response(
   for number in page {
     let number = to_integer(number)
       .and_then(|number| u64::try_from(number).ok())
-      .filter(|number| (1..=event_store_adapter_rs::next::seq_nr::SEQ_NR_MAX).contains(number))
+      .filter(|number| (1..=event_store_adapter_rs::seq_nr::SEQ_NR_MAX).contains(number))
       .ok_or_else(|| invalid("履歴番号が正の範囲内整数ではない"))?;
     let saved = raw
       .get_item()

@@ -5,19 +5,8 @@ edition = "2021"
 
 [dependencies]
 anyhow = { workspace = true }
-thiserror = { workspace = true }
-async-trait = { workspace = true }
-aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = { workspace = true }
-chrono = { workspace = true, features = ["serde"] }
-serde = { workspace = true, features = ["derive"] }
-serde_json = { workspace = true }
-log = { workspace = true }
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
 testcontainers = { workspace = true }
 once_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-tracing = { workspace = true }
-tracing-subscriber = { workspace = true, features = [ "std", "env-filter" ] }
-googleapis-tonic-google-bigtable-admin-v2 = { workspace = true }
-tonic = { workspace = true, features = ["transport"] }

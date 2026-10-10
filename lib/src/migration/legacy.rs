@@ -3,9 +3,9 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::primitives::Blob;
 use aws_sdk_dynamodb::types::AttributeValue;
 
-use crate::next::aggregate_id::{AggregateId, AidString};
-use crate::next::dynamodb::items::{Item, SnapshotKind, StoredEvent, StoredSnapshot};
-use crate::next::seq_nr::{SeqNr, SEQ_NR_MAX};
+use crate::aggregate_id::{AggregateId, AidString};
+use crate::dynamodb::items::{Item, SnapshotKind, StoredEvent, StoredSnapshot};
+use crate::seq_nr::{SeqNr, SEQ_NR_MAX};
 
 #[derive(Debug, Clone)]
 pub(super) struct Id {

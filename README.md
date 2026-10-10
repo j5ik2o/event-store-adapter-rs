@@ -7,199 +7,133 @@
 [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-rs)](https://github.com/XAMPPRocky/tokei)
 
-This library provides an Event Store for CQRS/Event Sourcing with multiple storage backends: DynamoDB, Google Cloud Bigtable, SQLite, and in-memory.
 
-> **Note:** `main` is developing the next major version, 4.0.0, which has not been published yet. For a stable release, use 3.x (the latest version on crates.io).
+This library provides Memory and DynamoDB event stores for CQRS/Event Sourcing.
+
+> This checkout is developing the unpublished 4.x API (`4.0.0-alpha.0`). The examples below use a local checkout. SQLite and Bigtable users should stay on the 3.x line. Stored v3 DynamoDB data is supported only through the explicit migration function or CLI.
 
 [日本語](./README.ja.md)
 
-## Backends and Cargo features
+## Backends and features
 
-No backend is enabled by default. Pick the backend(s) you use via Cargo features:
+| Feature | Availability |
+|:--------|:-------------|
+| (none) | `EventStoreForMemory` and `MemoryStorage`, always available |
+| `dynamodb` | `EventStoreForDynamoDB`, using `aws-sdk-dynamodb` |
+| `migration` | `migrate_v3_dynamodb`; also enables `dynamodb` |
 
-| Feature | Backend | What it enables |
-|:--------|:--------|:----------------|
-| `dynamodb` | Amazon DynamoDB (`EventStoreForDynamoDB`) | `aws-config` / `aws-sdk-dynamodb` |
-| `bigtable` | Google Cloud Bigtable (`EventStoreForBigtable`) | `tonic` / `googleapis-tonic-google-bigtable-v2` |
-| `sqlite` | SQLite with a bundled library (`EventStoreForSqlite`) | `rusqlite` with its `bundled` feature — SQLite is compiled in, no system SQLite required |
-| `sqlite-system` | SQLite linked against the system library (`EventStoreForSqlite`) | `rusqlite` without `bundled` — links to the SQLite installed on the system |
-| (none) | In-memory (`EventStoreForMemory`) | Always available, no feature required |
+Default features are empty. The `sqlite`, `sqlite-system`, and `bigtable` features have been removed. The public API is exported from the crate root; there is no `next` namespace or old API alias.
 
-```toml
-[dependencies]
-event-store-adapter-rs = { version = "<latest>", features = ["sqlite"] }
-```
+## Memory example
 
-Notes:
-
-- Because there is no default feature, existing users must add an explicit `features = [...]` entry when upgrading (see [Migration from 1.x](#migration-from-1x)).
-- If both `sqlite` and `sqlite-system` are enabled, the **bundled** SQLite wins. This is a consequence of Cargo feature additivity: `sqlite` turns on `rusqlite/bundled`, and features can only be added, never subtracted. Enable only `sqlite-system` if you want to link against the system SQLite.
-
-### Bigtable write limitation in v3
-
-The v3 Bigtable backend updates the snapshot row with `CheckAndMutateRow`, then writes the event in a separate call. If the event write fails after the snapshot update succeeds, the snapshot remains advanced and the event history can contain a sequence gap. The current storage layout cannot make these writes atomic; resolving this requires the new storage layout planned for the next major version.
-
-## Usage
-
-You can easily implement an Event Sourcing-enabled repository using an event store. The following uses the SQLite backend (`features = ["sqlite"]`):
-
-```rust
-use event_store_adapter_rs::event_envelope::EventEnvelope;
-use event_store_adapter_rs::types::{EventStore, EventStoreReadError, EventStoreWriteError};
-use event_store_adapter_rs::EventStoreForSqlite;
-
-// UserAccount / UserAccountEvent are plain `#[derive(Serialize, Deserialize)]` types —
-// v3 requires no library traits on your domain types.
-pub struct UserAccountRepository {
-  event_store: EventStoreForSqlite<UserAccountId, UserAccount, UserAccountEvent>,
-}
-
-/// Read result restored from the latest snapshot plus the differential replay.
-/// `seq_nr` numbers the next event as `seq_nr + 1`; `version` is the expected_version for the next write.
-pub struct ReplayedUserAccount {
-  pub state: UserAccount,
-  pub seq_nr: usize,
-  pub version: usize,
-}
-
-impl UserAccountRepository {
-  pub async fn store_event(
-    &mut self,
-    event: EventEnvelope<UserAccountId, UserAccountEvent>,
-    expected_version: usize,
-  ) -> Result<(), RepositoryError> {
-    self
-      .event_store
-      .persist_event(event, expected_version)
-      .await
-      .map_err(Self::handle_event_store_write_error)
-  }
-
-  pub async fn store_event_and_snapshot(
-    &mut self,
-    event: EventEnvelope<UserAccountId, UserAccountEvent>,
-    snapshot: UserAccount,
-    expected_version: usize,
-  ) -> Result<(), RepositoryError> {
-    self
-      .event_store
-      .persist_event_and_snapshot(event, snapshot, expected_version)
-      .await
-      .map_err(Self::handle_event_store_write_error)
-  }
-
-  pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<ReplayedUserAccount>, RepositoryError> {
-    let snapshot = match self.event_store.get_latest_snapshot_by_id(id).await {
-      Ok(Some(snapshot)) => snapshot,
-      Ok(None) => return Ok(None),
-      Err(err) => return Err(Self::handle_event_store_read_error(err)),
-    };
-    let (snapshot_seq_nr, version) = (snapshot.seq_nr(), snapshot.version());
-    let events = self
-      .event_store
-      .get_events_by_id_since_seq_nr(id, snapshot_seq_nr + 1)
-      .await
-      .map_err(Self::handle_event_store_read_error)?;
-    let seq_nr = events.last().map(|event| event.seq_nr()).unwrap_or(snapshot_seq_nr);
-    let state = UserAccount::replay(
-      events.into_iter().map(EventEnvelope::into_payload),
-      snapshot.into_aggregate(),
-    );
-    Ok(Some(ReplayedUserAccount { state, seq_nr, version }))
-  }
-}
-```
-
-The following is an example of the repository usage with SQLite. The store persists to a database file (or to `:memory:`) and creates the required tables and indexes automatically on construction — no DDL on your side:
-
-```rust
-// A file-backed database. Use EventStoreForSqlite::new_in_memory() for `:memory:`.
-let event_store = EventStoreForSqlite::new("user-account.db")?;
-let mut repository = UserAccountRepository::new(event_store);
-
-// Create: the first event of a stream is seq_nr == 1 and is written with expected_version == 0.
-let (user_account, created) = UserAccount::new(user_account_id.clone(), "test-1".to_string());
-let envelope = EventEnvelope::new(user_account_id.clone(), 1, Utc::now(), created).with_manifest(CREATED_MANIFEST);
-repository.store_event_and_snapshot(envelope, user_account, 0).await?;
-
-// Replay the aggregate from the event store: seq_nr / version come from the
-// envelopes (the store columns), not from aggregate fields.
-let mut replayed = repository.find_by_id(&user_account_id).await?.unwrap();
-
-// Execute a command, number the next event as replayed.seq_nr + 1, and pass the
-// replayed version as expected_version for the optimistic lock.
-let renamed = replayed.state.rename("new-name").unwrap();
-let envelope = EventEnvelope::new(user_account_id.clone(), replayed.seq_nr + 1, Utc::now(), renamed);
-repository.store_event(envelope, replayed.version).await?;
-```
-
-A complete runnable example is [examples/user-account-sqlite](examples/user-account-sqlite) (`cargo run -p example-user-account-sqlite` — no cloud connection, no Docker).
-
-With `features = ["dynamodb"]`, the same repository works against DynamoDB by replacing the store construction:
-
-```rust
-let event_store = EventStoreForDynamoDB::new(
-  aws_dynamodb_client.clone(),
-  journal_table_name.to_string(),
-  journal_aid_index_name.to_string(),
-  snapshot_table_name.to_string(),
-  snapshot_aid_index_name.to_string(),
-  64,
-);
-```
-
-A complete runnable DynamoDB example is [examples/user-account](examples/user-account).
-
-### SQLite support boundary
-
-- The supported sharing unit is **one store instance and its clones** (clones share the underlying connection). Opening the same database file from multiple store instances or from multiple processes is **not supported**. Guarding against concurrent multi-process access (for example, preventing multiple instances of a CLI tool from running at once) is the application's responsibility.
-- An in-memory store (`new_in_memory`) is shared by the instance and its clones only, and disappears when the last clone is dropped.
-
-## Migration to 3.x
-
-The 3.x line replaces the `Event` / `Aggregate` traits with the `EventEnvelope` API: domain event and aggregate types are plain `serde` types, metadata (`aggregate_id` / `seq_nr` / `occurred_at` / `manifest`) travels in the envelope, and the optimistic-lock version lives in the store columns only. **Data written by 2.x cannot be read by 3.x** — migrating stored data is the user's responsibility. See [docs/MIGRATION_GUIDE_v3.md](docs/MIGRATION_GUIDE_v3.md) ([日本語](docs/MIGRATION_GUIDE_v3.ja.md)) for the complete guide.
-
-## Migration from 1.x
-
-The next major release contains breaking changes (see [CHANGELOG.md](CHANGELOG.md)).
-
-### 1. Backends are now opt-in Cargo features
-
-In 1.x every backend was always compiled. Now there is no default feature, so specify the backend(s) you use:
+Create an application with these dependencies, replacing the path with your checkout:
 
 ```toml
-# Before (1.x)
 [dependencies]
-event-store-adapter-rs = "1"
-
-# After — pick your backend(s); "<latest>" is the latest version on crates.io
-[dependencies]
-event-store-adapter-rs = { version = "<latest>", features = ["dynamodb"] }
+event-store-adapter-rs = { path = "/path/to/event-store-adapter-rs/lib" }
+chrono = "0.4"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
-The in-memory backend (`EventStoreForMemory`) needs no feature and is always available.
+This complete example exercises all four operations. Two stores share one `MemoryStorage`; a separately created storage remains isolated.
 
-### 2. Error type changes
+```rust
+use chrono::Utc;
+use event_store_adapter_rs::{
+  AggregateId, EventEnvelope, EventStore, EventStoreError, EventStoreForMemory,
+  MemoryStorage, RetentionSettings, SnapshotEnvelope,
+};
+use serde_json::{json, Value};
 
-| Item | Before (1.x) | After |
-|:-----|:-------------|:------|
-| `EventStoreWriteError::OptimisticLockError` | Wrapped the AWS SDK type (`TransactionCanceledException` via `TransactionCanceledExceptionWrapper`) | Carries a backend-neutral `String` message: `optimistic lock failed, aid=<id>, expected_version=<n>[, actual_version=<m>]` |
-| In-memory backend failures | Some operations panicked (e.g. unsupported create) | Returns `Err(EventStoreWriteError` / `EventStoreReadError)` — no panic |
+#[derive(Debug, Clone)]
+struct AccountId(String);
 
-If you matched on `OptimisticLockError(cause)` to inspect the AWS SDK error, switch to the message string (or handle the variant without inspecting its payload). Retrying after an optimistic lock failure remains the caller's responsibility.
+impl AggregateId for AccountId {
+  fn type_name(&self) -> String { "Account".into() }
+  fn value(&self) -> String { self.0.clone() }
+}
 
-## Table Specifications
+#[tokio::main]
+async fn main() -> Result<(), EventStoreError> {
+  let storage = MemoryStorage::new(RetentionSettings::keep_latest(2))?;
+  let writer: EventStoreForMemory<AccountId, Value, Value> =
+    EventStoreForMemory::new(storage.clone());
+  let reader: EventStoreForMemory<AccountId, Value, Value> =
+    EventStoreForMemory::new(storage);
+  let isolated: EventStoreForMemory<AccountId, Value, Value> =
+    EventStoreForMemory::new(MemoryStorage::new(RetentionSettings::current_only())?);
+  let id = AccountId("1".into());
 
-See [docs/DATABASE_SCHEMA.md](docs/DATABASE_SCHEMA.md). Note that for SQLite the tables are created automatically by the library; the document is informational.
+  writer.persist_event(
+    EventEnvelope::new(id.clone(), 1, Utc::now(), json!({"created": "Alice"}))
+      .with_manifest("account-created/v1"),
+  ).await?;
+  let first = reader.get_latest_snapshot_by_id(&id).await?.unwrap();
+  assert_eq!(first.head_seq_nr(), 1);
+  assert!(first.snapshot().is_none());
 
-## CQRS/Event Sourcing Example
+  writer.persist_event_and_snapshot(
+    EventEnvelope::new(id.clone(), 2, Utc::now(), json!({"renamed": "Bob"})),
+    SnapshotEnvelope::new(json!({"name": "Bob"}), 2).with_manifest("account/v1"),
+  ).await?;
+  let events = reader.get_events_by_id_since_seq_nr(&id, 1).await?;
+  assert_eq!(events.len(), 2);
+  assert_eq!(events[1].seq_nr(), 2);
+  let latest = reader.get_latest_snapshot_by_id(&id).await?.unwrap();
+  assert_eq!(latest.head_seq_nr(), 2);
+  assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
+  assert!(isolated.get_latest_snapshot_by_id(&id).await?.is_none());
+  Ok(())
+}
+```
 
-See [j5ik2o/cqrs-es-example-rs](https://github.com/j5ik2o/cqrs-es-example-rs).
+`AggregateId` supplies the type name and value. The library constructs `aid` as `type_name-value`; type names cannot contain a hyphen and the complete ID is limited to 1024 UTF-8 bytes. It does not use a domain `Display` implementation or a `KeyResolver`.
 
-## License.
+`SeqNr` is `u64`, limited to `0..=SEQ_NR_MAX` (`2^53 - 1`). The first write uses 1 and later writes must be contiguous. Reads include the lower bound; 0 reads from the beginning. There is no `expected_version` argument or snapshot `version`. `SnapshotEnvelope::seq_nr()` describes the snapshot; `SnapshotRead::head_seq_nr()` describes the event head. A stream with events but no snapshot returns `Some(SnapshotRead)` with `snapshot() == None`. Replay starts from the creation event in that case.
 
-MIT License. See [LICENSE](LICENSE) for details.
+## DynamoDB example
+
+Enable `features = ["dynamodb"]`. Provision three distinct tables and the snapshot history GSI before calling the asynchronous `EventStoreForDynamoDB::open(client, tables, options)`. Table creation is outside the library. `DynamoDbTables` supplies the three table names and GSI name; `DynamoDbOptions` supplies retention and bounded retry settings.
+
+The SDK client must have a retry sleeper. The runnable [user-account example](examples/user-account/src/main.rs) installs a Tokio sleeper, starts DynamoDB Local, creates the tables, and calls the new `open`. Its [repository](examples/user-account/src/user_account_repository.rs) writes an event, writes an event plus snapshot, reads snapshots, and replays events. It verifies creation without a snapshot, a snapshot at the head, and later events after the snapshot:
+
+```sh
+cargo +1.99.0 run -p example-user-account
+```
+
+Docker is required for this example. See [the DynamoDB schema](docs/DATABASE_SCHEMA.md) for keys, configuration records, transactions, and retention.
+
+## Serialization, retention, and errors
+
+The default constructors use JSON and require `Serialize + DeserializeOwned` on event and aggregate payloads. Use `EventStoreForMemory::with_serializers` or `EventStoreForDynamoDB::open_with_serializers` with `Arc<dyn EventSerializer<P>>` and `Arc<dyn SnapshotSerializer<A>>` for another byte format. These serializers receive only the payload. Payloads require `Send + Sync + 'static`; serde, Clone, and Debug are not required for these constructors. See the [Memory](lib/tests/memory_test.rs) and [DynamoDB](lib/tests/dynamodb_persist_event_test.rs) integration tests for non-serde payloads.
+
+`RetentionSettings::current_only()` is the default. `keep_latest(n)` retains the newest `n` history snapshots; 0 is invalid. Memory supports deletion and rejects TTL combined with a history count. DynamoDB supports deletion or `RetentionMode::Ttl { grace_seconds }`; configure the snapshot table's TTL attribute `ttl` separately. With a history count, Memory runs retention after successful appends, including event-only appends. DynamoDB runs retention only when a history count is configured and an append that writes a history snapshot succeeds; event-only appends do not run retention. A retention failure emits a `tracing` warning with aid, seq_nr, phase, and error; the committed write still succeeds.
+
+`EventStoreError` distinguishes `OptimisticLock`, `ContractViolation`, `Serialization`, `Configuration`, and `Storage`. Match `ContractRule`, `SerializationPhase`, `ConfigurationReason`, or `StorageOperation` rather than parsing messages. Serialization and storage errors retain their source.
+
+## Migration
+
+The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v4 migration guide](docs/MIGRATION_GUIDE_v4.md). Stop old writes and provision empty new tables before migration. Custom `KeyResolver` layouts, SQLite, and Bigtable are outside this migration's scope.
+
+Historical [v3 migration guidance](docs/MIGRATION_GUIDE_v3.md) remains available for users staying on 3.x.
+
+## Validation
+
+```sh
+cargo +1.99.0 build --workspace --all-targets --all-features
+cargo +1.99.0 clippy --workspace --all-targets --all-features -- -D warnings
+cargo +nightly fmt --all -- --check
+cargo +1.99.0 test --workspace --all-features
+```
+
+DynamoDB and migration integration tests require Docker.
+
+## License
+
+MIT or Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
 
 ## Links
 
 - [Common Documents](https://github.com/j5ik2o/event-store-adapter)
+- [CQRS/Event Sourcing Example](https://github.com/j5ik2o/cqrs-es-example-rs)

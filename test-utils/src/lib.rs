@@ -1,4 +1,3 @@
-pub mod bigtable;
 pub mod docker;
 pub mod dynamodb;
 #[cfg(test)]

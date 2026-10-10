@@ -1,209 +1,94 @@
-# 各イベントストアが利用するデータベーススキーマ（v3）
+# DynamoDBの保存schema（4系）
 
-**本ドキュメントは情報提供です。** v3 の封筒型（`EventEnvelope` / `SnapshotEnvelope`）を
-各バックエンドがどのような物理レイアウトで保存するかを説明します。封筒メタデータ
-（イベントは `aggregate_id` / `seq_nr` / `occurred_at` / `manifest`、スナップショットは
-`seq_nr` / `version`）は専用の列・属性・セルに保存され、payload 列は**純粋なドメイン内容
-のみ**を保持します — ライブラリが直列化 payload へ `version` / `seq_nr` / タイムスタンプを
-注入することはなくなりました。
+公開`EventStoreForDynamoDB`が使う実配置を説明します。[user-accountの実例](../examples/user-account/src/main.rs)は[表作成helper](../test-utils/src/dynamodb.rs)でこの配置を作成します。表・Streams・TTLの設定は利用者の責務です。
 
-> v3 のレイアウトは v2 から変更されています（journal への `manifest` 列の追加、
-> `occurred_at` のナノ秒精度化、snapshot payload からのメタデータ注入の廃止、
-> current/履歴判別のキーへの移動）。v2 で書き込まれた行の読み取りはサポートしません。
-> 移行方針は [MIGRATION_GUIDE_v3.ja.md](MIGRATION_GUIDE_v3.ja.md) を参照してください。
+通常storeはこの新配置だけを読み取ります。v3の既定2表配置は明示的な[移行手順](MIGRATION_GUIDE_v4.ja.md)で扱います。SQLite・Bigtableの利用者は3系を継続してください。
 
-### バックエンド共通のスナップショット保持
+## 3表とindex
 
-`with_keep_snapshot_count(Some(n))` を有効にすると、**DynamoDB / Bigtable / SQLite**
-はいずれも**新しい順に `n` 件**の履歴スナップショットを残し、古い側の超過分を削除します。
+3つの表名は互いに異なる必要があります。論理shard・`pkey`・journal GSIはありません。
 
-DynamoDB は古い側の超過項目を削除するか、`with_delete_ttl` 設定時は将来の `ttl` 値を
-設定し、DynamoDB 側で期限切れ削除します。Bigtable と SQLite は古い側の超過行を削除します。
+| 表 | Partition key | Sort key | 追加設定 |
+|:---|:--------------|:---------|:---------|
+| Journal | `aid`（S） | `seq_nr`（N） | 本体へのQueryで再生 |
+| Snapshot | `aid`（S） | `skey`（N） | 下記の履歴GSI。TTL保持を使う場合は`ttl`属性のTTLを有効化 |
+| Head | `aid`（S） | なし | `NEW_IMAGE`のStreams |
 
-## EventStore が利用する DynamoDB のテーブル構成
+snapshot履歴GSIは`aid`（S）と`active_history_seq_nr`（N）、projectionは`KEYS_ONLY`です。名前は`DynamoDbTables::snapshot_history_index_name`で指定します。
 
-- Journal
-- Snapshot
+`aid`は`AggregateId`の型名と値から組み立てるUTF-8の`type_name-value`文字列です。型名にはhyphenを含められず、値には含められます。全体の上限は1024バイトです。空の型名・値も許可します。
 
-いずれのテーブルも、キー設計の前提として、論理シャード内で最大限に書き込みが分散することを想定しています。テーブル作成はライブラリの責務外です（参考定義は `test-utils` を参照）。
+## 設定項目
 
-### Journal テーブル
+非同期の`open`／`open_with_serializers`は強整合の`BatchGetItem`で3つの設定項目を読み取ります。
 
-集約で起きたイベントを保存するためのテーブル。原則的に、このイベントを使って集約状態を再生（リプレイ）します。`EventEnvelope` 1 つが 1 項目に対応します。
+| 表 | 設定キー |
+|:---|:---------|
+| Journal | `aid = "__config__"`、`seq_nr = 0` |
+| Snapshot | `aid = "__config__"`、`skey = 0` |
+| Head | `aid = "__config__"` |
 
-| 属性名 | 型 | 説明 | 具体的な値 |
-|:------------|:----|:--------------------------------------|:---|
-| pkey        | S | パーティションキー（`集約種別名-hash(集約ID) % 論理シャードサイズ`） | `user-account-1` |
-| skey        | S | ソートキー（`集約種別名-集約IDの値部分-シーケンス番号`） | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z-12345` |
-| aid         | S | 集約 ID | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z` |
-| seq_nr      | N | シーケンス番号（開始番号は 1、採番はドメイン側の責務） | `12345` |
-| payload     | B | イベント payload — 純粋なドメイン内容のみ（既定は JSON 直列化） | `{"Created":{"name":"test"}}` |
-| occurred_at | N | イベント発生日時（Unix epoch **ナノ秒**。ドメイン供給値が完全往復する） | `1688009557404481000` |
-| manifest    | S | 利用者供給・自由形式の型判別子（省略時は空文字列） | `user-account-created/v1` |
+各項目は共通の`store_id`（S、生成したUUID）と`layout_version`（N、1）を持ちます。全て不在なら条件付き`TransactWriteItems`でまとめて作成します。一部だけの設定・store ID不一致・未対応layout版・表名重複・SDK retry sleeper不在は設定エラーになります。Client optionsは設定属性として保存しません。
 
-`(aid, seq_nr)` に GSI が適用されており、リプレイ時にこのインデックスを利用します。
+未処理キーは強整合を維持し、有限のbackoffで再要求します。既定は再要求10回・初期待機50ms・最大待機2秒で、`DynamoDbOptions`から変更できます。
 
-### Snapshot テーブル
+## Journal項目
 
-集約の状態を保存するためのテーブルであり、集約のリプレイを高速化するためのテーブルです。スナップショット保存後にもイベントは保存されるため、最新の集約状態を表さない場合があります。
+イベント封筒1件が1項目になります。
 
-| 属性名 | 型 | 説明 | 具体的な値 |
-|:--------|:----|:-----------------------------------------------------------------|:---|
-| pkey    | S | パーティションキー（`集約種別名-hash(集約ID) % 論理シャードサイズ`） | `user-account-1` |
-| skey    | S | ソートキー（`集約種別名-集約IDの値部分-シーケンス番号`）。current スナップショットは**マーカー `0`** で整形した skey のスロットに置かれ、履歴項目はイベントの seq_nr を使う | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z-0` |
-| aid     | S | 集約 ID | `user-account-01H42K4ABWQ5V2XQEP3A48VE0Z` |
-| seq_nr  | N | スナップショットが反映済みのシーケンス番号。**v2 と異なり current 項目にも実値が入る**（マーカー `0` は skey の中にのみ現れる） | `12345` |
-| version | N | 楽観的ロックの版数（開始番号は 1）。列値が正であり、payload から補正されることはない | `1` |
-| payload | B | 集約の状態 — 純粋なドメイン内容のみ（既定は JSON 直列化。`version` / `seq_nr` の注入なし） | `{"id":{"value":"..."},"name":"test"}` |
-| ttl     | N | 削除用 TTL（epoch 秒。`0` = 無期限。`with_delete_ttl` 設定時に超過履歴項目へ将来時刻が設定される） | `1624980000` |
-| last_updated_at | N | 最終更新日時（Unix epoch ミリ秒。イベントの `occurred_at` から導出） | `1688009557404` |
+| 属性 | 型 | 意味 |
+|:-----|:---|:-----|
+| `aid` | S | 集約ID全体 |
+| `seq_nr` | N | ドメイン採番のイベント番号。1から`SEQ_NR_MAX`まで |
+| `occurred_at` | N | イベントが供給する符号付き64bitのUnix epochナノ秒 |
+| `manifest` | S | 封筒のmanifest。省略時は空文字列 |
+| `payload` | B | イベントpayloadだけをserializerへ渡した出力 |
 
-- current スナップショットは主キー（`pkey` + マーカー `0` の skey）への強整合
-  `GetItem` で読み取ります。その `version` を次回書込の `expected_version` として
-  渡します。
-- 履歴項目（skey = イベントの seq_nr）は **`with_keep_snapshot_count(Some(n))` が有効な
-  ときのみ**、current 項目・journal 項目と同一トランザクションで書き込まれます。
-- `(aid, seq_nr)` の GSI は保持ポリシーのクエリに使われます。新しい順に `n` 件の履歴を
-  残し、古い側の超過分を削除します。`with_delete_ttl` 設定時は超過分に将来の `ttl` 値を
-  設定し、DynamoDB 側で期限切れ削除します。
+再生は`aid`と`seq_nr >= 下限`で本体へ強整合・昇順の`Query`を行い、全ページを読み取ります。下限0は先頭から読みます。payloadバイトとナノ秒時刻は指定serializerと封筒を通して往復し、payloadへメタデータを注入しません。
 
-### イベントとスナップショットの書き込み
+## Head項目
 
-1. コマンドが集約に受理されると、ドメインが次のイベントを生成し、ドメイン採番の
-   `seq_nr`（開始番号 1）を持つ `EventEnvelope` に包みます。
-2. journal への Put とスナップショットの書き込みは常に単一の `TransactWriteItems` で
-   実行されます。ストリーム最初のイベント（seq_nr=1、expected_version=0）は
-   `attribute_not_exists` 条件で両項目を作成し、以降の書き込みは
-   `version = expected_version` 条件で current スナップショット項目を更新して
-   `version = expected_version + 1` を設定します。条件不成立は `OptimisticLockError`
-   になります。
+| 属性 | 型 | 意味 |
+|:-----|:---|:-----|
+| `aid` | S | 集約ID全体 |
+| `type_name` | S | 集約の型名 |
+| `seq_nr` | N | 最後に確定したイベント番号 |
+| `events` | L | 今回のイベントの`seq_nr`・`occurred_at`・`manifest`・`payload`を持つMを1件格納 |
 
-### イベントとスナップショットによる集約のリプレイ
+snapshotなしを含む全追記でheadを更新します。`events`はhead表のstreamへ追記イベントを渡します。
 
-1. 集約 ID を指定して最新の `SnapshotEnvelope` を取得します。
-2. journal テーブルから封筒の `seq_nr` より後のイベントを読み取ります。
-3. 読み取ったイベントをスナップショット状態に適用して最新の集約状態を得ます。
-   次回書込では封筒の `version` を `expected_version` として渡します。
+## Snapshot項目
 
-## EventStoreForBigtable が利用する Bigtable のテーブル構成
+| 属性 | 型 | 意味 |
+|:-----|:---|:-----|
+| `aid` | S | 集約ID全体 |
+| `skey` | N | currentは0、履歴は実snapshot番号 |
+| `seq_nr` | N | snapshotの反映番号 |
+| `manifest` | S | snapshot封筒のmanifest。省略時は空文字列 |
+| `payload` | B | 集約だけをserializerへ渡した出力 |
+| `last_updated_at` | N | イベント発生時刻のUnix epochミリ秒 |
+| `active_history_seq_nr` | N | active履歴の実番号。currentとTTL印付け済み履歴には存在しない |
+| `ttl` | N | TTL印付け済み履歴だけに設定するepoch秒の期限 |
 
-- journal テーブル — カラムファミリ `event`
-- snapshot テーブル — カラムファミリ `snapshot`
+currentには`version`・`ttl`・`active_history_seq_nr`がありません。active履歴は`RetentionSettings::keep_latest(n)`設定時だけ書き込みます。TTL印付け時はpayload・manifest・番号・更新時刻を維持し、`active_history_seq_nr`を除去します。そのためDynamoDBが実削除する前に履歴GSIから外れます。
 
-すべての値はバイト列として保存され、数値セルは 10 進文字列を保持します。読取と CAS 述語は
-cells-per-column limit 1 を使うため、各カラムの最新セルが正です。
+## 書込と読取
 
-### journal テーブル（Bigtable）
+`persist_event`はjournal Putとhead Put／Updateの2 actionを単一の`TransactWriteItems`で確定します。番号1は条件付きでheadを新規作成し、以降は`head.seq_nr == event.seq_nr - 1`を要求します。journal Putも同じキーの不在を条件にします。
 
-行キー: `${パーティションキー}#${集約種別名}#${集約IDの値部分}#${seq_nr の 20 桁ゼロ詰め}`
-（パーティションキーは `集約種別名-hash(集約ID) % シャード数`）。`EventEnvelope` 1 つが 1 行に対応します。
+`persist_event_and_snapshot`はcurrent snapshot Putを追加し、履歴設定があればhistory snapshot Putも追加します。同じtransactionの3または4 actionです。イベントとsnapshotの番号は一致が必要です。イベント単独の追記ではsnapshot表を変更しません。呼出し側が楽観ロックのversionを渡すことはありません。
 
-| カラム（ファミリ `event`） | 説明 | 具体的な値 |
-|:------------|:--------------------------------------|:---|
-| payload     | イベント payload — 純粋なドメイン内容のみ（既定は JSON 直列化） | `{"Created":{"name":"test"}}` |
-| aggregate_id | 集約 ID の値部分 | `01H42K4ABWQ5V2XQEP3A48VE0Z` |
-| seq_nr      | シーケンス番号（開始番号は 1、採番はドメイン側の責務） | `12345` |
-| occurred_at | イベント発生日時（**ナノ秒**精度の RFC 3339 文字列。ドメイン供給値が完全往復する） | `2023-06-29T03:32:37.404481000Z` |
-| manifest    | 利用者供給・自由形式の型判別子（省略時は空文字列） | `user-account-created/v1` |
+`get_latest_snapshot_by_id`はheadとcurrentを強整合の`BatchGetItem`で読み、未処理キーを有限回再要求します。headなしは`None`、headだけなら`SnapshotRead::new(None, head_seq_nr)`です。headとsnapshotの番号は独立しており、並行読取では異なる書込時点の値を観測できます。[repository実例](../examples/user-account/src/user_account_repository.rs)はsnapshot後、またはsnapshotなしなら作成から再生し、観測headへの到達を確認します。
 
-seq_nr のゼロ詰めにより同一集約の行キーが連続・整列するため、リプレイは接頭辞の
-範囲走査で行われます。
+transaction前にjournal・head・current・historyの項目サイズ上界を409600バイトと比較します。超過は部分書込なしの契約違反になります。
 
-### snapshot テーブル（Bigtable）
+## 保持
 
-current 行キー: `${パーティションキー}#${集約種別名}#${集約IDの値部分}`。
-履歴行キー: current 行キー + `#` + seq_nr のゼロ詰め（キー昇順 = 旧い順）。
+履歴件数が設定されている場合、履歴snapshotを書いた追記の確定後だけ保持処理を実行します。snapshot GSIをQueryし、今回書いた履歴番号を結果へ合わせ、新しい順に設定件数を残します。イベント単独の追記では保持処理を実行しません。`keep_latest(0)`は無効です。
 
-| カラム（ファミリ `snapshot`） | 説明 | 具体的な値 |
-|:------------|:--------------------------------------|:---|
-| payload     | 集約の状態 — 純粋なドメイン内容のみ（`version` / `seq_nr` の注入なし） | `{"id":{"value":"..."},"name":"test"}` |
-| seq_nr      | スナップショットが反映済みのシーケンス番号 | `12345` |
-| version     | 楽観的ロックの版数（開始番号は 1）。セル値が正 | `1` |
-| last_updated_at | 最終更新日時（Unix epoch ミリ秒） | `1688009557404` |
+- `RetentionMode::Delete`は超過履歴を有限のbatchと再要求で削除します。
+- `RetentionMode::Ttl { grace_seconds }`は印付け時計のepoch秒＋猶予を期限として、`SET ttl = 期限 REMOVE active_history_seq_nr`で超過履歴を印付けします。DynamoDB TTLは別途設定します。猶予0も利用できます。
+- `current_only()`は履歴を書きません。この保持でcurrentを期限切れにしません。
+- 保持失敗はaid・seq_nr・phase・errorを含む`tracing`警告で通知します。追記は確定済みで、成功を返します。
 
-- 書き込みは `CheckAndMutateRow`（単一行原子性 CAS）を通ります。新規作成は `version`
-  セルの不在を、更新は `version == expected_version` のバイト完全一致を述語で検査し、
-  `version = expected_version + 1` を設定します。述語不成立は `OptimisticLockError`
-  になります。
-- 履歴行は **`with_keep_snapshot_count(Some(n))` が有効なときのみ**書き込まれます。
-  CAS 勝者が current 行のプレイメージを別呼び出しのベストエフォート書込で履歴行キーへ
-  コピーします。
-- 保持ポリシーは新しい順に `n` 件の履歴行を残し、旧い側の超過分を `DeleteFromRow` で
-  削除します。`with_delete_ttl` を併用すると、`last_updated_at` が TTL より古い履歴行も
-  削除されます。
-
-## EventStoreForSqlite が利用する SQLite のテーブル構成
-
-- journal
-- snapshot
-
-テーブルとインデックスはストア構築時にライブラリが自動作成します（冪等な
-`CREATE TABLE IF NOT EXISTS` / `CREATE INDEX IF NOT EXISTS`）。利用者による DDL は
-不要であり、想定していません。
-
-キー設計は DynamoDB テーブルを踏襲しています。`pkey` / `skey` が書き込みアドレス
-（`PRIMARY KEY (pkey, skey)`）となって論理シャードへ書き込みを分散し、`(aid, seq_nr)`
-がリプレイに使う読み取りキーです。
-
-```sql
-CREATE TABLE IF NOT EXISTS journal (
-  pkey TEXT NOT NULL,
-  skey TEXT NOT NULL,
-  aid TEXT NOT NULL,
-  seq_nr INTEGER NOT NULL,
-  payload BLOB NOT NULL,
-  occurred_at INTEGER NOT NULL,
-  manifest TEXT NOT NULL DEFAULT '',
-  PRIMARY KEY (pkey, skey)
-);
-CREATE UNIQUE INDEX IF NOT EXISTS journal_aid_seq_nr_idx ON journal (aid, seq_nr);
-CREATE TABLE IF NOT EXISTS snapshot (
-  pkey TEXT NOT NULL,
-  skey TEXT NOT NULL,
-  aid TEXT NOT NULL,
-  seq_nr INTEGER NOT NULL,
-  version INTEGER NOT NULL,
-  payload BLOB NOT NULL,
-  last_updated_at INTEGER NOT NULL,
-  PRIMARY KEY (pkey, skey)
-);
-CREATE INDEX IF NOT EXISTS snapshot_aid_seq_nr_idx ON snapshot (aid, seq_nr);
-```
-
-### journal テーブル（SQLite）
-
-| 列名 | 型 | 説明 |
-|:------------|:-----|:------------|
-| pkey | TEXT | パーティションキー（`集約種別名-hash(集約ID) % シャード数`）— 書き込み分散キー。主キーの一部 |
-| skey | TEXT | ソートキー（`集約種別名-集約IDの値部分-シーケンス番号`）— 主キーの一部 |
-| aid | TEXT | 集約 ID |
-| seq_nr | INTEGER | シーケンス番号（開始番号は 1、採番はドメイン側の責務） |
-| payload | BLOB | イベント payload — 純粋なドメイン内容のみ（既定は JSON 直列化） |
-| occurred_at | INTEGER | イベント発生日時（Unix epoch **ナノ秒**。ドメイン供給値が完全往復する。範囲外の値は書込時に拒否） |
-| manifest | TEXT | 利用者供給・自由形式の型判別子（省略時は空文字列） |
-
-`(aid, seq_nr)` のユニークインデックスが DynamoDB の GSI に相当し、リプレイ時に利用されます。
-
-### snapshot テーブル（SQLite）
-
-| 列名 | 型 | 説明 |
-|:------------|:-----|:------------|
-| pkey | TEXT | パーティションキー（`集約種別名-hash(集約ID) % シャード数`）— 書き込み分散キー。主キーの一部 |
-| skey | TEXT | ソートキー（`集約種別名-集約IDの値部分-シーケンス番号`）。current スナップショットは**マーカー `0`** で整形した skey のスロットに置かれ、履歴行はイベントの seq_nr を使う |
-| aid | TEXT | 集約 ID |
-| seq_nr | INTEGER | スナップショットが反映済みのシーケンス番号。**v2 と異なり current 行にも実値が入る**（マーカー `0` は skey の中にのみ現れ、current/履歴の判別はこの列ではなく skey で行う） |
-| version | INTEGER | 楽観的ロックの版数（開始番号は 1）。列値が正であり、payload から補正されることはない |
-| payload | BLOB | 集約の状態 — 純粋なドメイン内容のみ（既定は JSON 直列化。`version` / `seq_nr` の注入なし） |
-| last_updated_at | INTEGER | 最終更新日時（Unix epoch ミリ秒）。スナップショット保持 TTL の評価にも使用 |
-
-`(aid, seq_nr)` のインデックスがリプレイ時に利用されます。
-
-- 楽観的ロックの検証と書き込みは単一の SQLite トランザクション内で行われます。
-  journal への INSERT と条件付きスナップショット UPDATE（`WHERE version = expected`）は
-  一緒にコミットされるか一緒にロールバックされます。ストリーム最初のイベント
-  （seq_nr=1、expected_version=0）は両行を INSERT し、この経路での主キー／ユニーク
-  インデックス衝突は `expected_version=0` の `OptimisticLockError` になります。
-- 履歴行は **`with_keep_snapshot_count(Some(n))` が有効なときのみ**同一トランザク
-  ションで INSERT されます。保持ポリシーは新しい順に `n` 件の履歴行を残し、旧い側の
-  超過分を削除します（`ORDER BY seq_nr ASC LIMIT excess`）。`with_delete_ttl` を併用
-  すると、`last_updated_at` が TTL より古い履歴行も削除されます。
+Memoryは同じ公開封筒と番号規則を使い、表の代わりに`MemoryStorage`へ直列化バイトを保存します。storage cloneは状態を共有し、独立して生成したstorageは隔離します。Memoryは履歴件数とTTLの併用を拒否します。

@@ -1,5 +1,5 @@
 use super::*;
-use event_store_adapter_rs::next::{
+use event_store_adapter_rs::{
   error::{ContractRule, SerializationPhase},
   memory::EventStoreForMemory,
 };
@@ -17,7 +17,7 @@ fn body() -> Value {
 async fn should_call_all_four_public_operations_and_compare_all_envelope_fields() {
   let body = body();
   let store = EventStoreForMemory::<CaseId, Value, Value>::new(
-    event_store_adapter_rs::next::memory::MemoryStorage::new(RetentionSettings::current_only()).unwrap(),
+    event_store_adapter_rs::memory::MemoryStorage::new(RetentionSettings::current_only()).unwrap(),
   );
   let first = json!({"op":"persistEvent","arguments":{"event":"e1"},"expect":{"result":"success"}});
   assert!(step(&store, &body, &first).await.is_ok());
@@ -96,7 +96,7 @@ async fn should_record_native_value_errors_and_full_time_round_trip_results() {
   ] {
     let case = data.cases.iter().find(|v| v.id == case_id).unwrap();
     let store = EventStoreForMemory::<CaseId, Value, Value>::new(
-      event_store_adapter_rs::next::memory::MemoryStorage::new(RetentionSettings::current_only()).unwrap(),
+      event_store_adapter_rs::memory::MemoryStorage::new(RetentionSettings::current_only()).unwrap(),
     );
     let mut observed = Vec::new();
     assert!(run_value(case, &store, &mut observed).await.is_ok());
@@ -107,7 +107,7 @@ async fn should_record_native_value_errors_and_full_time_round_trip_results() {
   }
   let case = data.cases.iter().find(|v| v.id == "occurred-at-before-epoch").unwrap();
   let store = EventStoreForMemory::<CaseId, Value, Value>::new(
-    event_store_adapter_rs::next::memory::MemoryStorage::new(RetentionSettings::current_only()).unwrap(),
+    event_store_adapter_rs::memory::MemoryStorage::new(RetentionSettings::current_only()).unwrap(),
   );
   let mut observed = Vec::new();
   let values = run_value(case, &store, &mut observed).await.ok().unwrap().unwrap();
