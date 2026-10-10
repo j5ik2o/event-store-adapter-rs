@@ -3,7 +3,8 @@
 mod clock;
 mod configuration;
 mod configuration_create;
-mod item_size;
+pub(crate) mod item_size;
+pub(crate) mod items;
 #[cfg(test)]
 mod open_test;
 mod persist_event;

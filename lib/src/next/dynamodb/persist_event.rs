@@ -1,11 +1,10 @@
-use std::collections::HashMap;
-
 use aws_sdk_dynamodb::error::SdkError;
 use aws_sdk_dynamodb::operation::transact_write_items::TransactWriteItemsError;
 use aws_sdk_dynamodb::primitives::Blob;
 use aws_sdk_dynamodb::types::{AttributeValue, Put, ReturnValuesOnConditionCheckFailure, TransactWriteItem, Update};
 
 use super::item_size::{item_size_upper_bound, ITEM_SIZE_LIMIT};
+use super::items::{SnapshotKind, StoredEvent, StoredSnapshot};
 use super::{DynamoDbTables, EventStoreForDynamoDB};
 use crate::next::aggregate_id::{AggregateId, AidString};
 use crate::next::error::{ContractRule, EventStoreError, StorageOperation};
@@ -79,32 +78,19 @@ fn transaction_items<AID, P>(
   payload: Vec<u8>,
 ) -> Result<Vec<TransactWriteItem>, EventStoreError> {
   let seq_nr = event.seq_nr();
-  let metadata = HashMap::from([
-    ("seq_nr".into(), AttributeValue::N(seq_nr.to_string())),
-    (
-      "occurred_at".into(),
-      AttributeValue::N(
-        event
-          .occurred_at()
-          .timestamp_nanos_opt()
-          .expect("入口で検査済みの時刻")
-          .to_string(),
-      ),
-    ),
-    ("manifest".into(), AttributeValue::S(event.manifest().into())),
-    ("payload".into(), AttributeValue::B(Blob::new(payload))),
-  ]);
-  let mut journal = metadata.clone();
-  journal.insert("aid".into(), AttributeValue::S(aid.as_str().into()));
-  // 利用者のtype_name()を再評価せず、検査を通ったaidから型名を取り出す。
-  let (type_name, _) = aid.as_str().split_once('-').expect("検査済みaidの区切り");
-  let events = AttributeValue::L(vec![AttributeValue::M(metadata)]);
-  let head = HashMap::from([
-    ("aid".into(), AttributeValue::S(aid.as_str().into())),
-    ("type_name".into(), AttributeValue::S(type_name.into())),
-    ("seq_nr".into(), AttributeValue::N(seq_nr.to_string())),
-    ("events".into(), events.clone()),
-  ]);
+  let stored = StoredEvent {
+    seq_nr,
+    occurred_at: event
+      .occurred_at()
+      .timestamp_nanos_opt()
+      .expect("入口で検査済みの時刻")
+      .to_string(),
+    manifest: event.manifest().into(),
+    payload: Blob::new(payload),
+  };
+  let journal = stored.journal(aid);
+  let head = stored.head(aid);
+  let events = head["events"].clone();
   // Updateでも更新後のhead全体を検査する（type_name、List/Map、manifestを含む）。
   if item_size_upper_bound(&journal) > ITEM_SIZE_LIMIT || item_size_upper_bound(&head) > ITEM_SIZE_LIMIT {
     return Err(EventStoreError::ContractViolation {
@@ -155,20 +141,15 @@ fn snapshot_transaction_items<A>(
   keep_history: bool,
 ) -> Result<Vec<TransactWriteItem>, EventStoreError> {
   let seq_nr = snapshot.seq_nr();
-  let current = HashMap::from([
-    ("aid".into(), AttributeValue::S(aid.as_str().into())),
-    ("skey".into(), AttributeValue::N("0".into())),
-    ("seq_nr".into(), AttributeValue::N(seq_nr.to_string())),
-    ("manifest".into(), AttributeValue::S(snapshot.manifest().into())),
-    ("payload".into(), AttributeValue::B(Blob::new(payload))),
-    ("last_updated_at".into(), AttributeValue::N(last_updated_at.to_string())),
-  ]);
-  let mut items = vec![current];
+  let stored = StoredSnapshot {
+    seq_nr,
+    manifest: snapshot.manifest().into(),
+    payload: Blob::new(payload),
+    last_updated_at: last_updated_at.to_string(),
+  };
+  let mut items = vec![stored.item(aid, SnapshotKind::Current)];
   if keep_history {
-    let mut history = items[0].clone();
-    history.insert("skey".into(), AttributeValue::N(seq_nr.to_string()));
-    history.insert("active_history_seq_nr".into(), AttributeValue::N(seq_nr.to_string()));
-    items.push(history);
+    items.push(stored.item(aid, SnapshotKind::History { ttl: None }));
   }
   items
     .into_iter()
