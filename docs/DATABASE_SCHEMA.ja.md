@@ -84,7 +84,7 @@ transaction前にjournal・head・current・historyの項目サイズ上界を40
 
 ## 保持
 
-イベント単独を含む追記の確定後、snapshot GSIをQueryし、今回書いた履歴番号があれば結果へ合わせ、新しい順に設定件数を残します。`keep_latest(0)`は無効です。
+履歴件数が設定されている場合、履歴snapshotを書いた追記の確定後だけ保持処理を実行します。snapshot GSIをQueryし、今回書いた履歴番号を結果へ合わせ、新しい順に設定件数を残します。イベント単独の追記では保持処理を実行しません。`keep_latest(0)`は無効です。
 
 - `RetentionMode::Delete`は超過履歴を有限のbatchと再要求で削除します。
 - `RetentionMode::Ttl { grace_seconds }`は印付け時計のepoch秒＋猶予を期限として、`SET ttl = 期限 REMOVE active_history_seq_nr`で超過履歴を印付けします。DynamoDB TTLは別途設定します。猶予0も利用できます。

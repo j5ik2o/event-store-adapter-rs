@@ -84,7 +84,7 @@ Items are checked against the 409600-byte size limit before the transaction; an 
 
 ## Retention
 
-After each committed append, including event-only appends, history retention queries the snapshot GSI, combines its results with any just-written history sequence number, and keeps the newest configured count. `keep_latest(0)` is invalid.
+When a history count is configured, retention runs only after an append that writes a history snapshot commits. It queries the snapshot GSI, combines its results with the just-written history sequence number, and keeps the newest configured count. Event-only appends do not run retention. `keep_latest(0)` is invalid.
 
 - `RetentionMode::Delete` deletes excess history using bounded batches and retries.
 - `RetentionMode::Ttl { grace_seconds }` marks excess history with expiry equal to the marking clock's epoch seconds plus grace, using `SET ttl = expiry REMOVE active_history_seq_nr`. Configure DynamoDB TTL separately. Grace can be 0.
