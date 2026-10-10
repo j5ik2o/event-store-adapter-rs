@@ -33,7 +33,7 @@ aws-sdk-dynamodb = "1.130.0"
 aws-smithy-runtime-api = { version = "1.19.0", features = ["client"] }
 aws-smithy-types = "1.8.1"
 # スキーマの検査。配布物の `schema/` を `$id` で手元に登録して参照を解決するので、HTTP・ファイルでの取得の機能は有効にしない。
-jsonschema = { version = "=0.20.0", default-features = false }
+jsonschema = { version = "=0.58.6", default-features = false }
 
 [dev-dependencies]
 async-trait = { workspace = true }
