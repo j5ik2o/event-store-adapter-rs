@@ -28,7 +28,7 @@ jobs:
           crate: cargo-edit
       - uses: actions/setup-python@v7
         with:
-          python-version: '3.14'
+          python-version: '3.15'
       - name: Refuse a non-major bump while the version is a pre-release
         env:
           REQUESTED_LEVEL: ${{ inputs.level }}
