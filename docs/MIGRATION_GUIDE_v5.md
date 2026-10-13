@@ -1,6 +1,6 @@
-# Migrating from Rust v3 to the 4.x API
+# Migrating from Rust v3 to the 5.x API
 
-The 4.x API in this checkout is not published yet. It exposes the accepted Memory and DynamoDB implementation directly from `event_store_adapter_rs`. There is no `next` namespace, old API alias, or transparent read fallback.
+5.0.0 is the first release of the 5.x API. It exposes the accepted Memory and DynamoDB implementation directly from `event_store_adapter_rs`. There is no `next` namespace, old API alias, or transparent read fallback.
 
 ## Application changes
 
@@ -16,7 +16,7 @@ The `sqlite`, `sqlite-system`, and `bigtable` features, their implementations an
 
 ## Supported stored data
 
-Only the **Rust v3 default DynamoDB layout** is supported: the old journal and snapshot tables with `pkey`/`skey` keys. Custom `KeyResolver` layouts, v2 data, and other backends are outside this migration's scope. The normal 4.x store never reads the old tables.
+Only the **Rust v3 default DynamoDB layout** is supported: the old journal and snapshot tables with `pkey`/`skey` keys. Custom `KeyResolver` layouts, v2 data, and other backends are outside this migration's scope. The normal 5.x store never reads the old tables.
 
 The migration parses the old keys to reconstruct the ID, validates sequence continuity and snapshot relationships, and copies payload bytes without using the old hasher or deserializing/re-serializing the payload. You must configure compatible serializers when opening the migrated data.
 
@@ -33,7 +33,7 @@ Update the application's `AggregateId` to return the new type name. Type names w
 1. Stop **all writes to both old tables** before inspection and keep them stopped throughout the migration. The function and CLI do not enforce this operational precondition.
 2. Provision empty, distinct new journal, snapshot, and head tables plus the snapshot history GSI from [the schema](DATABASE_SCHEMA.md). The old two and new three table names must all differ. Configure head Streams and, if required, snapshot TTL separately.
 3. Run the migration function or CLI below with the appropriate credentials, region, endpoint, and type mapping.
-4. Check the JSON report and process exit status. Read the migrated data using the public 4.x API before switching application writes to the new tables.
+4. Check the JSON report and process exit status. Read the migrated data using the public 5.x API before switching application writes to the new tables.
 5. If writing fails partway through or a conditional collision occurs, recreate the **new three tables** and rerun after addressing the cause. A retry against partly populated tables is rejected. The old tables are never changed by migration.
 
 Inspection follows every Scan page of both old tables. It rejects gaps, conflicting source partitions, orphan or future snapshots, invalid keys/attributes/IDs/timestamps/TTL, and oversized target items before sending any migrated data. Configuration records may already have been created by `open` at this point.

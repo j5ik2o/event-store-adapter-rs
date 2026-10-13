@@ -1672,7 +1672,7 @@ docker run --rm -p 127.0.0.1:8000:8000 \
 
 #### PR 21: 文書の整備
 
-- README・README.ja.md・`docs/DATABASE_SCHEMA*.md`・移行ガイド（`docs/MIGRATION_GUIDE_v4*.md`）を新契約に合わせる（IP 5 の 5・6）。
+- README・README.ja.md・`docs/DATABASE_SCHEMA*.md`・移行ガイド（`docs/MIGRATION_GUIDE_v5*.md`）を新契約に合わせる（IP 5 の 5・6）。
 - `CHANGELOG.md` と `AGENTS.md` の誤りを直す（IP 4.2）。
 - 文書の PR は、コーディネーターのレビューと、独立したレビューで進める（IP 11）。
 
@@ -1742,7 +1742,7 @@ IP 3 の手順 4 のとおり、メジャーを出した後に、定期実行を
 
 ### 8.1 利用者向けの移行の案内
 
-PR 21 で、`docs/MIGRATION_GUIDE_v4.md` と `docs/MIGRATION_GUIDE_v4.ja.md` を作る（現行は `docs/MIGRATION_GUIDE_v3.md` と `.ja.md`）。構成は次のとおりである。
+PR 21 で、`docs/MIGRATION_GUIDE_v5.md` と `docs/MIGRATION_GUIDE_v5.ja.md` を作る（現行は `docs/MIGRATION_GUIDE_v3.md` と `.ja.md`）。構成は次のとおりである。
 
 | 節 | 内容 |
 |:--|:--|
@@ -1876,7 +1876,7 @@ pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<ReplayedUser
 | `MigrationError` | `report: MigrationReport`・`operation: String`・`source`。`report` は、失敗した時点までに確認できた件数と理由を持つ |
 
 - 検査で止めた項目、条件つき書き込みの競合、旧 2 テーブルと新 3 テーブルの名前の重複は、`Ok` で返る `MigrationReport` の `reasons` に載る。通信などの失敗は、`Err(MigrationError)` で返る。
-- 実行ファイルは、workspace のメンバー `migration-cli/` のクレートで、`publish = false` である。パッケージ名は `event-store-adapter-migration-rs` で、`[[bin]]` を指定していないので、実行ファイル名もこの名前になる（ディレクトリ名が `migration-cli`）。`cargo run -p event-store-adapter-migration-rs -- <引数>` で実行する。使い方は `docs/MIGRATION_GUIDE_v4.md` に書いてある。
+- 実行ファイルは、workspace のメンバー `migration-cli/` のクレートで、`publish = false` である。パッケージ名は `event-store-adapter-migration-rs` で、`[[bin]]` を指定していないので、実行ファイル名もこの名前になる（ディレクトリ名が `migration-cli`）。`cargo run -p event-store-adapter-migration-rs -- <引数>` で実行する。使い方は `docs/MIGRATION_GUIDE_v5.md` に書いてある。
 - 引数は、必須が `--old-journal`・`--old-snapshot`・`--journal`・`--snapshot`・`--head`・`--history-index` の 6 つで、任意が `--type-mapping`（旧型名から新型名への JSON オブジェクトのファイル）・`--endpoint-url`・`--region` である。`--help`（`-h`）は使い方を出して成功で終わる。未対応の引数、値のない引数、重複した引数は誤りにする。認証は通常の AWS 設定を使う。
 - 標準出力に `MigrationReport` の JSON を 1 つ出す。`reasons` が空でなければ、0 以外の終了コードで終わる。`MigrationError` で失敗したときも、`MigrationError` の `report` の JSON を標準出力に出し、誤りの内容を標準エラーに出して、0 以外で終わる。
 
