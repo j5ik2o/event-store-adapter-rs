@@ -8,6 +8,8 @@ The regular store reads only this layout. For v3's default two-table layout, use
 
 All three table names must be distinct. There are no logical shards, `pkey`, or journal GSI.
 
+Keep the three tables in one Region and write to them only from that Region. Global tables (multi-Region replicas) are not supported.
+
 | Table | Partition key | Sort key | Additional configuration |
 |:------|:--------------|:---------|:-------------------------|
 | Journal | `aid` (S) | `seq_nr` (N) | Replay queries the base table |
@@ -91,4 +93,4 @@ When a history count is configured, retention runs only after an append that wri
 - `current_only()` writes no history. Current snapshots never expire through this policy.
 - Retention errors emit a `tracing` warning with aid, seq_nr, phase, and error; the append already committed and continues to return success.
 
-Memory uses the same public envelopes and sequence rules, but stores serialized bytes in `MemoryStorage` rather than these tables. A storage clone shares state; a separately created storage is isolated. Memory rejects TTL combined with a history count.
+Memory uses the same public envelopes and sequence rules, but stores serialized bytes in `MemoryStorage` rather than these tables. A storage clone shares state; a separately created storage is isolated. Memory rejects any `RetentionMode::Ttl` with a configuration error, with or without a history count.

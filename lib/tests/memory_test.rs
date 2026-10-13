@@ -111,10 +111,12 @@ async fn should_storage_sharing_keep_separate_new_independent() {
   assert!(reader.get_latest_snapshot_by_id(&Id("1")).await.unwrap().is_none());
 }
 #[test]
-fn should_storage_settings_accept_current_only_ttl() {
-  assert!(
-    MemoryStorage::new(RetentionSettings::current_only().with_mode(RetentionMode::Ttl { grace_seconds: 0 })).is_ok()
-  );
+fn should_storage_settings_reject_ttl_without_history_count() {
+  assert!(matches!(
+    MemoryStorage::new(RetentionSettings::current_only().with_mode(RetentionMode::Ttl { grace_seconds: 0 })),
+    Err(EventStoreError::Configuration { .. })
+  ));
+  assert!(MemoryStorage::new(RetentionSettings::current_only()).is_ok());
   assert!(MemoryStorage::new(RetentionSettings::keep_latest(1)).is_ok());
 }
 #[test]
@@ -128,7 +130,7 @@ fn should_storage_settings_reject_zero_and_history_ttl() {
   assert!(matches!(
     MemoryStorage::new(RetentionSettings::keep_latest(1).with_mode(RetentionMode::Ttl { grace_seconds: 1 })),
     Err(EventStoreError::Configuration {
-      reason: ConfigurationReason::TtlWithKeepSnapshotCount
+      reason: ConfigurationReason::MemoryTtlUnsupported
     })
   ));
 }

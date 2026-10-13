@@ -28,6 +28,8 @@ Default features are empty. The `sqlite`, `sqlite-system`, and `bigtable` featur
 
 ## Memory example
 
+The memory storage lives in a single process. It does not persist to files, survive restarts, or share data across processes.
+
 Create an application with these dependencies:
 
 ```toml
@@ -98,6 +100,8 @@ async fn main() -> Result<(), EventStoreError> {
 
 Enable `features = ["dynamodb"]`. Provision three distinct tables and the snapshot history GSI before calling the asynchronous `EventStoreForDynamoDB::open(client, tables, options)`. Table creation is outside the library. `DynamoDbTables` supplies the three table names and GSI name; `DynamoDbOptions` supplies retention and bounded retry settings.
 
+Keep the three tables in one Region and write to them only from that Region. Global tables (multi-Region replicas) are not supported.
+
 The SDK client must have a retry sleeper. The runnable [user-account example](examples/user-account/src/main.rs) installs a Tokio sleeper, starts DynamoDB Local, creates the tables, and calls the new `open`. Its [repository](examples/user-account/src/user_account_repository.rs) writes an event, writes an event plus snapshot, reads snapshots, and replays events. It verifies creation without a snapshot, a snapshot at the head, and later events after the snapshot:
 
 ```sh
@@ -110,7 +114,7 @@ Docker is required for this example. See [the DynamoDB schema](docs/DATABASE_SCH
 
 The default constructors use JSON and require `Serialize + DeserializeOwned` on event and aggregate payloads. Use `EventStoreForMemory::with_serializers` or `EventStoreForDynamoDB::open_with_serializers` with `Arc<dyn EventSerializer<P>>` and `Arc<dyn SnapshotSerializer<A>>` for another byte format. These serializers receive only the payload. Payloads require `Send + Sync + 'static`; serde, Clone, and Debug are not required for these constructors. See the [Memory](lib/tests/memory_test.rs) and [DynamoDB](lib/tests/dynamodb_persist_event_test.rs) integration tests for non-serde payloads.
 
-`RetentionSettings::current_only()` is the default. `keep_latest(n)` retains the newest `n` history snapshots; 0 is invalid. Memory supports deletion and rejects TTL combined with a history count. DynamoDB supports deletion or `RetentionMode::Ttl { grace_seconds }`; configure the snapshot table's TTL attribute `ttl` separately. With a history count, Memory runs retention after successful appends, including event-only appends. DynamoDB runs retention only when a history count is configured and an append that writes a history snapshot succeeds; event-only appends do not run retention. A retention failure emits a `tracing` warning with aid, seq_nr, phase, and error; the committed write still succeeds.
+`RetentionSettings::current_only()` is the default. `keep_latest(n)` retains the newest `n` history snapshots; 0 is invalid. Memory supports deletion only; `MemoryStorage::new` returns a configuration error for any `RetentionMode::Ttl`, with or without a history count. DynamoDB supports deletion or `RetentionMode::Ttl { grace_seconds }`; configure the snapshot table's TTL attribute `ttl` separately. With a history count, Memory runs retention after successful appends, including event-only appends. DynamoDB runs retention only when a history count is configured and an append that writes a history snapshot succeeds; event-only appends do not run retention. A retention failure emits a `tracing` warning with aid, seq_nr, phase, and error; the committed write still succeeds.
 
 `EventStoreError` distinguishes `OptimisticLock`, `ContractViolation`, `Serialization`, `Configuration`, and `Storage`. Match `ContractRule`, `SerializationPhase`, `ConfigurationReason`, or `StorageOperation` rather than parsing messages. Serialization and storage errors retain their source.
 

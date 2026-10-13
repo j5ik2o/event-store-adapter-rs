@@ -8,6 +8,8 @@
 
 3つの表名は互いに異なる必要があります。論理shard・`pkey`・journal GSIはありません。
 
+3 つの表は同じリージョンに置き、書き込みもそのリージョンからだけ行ってください。グローバルテーブル（複数リージョンのレプリカ）は範囲外です。
+
 | 表 | Partition key | Sort key | 追加設定 |
 |:---|:--------------|:---------|:---------|
 | Journal | `aid`（S） | `seq_nr`（N） | 本体へのQueryで再生 |
@@ -91,4 +93,4 @@ transaction前にjournal・head・current・historyの項目サイズ上界を40
 - `current_only()`は履歴を書きません。この保持でcurrentを期限切れにしません。
 - 保持失敗はaid・seq_nr・phase・errorを含む`tracing`警告で通知します。追記は確定済みで、成功を返します。
 
-Memoryは同じ公開封筒と番号規則を使い、表の代わりに`MemoryStorage`へ直列化バイトを保存します。storage cloneは状態を共有し、独立して生成したstorageは隔離します。Memoryは履歴件数とTTLの併用を拒否します。
+Memoryは同じ公開封筒と番号規則を使い、表の代わりに`MemoryStorage`へ直列化バイトを保存します。storage cloneは状態を共有し、独立して生成したstorageは隔離します。Memoryは`RetentionMode::Ttl`の指定を、履歴件数の有無にかかわらず設定エラーにします。
