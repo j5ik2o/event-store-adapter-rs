@@ -10,6 +10,8 @@
 
 This library provides Memory and DynamoDB event stores for CQRS/Event Sourcing.
 
+This crate follows [common contract v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md), whose number is separate from this crate's version (4.x).
+
 > This checkout is developing the unpublished 4.x API (`4.0.0-alpha.0`). The examples below use a local checkout. SQLite and Bigtable users should stay on the 3.x line. Stored v3 DynamoDB data is supported only through the explicit migration function or CLI.
 
 [日本語](./README.ja.md)

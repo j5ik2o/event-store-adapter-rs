@@ -1,5 +1,7 @@
 # Migration Guide: v2 → v3 (the EventEnvelope API)
 
+> This guide is for the older v2 → v3 migration. For migrating from v3 to 4.x, see [MIGRATION_GUIDE_v4.md](MIGRATION_GUIDE_v4.md).
+
 v3 replaces the `Event` / `Aggregate` trait contract with an envelope-based API.
 Domain events and aggregate state become plain serde types (payloads), and the
 metadata the store needs travels in two new public types:

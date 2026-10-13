@@ -10,6 +10,8 @@
 
 このライブラリは、CQRS/Event Sourcing用のMemory・DynamoDBイベントストアを提供します。
 
+このクレートは[共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)に従います。この番号は、クレートの版（4.x）とは別のものです。
+
 > このcheckoutでは未公開の4系API（`4.0.0-alpha.0`）を開発しています。以下の例はローカルcheckoutを参照します。SQLite・Bigtableを利用する場合は3系を継続してください。v3 DynamoDBの旧データは明示的なmigration関数またはCLIだけで支援します。
 
 [English](./README.md)
