@@ -67,14 +67,13 @@ impl RetentionSettings {
   /// 設定エラーにする。メモリは期限切れ方式を提供しない。
   ///
   /// メモリ固有の規則なので、`validate` には含めない。DynamoDB は `Ttl` を使える。
-  /// 公開型を変えないため、理由は既存の `ConfigurationReason::TtlWithKeepSnapshotCount` を使う。
   /// PR 8 の `MemoryStorage::new` が消費する。
   #[allow(dead_code)]
   pub(crate) fn validate_for_memory(&self) -> Result<(), EventStoreError> {
     self.validate()?;
     if matches!(self.mode, RetentionMode::Ttl { .. }) {
       return Err(EventStoreError::Configuration {
-        reason: ConfigurationReason::TtlWithKeepSnapshotCount,
+        reason: ConfigurationReason::MemoryTtlUnsupported,
       });
     }
     Ok(())

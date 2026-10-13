@@ -35,7 +35,7 @@ fn should_retention_settings_reject_ttl_with_keep_count_for_memory() {
   assert!(matches!(
     error,
     EventStoreError::Configuration {
-      reason: ConfigurationReason::TtlWithKeepSnapshotCount
+      reason: ConfigurationReason::MemoryTtlUnsupported
     }
   ));
 }

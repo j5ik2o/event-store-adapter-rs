@@ -12,8 +12,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Memory: `MemoryStorage::new` now returns a configuration error
   (`EventStoreError::Configuration`) for any `RetentionMode::Ttl`, with or without
   a history count, as common contract v5 requires (MEM-12). Previously, TTL
-  without a history count was accepted and ignored. DynamoDB TTL handling is
-  unchanged. The English and Japanese README, DynamoDB schema documents, and the
+  without a history count was accepted and ignored. The error reason is the new
+  `ConfigurationReason::MemoryTtlUnsupported`; `TtlWithKeepSnapshotCount` is no
+  longer returned. DynamoDB TTL handling is unchanged. The English and Japanese README, DynamoDB schema documents, and the
   design notes now state this rule.
 
 ### Added

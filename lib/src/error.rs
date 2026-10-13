@@ -86,8 +86,12 @@ impl fmt::Display for StorageOperation {
 pub enum ConfigurationReason {
   /// 保持件数 0（S-1）。`Some(0)` は無効。
   KeepSnapshotCountZero,
-  /// メモリで保持件数があるときの TTL 方式（MEM-3・MEM-12）。
+  /// メモリで保持件数があるときの TTL 方式（MEM-3・MEM-12）。5.0.1 からは返さず、
+  /// メモリの `Ttl` はすべて `MemoryTtlUnsupported` になる。既存の利用者のために残す。
   TtlWithKeepSnapshotCount,
+  /// メモリの保存先は期限切れ方式（`RetentionMode::Ttl`）を提供しない（MEM-3・MEM-12）。
+  /// 5.0.1 から、メモリで `Ttl` を指定したときはこの理由を返す。
+  MemoryTtlUnsupported,
   /// SDK Client の設定に待ちの仕組みがない（設計 2.12.1）。
   MissingRetrySleeper,
   /// ３表の役割に同じ表名が指定されている（DY-8・SP-1）。
@@ -105,6 +109,9 @@ impl fmt::Display for ConfigurationReason {
     match self {
       ConfigurationReason::KeepSnapshotCountZero => {
         formatter.write_str("keep_snapshot_count must be None or at least 1, keep_snapshot_count=0")
+      }
+      ConfigurationReason::MemoryTtlUnsupported => {
+        formatter.write_str("the memory backend does not support retention mode ttl")
       }
       ConfigurationReason::TtlWithKeepSnapshotCount => {
         formatter.write_str("retention mode ttl cannot be combined with a snapshot history count on the memory backend")

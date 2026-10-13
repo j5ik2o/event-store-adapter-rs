@@ -130,7 +130,7 @@ fn should_storage_settings_reject_zero_and_history_ttl() {
   assert!(matches!(
     MemoryStorage::new(RetentionSettings::keep_latest(1).with_mode(RetentionMode::Ttl { grace_seconds: 1 })),
     Err(EventStoreError::Configuration {
-      reason: ConfigurationReason::TtlWithKeepSnapshotCount
+      reason: ConfigurationReason::MemoryTtlUnsupported
     })
   ));
 }
