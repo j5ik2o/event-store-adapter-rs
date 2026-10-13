@@ -5,11 +5,13 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [5.0.0] - 2026-10-13
 
-This checkout contains the unpublished 4.x API with breaking changes. See the
-migration guide in [docs/MIGRATION_GUIDE_v4.md](docs/MIGRATION_GUIDE_v4.md)
-(Japanese: [docs/MIGRATION_GUIDE_v4.ja.md](docs/MIGRATION_GUIDE_v4.ja.md)).
+5.0.0 is the first release of the new API and contains breaking changes. It follows
+[common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md);
+its major version 5 matches the contract revision. See the migration guide in
+[docs/MIGRATION_GUIDE_v5.md](docs/MIGRATION_GUIDE_v5.md)
+(Japanese: [docs/MIGRATION_GUIDE_v5.ja.md](docs/MIGRATION_GUIDE_v5.ja.md)).
 
 ### Changed
 

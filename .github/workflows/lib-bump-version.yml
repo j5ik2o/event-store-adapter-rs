@@ -12,6 +12,11 @@ on:
           - patch
           - minor
           - major
+      version:
+        description: Exact next version (X.Y.Z); when set, level is ignored
+        type: string
+        required: false
+        default: ''
 jobs:
   bump-version:
     runs-on: ubuntu-latest
@@ -30,6 +35,7 @@ jobs:
         with:
           python-version: '3.15'
       - name: Refuse a non-major bump while the version is a pre-release
+        if: inputs.version == ''
         env:
           REQUESTED_LEVEL: ${{ inputs.level }}
         run: |
@@ -40,6 +46,16 @@ jobs:
             exit 1
           fi
       - run: pip install semver
+      - name: Validate the requested version
+        id: requested_version
+        if: inputs.version != ''
+        env:
+          REQUESTED_VERSION: ${{ inputs.version }}
+        run: |
+          set -o pipefail
+          VERSION=$(git tag -l 'v*' | sort -V | python3 "${GITHUB_WORKSPACE}"/.github/validate-version.py "$REQUESTED_VERSION")
+          echo "VERSION=$VERSION"
+          echo "value=$VERSION" >> "$GITHUB_OUTPUT"
       - id: defines
         run: |
           LATEST_TAG=$(git describe --abbrev=0 --tags)
@@ -68,19 +84,25 @@ jobs:
             | python3 "${GITHUB_WORKSPACE}"/.github/semver-level.py)
           echo "SEMVER_LEVEL=$SEMVER_LEVEL"
           echo "value=$SEMVER_LEVEL" >> $GITHUB_OUTPUT
-        if: steps.changes.outputs.count > 0 || inputs.level != 'auto'
+        if: inputs.version == '' && (steps.changes.outputs.count > 0 || inputs.level != 'auto')
       - name: Get the next version
         id: versions
+        env:
+          REQUESTED_VERSION: ${{ steps.requested_version.outputs.value }}
         run: |
-          NEXT_VERSION=$(echo ${{ steps.defines.outputs.prev_tag }} | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py ${{ steps.semver_level.outputs.value }})
+          if [[ -n "$REQUESTED_VERSION" ]]; then
+            NEXT_VERSION="$REQUESTED_VERSION"
+          else
+            NEXT_VERSION=$(echo ${{ steps.defines.outputs.prev_tag }} | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py ${{ steps.semver_level.outputs.value }})
+          fi
           echo "NEXT_VERSION=$NEXT_VERSION"
           echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
           echo "next_tag=v$NEXT_VERSION" >> $GITHUB_OUTPUT
-        if: steps.semver_level.outputs.value != ''
+        if: inputs.version != '' || steps.semver_level.outputs.value != ''
       - name: bump version
         run: |
           cargo set-version -p ${{ steps.defines.outputs.package_id }} ${{ steps.versions.outputs.next_version }}
-        if: steps.semver_level.outputs.value != ''
+        if: inputs.version != '' || steps.semver_level.outputs.value != ''
       - name: git commit & push
         id: git_commit_push
         run: |
@@ -92,7 +114,7 @@ jobs:
           git push origin main
           COMMIT_SHA=$(git rev-parse HEAD)
           echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-        if: steps.semver_level.outputs.value != ''
+        if: inputs.version != '' || steps.semver_level.outputs.value != ''
       - name: tagging and push tag
         id: tag_version
         run: |
@@ -108,7 +130,7 @@ jobs:
             -P --grep='^(BREAKING CHANGE|BREAKING-CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(.*)?:.*$' \
             --no-merges --full-history | \
             python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py >> changelog.txt
-        if: steps.semver_level.outputs.value != ''
+        if: inputs.version != '' || steps.semver_level.outputs.value != ''
       - name: Create a GitHub release
         uses: actions/create-release@v1
         env:
@@ -117,4 +139,4 @@ jobs:
           tag_name: ${{ steps.versions.outputs.next_tag }}
           release_name: Release ${{ steps.versions.outputs.next_tag }}
           body_path: changelog.txt
-        if: steps.semver_level.outputs.value != ''
+        if: inputs.version != '' || steps.semver_level.outputs.value != ''

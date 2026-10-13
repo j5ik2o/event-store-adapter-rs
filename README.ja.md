@@ -10,9 +10,9 @@
 
 このライブラリは、CQRS/Event Sourcing用のMemory・DynamoDBイベントストアを提供します。
 
-このクレートは[共通契約 v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)に従います。この番号は、クレートの版（4.x）とは別のものです。
+このクレートは[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)に従います。メジャーの番号 5 は、共通契約の版と同じです。
 
-> このcheckoutでは未公開の4系API（`4.0.0-alpha.0`）を開発しています。以下の例はローカルcheckoutを参照します。SQLite・Bigtableを利用する場合は3系を継続してください。v3 DynamoDBの旧データは明示的なmigration関数またはCLIだけで支援します。
+> 5.0.0は、新しいAPIの最初の版です。SQLite・Bigtableを利用する場合は3系を継続してください。v3 DynamoDBの旧データは明示的なmigration関数またはCLIだけで支援します。
 
 [English](./README.md)
 
@@ -28,11 +28,11 @@
 
 ## Memoryの使用例
 
-アプリケーションの依存を次のように設定し、pathをcheckoutの実際の場所へ置き換えてください。
+アプリケーションの依存を次のように設定してください。
 
 ```toml
 [dependencies]
-event-store-adapter-rs = { path = "/path/to/event-store-adapter-rs/lib" }
+event-store-adapter-rs = "5.0.0"
 chrono = "0.4"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -116,7 +116,7 @@ Dockerが必要です。キー・設定項目・transaction・保持の詳細は
 
 ## 移行
 
-通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数または薄いCLIを使用します。[v4移行ガイド](docs/MIGRATION_GUIDE_v4.ja.md)の手順に従い、旧書込を停止して空の新表を用意してください。独自`KeyResolver`配置・SQLite・Bigtableはこの移行の対象外です。
+通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数または薄いCLIを使用します。[v5移行ガイド](docs/MIGRATION_GUIDE_v5.ja.md)の手順に従い、旧書込を停止して空の新表を用意してください。独自`KeyResolver`配置・SQLite・Bigtableはこの移行の対象外です。
 
 3系を継続する利用者向けの[v3移行ガイド](docs/MIGRATION_GUIDE_v3.ja.md)は歴史資料として残しています。
 

@@ -1,8 +1,8 @@
-# DynamoDB storage schema (4.x)
+# DynamoDB storage schema (5.x)
 
 This document describes the layout used by the public `EventStoreForDynamoDB`. The runnable [user-account example](../examples/user-account/src/main.rs) provisions it with [the table helper](../test-utils/src/dynamodb.rs). Table creation, Streams, and TTL configuration remain the caller's responsibility.
 
-The regular store reads only this layout. For v3's default two-table layout, use the explicit [migration procedure](MIGRATION_GUIDE_v4.md). SQLite and Bigtable users should stay on 3.x.
+The regular store reads only this layout. For v3's default two-table layout, use the explicit [migration procedure](MIGRATION_GUIDE_v5.md). SQLite and Bigtable users should stay on 3.x.
 
 ## Tables and index
 

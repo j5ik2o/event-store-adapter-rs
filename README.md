@@ -10,9 +10,9 @@
 
 This library provides Memory and DynamoDB event stores for CQRS/Event Sourcing.
 
-This crate follows [common contract v4](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md), whose number is separate from this crate's version (4.x).
+This crate follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision.
 
-> This checkout is developing the unpublished 4.x API (`4.0.0-alpha.0`). The examples below use a local checkout. SQLite and Bigtable users should stay on the 3.x line. Stored v3 DynamoDB data is supported only through the explicit migration function or CLI.
+> 5.0.0 is the first release of the new API. SQLite and Bigtable users should stay on the 3.x line. Stored v3 DynamoDB data is supported only through the explicit migration function or CLI.
 
 [日本語](./README.ja.md)
 
@@ -28,11 +28,11 @@ Default features are empty. The `sqlite`, `sqlite-system`, and `bigtable` featur
 
 ## Memory example
 
-Create an application with these dependencies, replacing the path with your checkout:
+Create an application with these dependencies:
 
 ```toml
 [dependencies]
-event-store-adapter-rs = { path = "/path/to/event-store-adapter-rs/lib" }
+event-store-adapter-rs = "5.0.0"
 chrono = "0.4"
 serde_json = "1"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
@@ -116,7 +116,7 @@ The default constructors use JSON and require `Serialize + DeserializeOwned` on 
 
 ## Migration
 
-The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v4 migration guide](docs/MIGRATION_GUIDE_v4.md). Stop old writes and provision empty new tables before migration. Custom `KeyResolver` layouts, SQLite, and Bigtable are outside this migration's scope.
+The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE_v5.md). Stop old writes and provision empty new tables before migration. Custom `KeyResolver` layouts, SQLite, and Bigtable are outside this migration's scope.
 
 Historical [v3 migration guidance](docs/MIGRATION_GUIDE_v3.md) remains available for users staying on 3.x.
 

@@ -1,6 +1,6 @@
-# Rust v3から4系APIへの移行
+# Rust v3から5系APIへの移行
 
-このcheckoutの4系APIはまだ公開していません。受入済みMemory・DynamoDB本体を`event_store_adapter_rs`直下から利用します。`next` namespace・旧API別名・透過的な旧形式読取fallbackはありません。
+5.0.0は、5系APIの最初の版です。受入済みMemory・DynamoDB本体を`event_store_adapter_rs`直下から利用します。`next` namespace・旧API別名・透過的な旧形式読取fallbackはありません。
 
 ## アプリケーションの変更
 
@@ -16,7 +16,7 @@
 
 ## 保存データの対象
 
-対象は**Rust v3の既定DynamoDB配置**だけです。旧journal・snapshotは`pkey`／`skey`キーを使用します。独自`KeyResolver`配置・v2データ・他の保存先は対象外です。通常の4系storeは旧表を読みません。
+対象は**Rust v3の既定DynamoDB配置**だけです。旧journal・snapshotは`pkey`／`skey`キーを使用します。独自`KeyResolver`配置・v2データ・他の保存先は対象外です。通常の5系storeは旧表を読みません。
 
 migrationは旧キーからIDを再構成し、番号の連続性とsnapshotの関係を検査します。旧hasherとpayloadの復元・再直列化は使用せず、payloadバイトをそのまま転写します。移行後のstoreには互換性のあるserializerを指定してください。
 
@@ -33,7 +33,7 @@ hyphenを含む旧型名は、hyphenなしの新型名へのJSON対応表が必�
 1. 検査前に**旧2表への全書込を停止**し、移行中も停止を維持します。関数とCLIはこの運用前提を強制しません。
 2. [schema](DATABASE_SCHEMA.ja.md)に従い、空で互いに異なる新journal・snapshot・headとsnapshot履歴GSIを作成します。旧2表と新3表の名前は全て異なる必要があります。head Streamsと、必要に応じたsnapshot TTLも別途設定します。
 3. 認証情報・region・endpoint・型対応表を指定し、下記の関数またはCLIを実行します。
-4. JSON報告と終了statusを確認します。公開4系APIで移行後データを読み戻してから、アプリケーションの書込先を切り替えます。
+4. JSON報告と終了statusを確認します。公開5系APIで移行後データを読み戻してから、アプリケーションの書込先を切り替えます。
 5. 書込途中の失敗や条件競合があれば、**新3表を作り直し**、原因を解消して再実行します。部分移行先への再実行は拒否します。migrationは旧表を変更しません。
 
 全件検査は旧2表のScan全ページを読みます。欠番、旧partition競合、孤立・未来snapshot、キー・属性・ID・時刻・TTLの不正、新項目サイズ超過を、移行データ送信前に拒否します。この時点で`open`による設定項目の作成は済んでいる場合があります。
