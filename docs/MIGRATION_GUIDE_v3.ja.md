@@ -1,5 +1,7 @@
 # 移行ガイド: v2 → v3（EventEnvelope API）
 
+> この文書は v2 から v3 への移行について書いた旧版向けのガイドです。v3 から 4.x への移行は [MIGRATION_GUIDE_v4.ja.md](MIGRATION_GUIDE_v4.ja.md) を参照してください。
+
 v3 は `Event` / `Aggregate` トレイト契約を封筒ベースの API に置き換えます。
 ドメインイベントと集約状態はプレーンな serde 型（payload）になり、ストアが必要と
 するメタデータは 2 つの新しい公開型が運搬します。

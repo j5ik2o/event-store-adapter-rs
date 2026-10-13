@@ -1863,6 +1863,23 @@ pub async fn find_by_id(&self, id: &UserAccountId) -> Result<Option<ReplayedUser
 - 薄い実行ファイルは、workspace の中に置き、`publish = false` にする。引数を読み、本体の関数を呼ぶだけである。リポジトリを取得して `cargo run` で実行できる。
 - どの形でも、上の手順は変わらない。
 
+実装後に確認した事実（`lib/Cargo.toml`・`lib/src/lib.rs`・`lib/src/migration/mod.rs`・`migration-cli/Cargo.toml`・`migration-cli/src/main.rs` を読んで確かめた。確認はコードを読んだもので、移行を実行して確かめたものではない）:
+
+- feature `migration`（`dynamodb` も有効にする）のときだけ、モジュール `event_store_adapter_rs::migration` を公開する。クレート直下からも、次の 5 つの公開名を使える。
+
+| 公開名 | 形 |
+|:--|:--|
+| `migrate_v3_dynamodb` | `async fn migrate_v3_dynamodb(client: &Client, legacy_tables: &LegacyDynamoDbTables, tables: &DynamoDbTables, type_mapping: &HashMap<String, String>) -> Result<MigrationReport, MigrationError>` |
+| `LegacyDynamoDbTables` | `journal_table_name: String`・`snapshot_table_name: String`。旧 2 テーブルの名前 |
+| `MigrationReport` | `aggregates: u64`・`events: u64`・`snapshots: u64`・`reasons: Vec<MigrationRejection>`。JSON にできる（`Serialize`・`Deserialize`） |
+| `MigrationRejection` | `table: String`・`pkey: Option<String>`・`skey: Option<String>`・`aid: Option<String>`・`reason: String`。JSON にできる |
+| `MigrationError` | `report: MigrationReport`・`operation: String`・`source`。`report` は、失敗した時点までに確認できた件数と理由を持つ |
+
+- 検査で止めた項目、条件つき書き込みの競合、旧 2 テーブルと新 3 テーブルの名前の重複は、`Ok` で返る `MigrationReport` の `reasons` に載る。通信などの失敗は、`Err(MigrationError)` で返る。
+- 実行ファイルは、workspace のメンバー `migration-cli/` のクレートで、`publish = false` である。パッケージ名は `event-store-adapter-migration-rs` で、`[[bin]]` を指定していないので、実行ファイル名もこの名前になる（ディレクトリ名が `migration-cli`）。`cargo run -p event-store-adapter-migration-rs -- <引数>` で実行する。使い方は `docs/MIGRATION_GUIDE_v4.md` に書いてある。
+- 引数は、必須が `--old-journal`・`--old-snapshot`・`--journal`・`--snapshot`・`--head`・`--history-index` の 6 つで、任意が `--type-mapping`（旧型名から新型名への JSON オブジェクトのファイル）・`--endpoint-url`・`--region` である。`--help`（`-h`）は使い方を出して成功で終わる。未対応の引数、値のない引数、重複した引数は誤りにする。認証は通常の AWS 設定を使う。
+- 標準出力に `MigrationReport` の JSON を 1 つ出す。`reasons` が空でなければ、0 以外の終了コードで終わる。`MigrationError` で失敗したときも、`MigrationError` の `report` の JSON を標準出力に出し、誤りの内容を標準エラーに出して、0 以外で終わる。
+
 ## 9. 判断が要る点
 
 実装計画 10 章のとおり、この文書の判断は、設計段階で決め、コーディネーターがレビューした。判断が要るものだけを、オーナーに上げた。各項目に、選択肢・それぞれの利点と欠点・推奨・決めた者・日付・理由を書く。この章に、決めていない項目はない（2026-10-06）。

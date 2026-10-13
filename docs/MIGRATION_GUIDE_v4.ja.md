@@ -72,8 +72,8 @@ assert!(report.reasons.is_empty(), "{:?}", report.reasons);
 このcheckoutから実行します。
 
 ```sh
-cargo +1.99.0 run -p event-store-adapter-migration-rs -- --help
-cargo +1.99.0 run -p event-store-adapter-migration-rs -- \
+cargo run -p event-store-adapter-migration-rs -- --help
+cargo run -p event-store-adapter-migration-rs -- \
   --old-journal old-journal --old-snapshot old-snapshot \
   --journal journal --snapshot snapshot --head head \
   --history-index snapshot-history --type-mapping type-mapping.json \
@@ -95,5 +95,5 @@ cargo +1.99.0 run -p event-store-adapter-migration-rs -- \
 [CLI integration試験](../migration-cli/tests/cli_test.rs)はDynamoDB Localに対して実バイナリを起動し、公開APIによる読み戻しと旧表不変を確認します。Dockerが必要です。
 
 ```sh
-cargo +1.99.0 test -p event-store-adapter-migration-rs --test cli_test
+cargo test -p event-store-adapter-migration-rs --test cli_test
 ```
