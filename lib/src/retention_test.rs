@@ -50,15 +50,19 @@ fn should_retention_settings_validate_accept_ttl_with_keep_count() {
     .expect("保存先に依存しない検査は、保持件数と Ttl を拒まない");
 }
 
-// 2.10: 保持件数がないときは方式を使わないので、Ttl でも設定エラーにしない。
+// MEM-12: メモリでは、保持件数がなくても Ttl 方式は設定エラー。保存先に依存しない検査（DynamoDB が使う）は拒まない。
 #[test]
-fn should_retention_settings_ignore_ttl_without_keep_count() {
+fn should_retention_settings_reject_ttl_without_keep_count_for_memory() {
   let settings = RetentionSettings::current_only().with_mode(RetentionMode::Ttl { grace_seconds: 0 });
 
-  settings.validate().expect("保持件数がなければ Ttl を無視する");
   settings
+    .validate()
+    .expect("保存先に依存しない検査は、保持件数がなければ Ttl を拒まない");
+  let error = settings
     .validate_for_memory()
-    .expect("保持件数がなければメモリでも Ttl を無視する");
+    .expect_err("メモリでは保持件数がなくても Ttl は設定エラー");
+
+  assert!(matches!(error, EventStoreError::Configuration { .. }));
 }
 
 // S-1: 保持件数あり + Delete は有効。現在だけ + Delete も有効。

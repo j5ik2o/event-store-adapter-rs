@@ -52,8 +52,8 @@ impl RetentionSettings {
 
   /// S-1: 保存先に依存しない設定検査を行う。保持件数 0 は設定エラー。
   ///
-  /// メモリと DynamoDB が共有する。保持件数と `Ttl` の併用はメモリ固有の規則（MEM-3・MEM-12）なので、
-  /// ここでは検査しない（DynamoDB は併用を許す。`validate_for_memory`）。
+  /// メモリと DynamoDB が共有する。`Ttl` の拒否はメモリ固有の規則（MEM-3・MEM-12）なので、
+  /// ここでは検査しない（DynamoDB は `Ttl` を使える。`validate_for_memory`）。
   pub fn validate(&self) -> Result<(), EventStoreError> {
     if self.keep_snapshot_count == Some(0) {
       return Err(EventStoreError::Configuration {
@@ -63,15 +63,16 @@ impl RetentionSettings {
     Ok(())
   }
 
-  /// MEM-3・MEM-12: メモリの保存先が行う設定検査。S-1 に加え、保持件数があるときの `Ttl` を
-  /// 設定エラーにする。保持件数がないときは方式を使わないので、`Ttl` でも設定エラーにしない。
+  /// MEM-3・MEM-12: メモリの保存先が行う設定検査。S-1 に加え、`Ttl` を保持件数の有無にかかわらず
+  /// 設定エラーにする。メモリは期限切れ方式を提供しない。
   ///
-  /// メモリ固有の規則なので、`validate` には含めない。DynamoDB は保持件数と `Ttl` を併用できる。
+  /// メモリ固有の規則なので、`validate` には含めない。DynamoDB は `Ttl` を使える。
+  /// 公開型を変えないため、理由は既存の `ConfigurationReason::TtlWithKeepSnapshotCount` を使う。
   /// PR 8 の `MemoryStorage::new` が消費する。
   #[allow(dead_code)]
   pub(crate) fn validate_for_memory(&self) -> Result<(), EventStoreError> {
     self.validate()?;
-    if self.keep_snapshot_count.is_some() && matches!(self.mode, RetentionMode::Ttl { .. }) {
+    if matches!(self.mode, RetentionMode::Ttl { .. }) {
       return Err(EventStoreError::Configuration {
         reason: ConfigurationReason::TtlWithKeepSnapshotCount,
       });

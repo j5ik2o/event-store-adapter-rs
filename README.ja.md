@@ -28,6 +28,8 @@
 
 ## Memoryの使用例
 
+メモリの保存先は単一プロセスのメモリだけを使います。ファイルへの保存、再起動後の回復、プロセス間の共有はしません。
+
 アプリケーションの依存を次のように設定してください。
 
 ```toml
@@ -98,6 +100,8 @@ async fn main() -> Result<(), EventStoreError> {
 
 `features = ["dynamodb"]`を指定します。互いに異なる3表とsnapshot履歴GSIを事前作成し、非同期の`EventStoreForDynamoDB::open(client, tables, options)`を呼びます。表作成はライブラリの責務外です。`DynamoDbTables`は3表とGSIの名前、`DynamoDbOptions`は保持と有限の再要求設定を指定します。
 
+3 つの表は同じリージョンに置き、書き込みもそのリージョンからだけ行ってください。グローバルテーブル（複数リージョンのレプリカ）は範囲外です。
+
 SDK Clientにはretry sleeperが必要です。実行可能な[user-account例](examples/user-account/src/main.rs)はTokioの待機処理を設定し、DynamoDB Localを起動して表を作成し、新しい`open`を呼びます。[repository](examples/user-account/src/user_account_repository.rs)はイベント書込、イベントとsnapshotの書込、snapshot読取、イベント再生を実行します。snapshotなしの作成、headと同じsnapshot、その後のイベントからの復元を確認します。
 
 ```sh
@@ -110,7 +114,7 @@ Dockerが必要です。キー・設定項目・transaction・保持の詳細は
 
 既定のconstructorはJSONを使い、イベントと集約payloadに`Serialize + DeserializeOwned`を要求します。別のバイト形式には`EventStoreForMemory::with_serializers`または`EventStoreForDynamoDB::open_with_serializers`へ`Arc<dyn EventSerializer<P>>`と`Arc<dyn SnapshotSerializer<A>>`を渡します。serializerが受け取るのはpayloadだけです。payloadの要件は`Send + Sync + 'static`であり、この入口ではserde・Clone・Debugを要求しません。非serde payloadの実例は[Memory](lib/tests/memory_test.rs)・[DynamoDB](lib/tests/dynamodb_persist_event_test.rs)のintegration試験にあります。
 
-既定は`RetentionSettings::current_only()`です。`keep_latest(n)`は新しい順にn件の履歴snapshotを保持し、0は設定エラーになります。Memoryは削除を使用し、履歴件数とTTLの併用を拒否します。DynamoDBは削除または`RetentionMode::Ttl { grace_seconds }`を使用できます。snapshot表のTTL属性`ttl`は別途設定してください。履歴件数を設定したMemoryは、イベント単独を含む追記の成功後に保持処理を実行します。DynamoDBは履歴件数を設定し、履歴snapshotを書いた追記の成功後だけ保持処理を実行します。DynamoDBはイベント単独の追記では保持処理を実行しません。保持失敗はaid・seq_nr・phase・errorを含む`tracing`警告で通知し、確定済みの書込は成功を返します。
+既定は`RetentionSettings::current_only()`です。`keep_latest(n)`は新しい順にn件の履歴snapshotを保持し、0は設定エラーになります。Memoryは削除だけを使用し、`RetentionMode::Ttl`の指定は履歴件数の有無にかかわらず`MemoryStorage::new`で設定エラーになります。DynamoDBは削除または`RetentionMode::Ttl { grace_seconds }`を使用できます。snapshot表のTTL属性`ttl`は別途設定してください。履歴件数を設定したMemoryは、イベント単独を含む追記の成功後に保持処理を実行します。DynamoDBは履歴件数を設定し、履歴snapshotを書いた追記の成功後だけ保持処理を実行します。DynamoDBはイベント単独の追記では保持処理を実行しません。保持失敗はaid・seq_nr・phase・errorを含む`tracing`警告で通知し、確定済みの書込は成功を返します。
 
 `EventStoreError`には`OptimisticLock`・`ContractViolation`・`Serialization`・`Configuration`・`Storage`の5分類があります。文字列の解析ではなく、`ContractRule`・`SerializationPhase`・`ConfigurationReason`・`StorageOperation`をmatchしてください。直列化と保存先のエラーはsourceを保持します。
 
