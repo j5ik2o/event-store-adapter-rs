@@ -34,6 +34,8 @@ jobs:
         run: |
           python3 tools/conformance/manifest.py verify
           echo "61c26614dbbfba88eebce72cc1d2b0220218839e74dcfb64c19268f7ee2302ce  conformance/manifest.json" | sha256sum -c -
+      - name: Verify API surface 0.1.0
+        run: echo "37c91f8f94e10c73513a9c1deef990ea4deea96d5001ae700d6bf799658d0e32  api-surface/surface.json" | sha256sum -c -
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: nightly
@@ -59,6 +61,19 @@ jobs:
         with:
           toolchain: stable
       - run: cargo test -p event-store-adapter-conformance-rs -p event-store-adapter-migration-rs --all-features
+  api-surface:
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    needs: lint
+    steps:
+      - uses: actions/checkout@v7
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      # rustdoc の JSON を作る nightly。形式の版 61 は rustdoc-types =0.61.0 と組になる。
+      # 日付は api-surface/check/src/rustdoc.rs の TOOLCHAIN、api-surface/check/Cargo.toml の rustdoc-types の版と一緒に変える。
+      - run: rustup toolchain install nightly-2026-09-27 --profile minimal
+      - run: cargo test -p event-store-adapter-api-surface-rs
   feature-matrix:
     timeout-minutes: 10
     runs-on: ubuntu-latest
@@ -192,7 +207,7 @@ jobs:
     timeout-minutes: 2
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [lint, test-lib, test-conformance-migration, feature-matrix, clippy, release-control, conformance]
+    needs: [lint, test-lib, test-conformance-migration, api-surface, feature-matrix, clippy, release-control, conformance]
     if: always()
     steps:
       - name: Check CI results
@@ -201,14 +216,15 @@ jobs:
           LINT_RESULT: ${{ needs.lint.result }}
           TEST_LIB_RESULT: ${{ needs.test-lib.result }}
           TEST_CONFORMANCE_MIGRATION_RESULT: ${{ needs.test-conformance-migration.result }}
+          API_SURFACE_RESULT: ${{ needs.api-surface.result }}
           FEATURE_MATRIX_RESULT: ${{ needs.feature-matrix.result }}
           CLIPPY_RESULT: ${{ needs.clippy.result }}
           CONFORMANCE_RESULT: ${{ needs.conformance.result }}
         run: |
           if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
-                "$TEST_CONFORMANCE_MIGRATION_RESULT" != "success" || \
+                "$TEST_CONFORMANCE_MIGRATION_RESULT" != "success" || "$API_SURFACE_RESULT" != "success" || \
                 "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" || \
                 "$RELEASE_CONTROL_RESULT" != "success" || "$CONFORMANCE_RESULT" != "success" ]]; then
-            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, test-conformance-migration=$TEST_CONFORMANCE_MIGRATION_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT"
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, test-conformance-migration=$TEST_CONFORMANCE_MIGRATION_RESULT, api-surface=$API_SURFACE_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT"
             exit 1
           fi

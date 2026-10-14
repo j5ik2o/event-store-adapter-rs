@@ -1,0 +1,12 @@
+[package]
+name = "event-store-adapter-api-surface-rs"
+version = "0.0.1"
+edition = "2021"
+publish = false
+
+[dependencies]
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+# 固定日の nightly（`src/rustdoc.rs` の `TOOLCHAIN`）が出力する rustdoc の JSON の形式の版（61）と組になる版。
+# nightly の日付を上げるときは、この版も一緒に上げる。
+rustdoc-types = "=0.61.0"

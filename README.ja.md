@@ -130,6 +130,7 @@ Dockerが必要です。キー・設定項目・transaction・保持の詳細は
 cargo +1.99.0 build --workspace --all-targets --all-features
 cargo +1.99.0 clippy --workspace --all-targets --all-features -- -D warnings
 cargo +nightly fmt --all -- --check
+rustup toolchain install nightly-2026-09-27 --profile minimal
 cargo +1.99.0 test --workspace --all-features
 ```
 

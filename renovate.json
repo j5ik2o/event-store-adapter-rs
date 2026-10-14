@@ -17,6 +17,11 @@
       "description": "takt is pinned to the same version across the event-store-adapter repositories and updated by the coordinator in all repositories at once (repository policy, chapter 8), so Renovate must not update it.",
       "matchDepNames": ["npm:takt"],
       "enabled": false
+    },
+    {
+      "description": "rustdoc-types must match the rustdoc JSON format of the nightly pinned in api-surface/check/src/rustdoc.rs and the api-surface CI job, so it is updated together with that nightly by hand (api-surface/README.md).",
+      "matchDepNames": ["rustdoc-types"],
+      "enabled": false
     }
   ],
   "prHourlyLimit": 0,

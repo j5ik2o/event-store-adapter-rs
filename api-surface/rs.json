@@ -1,0 +1,150 @@
+{
+  "format": "event-store-adapter-api-surface-mapping",
+  "language": "rs",
+  "surface_version": "0.1.0",
+  "crate": "event_store_adapter_rs",
+  "type_parameters": {
+    "P": {
+      "rs": "P",
+      "getter": "&{rs}",
+      "input": "{rs}",
+      "build": "{rs}"
+    },
+    "A": {
+      "rs": "A",
+      "getter": "&{rs}",
+      "input": "{rs}",
+      "build": "{rs}"
+    }
+  },
+  "allowed_type_parameter_bounds": [
+    "Send",
+    "Sync",
+    "'static"
+  ],
+  "value_types": {
+    "aggregate_id": {
+      "rs": "AID",
+      "type_parameter": true,
+      "bound": "AggregateId",
+      "getter": "&{rs}",
+      "input": "&{rs}",
+      "build": "{rs}"
+    },
+    "seq_nr": {
+      "rs": "SeqNr",
+      "getter": "{rs}",
+      "input": "{rs}",
+      "build": "{rs}"
+    },
+    "timestamp": {
+      "rs": "chrono::DateTime<chrono::Utc>",
+      "getter": "&{rs}",
+      "input": "{rs}",
+      "build": "{rs}"
+    },
+    "string": {
+      "rs": "String",
+      "getter": "&str",
+      "input": "{rs}",
+      "build": "impl Into<String>"
+    }
+  },
+  "conventions": {
+    "receiver": "&self",
+    "async": "async_trait",
+    "result": "Result<{T}, {error}>",
+    "none": "()",
+    "optional": "Option<{T}>",
+    "list": "Vec<{T}>",
+    "store_type_parameter": "Self::{name}",
+    "data_type": {
+      "getter": "&{rs}",
+      "input": "{rs}",
+      "build": "{rs}"
+    }
+  },
+  "types": {
+    "event_envelope": {
+      "rs": "EventEnvelope",
+      "type_parameters": [
+        "AID",
+        "P"
+      ],
+      "getters": {
+        "aggregate_id": "aggregate_id",
+        "seq_nr": "seq_nr",
+        "occurred_at": "occurred_at",
+        "manifest": "manifest",
+        "payload": "payload"
+      },
+      "constructor": {
+        "function": "new",
+        "params": [
+          "aggregate_id",
+          "seq_nr",
+          "occurred_at",
+          "payload"
+        ],
+        "builders": {
+          "manifest": "with_manifest"
+        }
+      }
+    },
+    "snapshot_envelope": {
+      "rs": "SnapshotEnvelope",
+      "type_parameters": [
+        "A"
+      ],
+      "getters": {
+        "aggregate": "aggregate",
+        "seq_nr": "seq_nr",
+        "manifest": "manifest"
+      },
+      "constructor": {
+        "function": "new",
+        "params": [
+          "aggregate",
+          "seq_nr"
+        ],
+        "builders": {
+          "manifest": "with_manifest"
+        }
+      }
+    },
+    "snapshot_read": {
+      "rs": "SnapshotRead",
+      "type_parameters": [
+        "A"
+      ],
+      "getters": {
+        "snapshot": "snapshot",
+        "head_seq_nr": "head_seq_nr"
+      }
+    }
+  },
+  "store": {
+    "rs": "EventStore",
+    "associated_types": [
+      "AID",
+      "A",
+      "P"
+    ],
+    "operations": {
+      "persist_event": "persist_event",
+      "persist_event_and_snapshot": "persist_event_and_snapshot",
+      "get_latest_snapshot_by_id": "get_latest_snapshot_by_id",
+      "get_events_by_id_since_seq_nr": "get_events_by_id_since_seq_nr"
+    }
+  },
+  "error_categories": {
+    "rs": "EventStoreError",
+    "variants": {
+      "optimistic_lock": "OptimisticLock",
+      "contract_violation": "ContractViolation",
+      "serialization": "Serialization",
+      "configuration": "Configuration",
+      "storage": "Storage"
+    }
+  }
+}

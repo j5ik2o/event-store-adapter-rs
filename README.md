@@ -130,6 +130,7 @@ Historical [v3 migration guidance](docs/MIGRATION_GUIDE_v3.md) remains available
 cargo +1.99.0 build --workspace --all-targets --all-features
 cargo +1.99.0 clippy --workspace --all-targets --all-features -- -D warnings
 cargo +nightly fmt --all -- --check
+rustup toolchain install nightly-2026-09-27 --profile minimal
 cargo +1.99.0 test --workspace --all-features
 ```
 
