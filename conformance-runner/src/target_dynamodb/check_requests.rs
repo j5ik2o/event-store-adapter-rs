@@ -109,7 +109,8 @@ fn condition(body: &Value, expected: &Value) -> Result<(), String> {
   Ok(())
 }
 
-fn key_condition(body: &Value, expected: &Value, context: &RequestContext<'_>) -> Result<(), String> {
+/// キー条件式を、(属性名, 演算子) から値への対応に解析する。演算子は `eq` と `gte` だけを扱う。
+fn key_conditions(body: &Value) -> Result<BTreeMap<(String, String), Value>, String> {
   let tokens = tokens(string(required(body, "KeyConditionExpression")?)?);
   let mut actual = BTreeMap::new();
   let mut position = 0;
@@ -126,11 +127,16 @@ fn key_condition(body: &Value, expected: &Value, context: &RequestContext<'_>) -
       _ => return Err("未対応のキー条件演算子".into()),
     };
     let value = resolve_value(body, tokens.get(position + consumed - 1).ok_or("キー条件の値がない")?)?;
-    if actual.insert((name.to_owned(), op), value.clone()).is_some() {
+    if actual.insert((name.to_owned(), op.to_owned()), value.clone()).is_some() {
       return Err("キー条件が重複".into());
     }
     position += consumed;
   }
+  Ok(actual)
+}
+
+fn key_condition(body: &Value, expected: &Value, context: &RequestContext<'_>) -> Result<(), String> {
+  let actual = key_conditions(body)?;
   let all = required(expected, "all")?.as_array().ok_or("allが配列ではない")?;
   if actual.len() != all.len() {
     return Err("キー条件の数が一致しない".into());
@@ -143,7 +149,7 @@ fn key_condition(body: &Value, expected: &Value, context: &RequestContext<'_>) -
     };
     let name = string(required(expected, "attribute")?)?.to_owned();
     let op = string(required(expected, "operator")?)?;
-    if actual.get(&(name, op)) != Some(&value) {
+    if actual.get(&(name, op.to_owned())) != Some(&value) {
       return Err("キー条件の属性・演算子・値が一致しない".into());
     }
   }
@@ -557,6 +563,129 @@ fn constraint(
   }
 }
 
+/// S 属性の値を文字列として取り出す。
+fn string_attribute(attribute: &Value) -> Result<String, String> {
+  attribute
+    .get("S")
+    .and_then(Value::as_str)
+    .map(str::to_owned)
+    .ok_or_else(|| "aidがS属性ではない".to_owned())
+}
+
+/// 項目、またはそのキーの `aid` を取り出す。
+fn key_aid(key: &Value) -> Result<String, String> {
+  string_attribute(key.get("aid").ok_or("aidがない")?)
+}
+
+/// 要素がちょうど 1 つのオブジェクトから、その名前と値を取り出す。
+fn single_entry<'a>(value: &'a Value, what: &str) -> Result<(&'a String, &'a Value), String> {
+  value
+    .as_object()
+    .filter(|object| object.len() == 1)
+    .and_then(|object| object.iter().next())
+    .ok_or_else(|| format!("{what}が1要素のオブジェクトではない"))
+}
+
+/// 要求が読み書きする項目の `aid` を、`Key`・`Keys`・`Item` と、`Query` のキー条件から取り出す。
+fn item_aids(api: &str, body: &Value) -> Result<Vec<String>, String> {
+  let mut aids = Vec::new();
+  match api {
+    "GetItem" | "UpdateItem" => aids.push(key_aid(required(body, "Key")?)?),
+    "BatchGetItem" => {
+      for table in required(body, "RequestItems")?
+        .as_object()
+        .ok_or("RequestItemsがオブジェクトではない")?
+        .values()
+      {
+        for key in required(table, "Keys")?.as_array().ok_or("Keysが配列ではない")? {
+          aids.push(key_aid(key)?);
+        }
+      }
+    }
+    "BatchWriteItem" => {
+      for table in required(body, "RequestItems")?
+        .as_object()
+        .ok_or("RequestItemsがオブジェクトではない")?
+        .values()
+      {
+        for request in table.as_array().ok_or("表の要求が配列ではない")? {
+          let (kind, content) = single_entry(request, "BatchWriteItemの要求")?;
+          match kind.as_str() {
+            "PutRequest" => aids.push(key_aid(required(content, "Item")?)?),
+            "DeleteRequest" => aids.push(key_aid(required(content, "Key")?)?),
+            other => return Err(format!("未知のBatchWriteItem要求: {other}")),
+          }
+        }
+      }
+    }
+    "TransactWriteItems" => {
+      for action in required(body, "TransactItems")?
+        .as_array()
+        .ok_or("TransactItemsが配列ではない")?
+      {
+        let (kind, content) = single_entry(action, "TransactWriteItemsのアクション")?;
+        let key = match kind.as_str() {
+          "Put" => required(content, "Item")?,
+          "Update" | "Delete" | "ConditionCheck" => required(content, "Key")?,
+          other => return Err(format!("未知のTransactWriteItemsアクション: {other}")),
+        };
+        aids.push(key_aid(key)?);
+      }
+    }
+    "Query" => {
+      let conditions = key_conditions(body)?;
+      let value = conditions
+        .get(&("aid".to_owned(), "eq".to_owned()))
+        .ok_or("キー条件にaidの等価条件がない")?;
+      aids.push(string_attribute(value)?);
+    }
+    other => return Err(format!("aidを取り出せないAPI: {other}")),
+  }
+  Ok(aids)
+}
+
+/// `observe.request_scope`（DY-19）: 操作の間に送ったすべての要求について、API 名が宣言の `apis` のどれかであり、
+/// 読み書きする項目の `aid` がすべてその操作の集約の `aid` であることを確かめる。違反はすべて集めて返す。
+fn request_scope(expected: &Value, report: &OperationReport, context: &RequestContext<'_>) -> Result<(), String> {
+  let apis = required(expected, "apis")?
+    .as_array()
+    .ok_or("apisが配列ではない")?
+    .iter()
+    .map(string)
+    .collect::<Result<BTreeSet<_>, _>>()?;
+  let operation_aid = match string(required(expected, "aid")?)? {
+    "aggregate_id" => context.aid.ok_or("集約の束縛がない")?,
+    other => return Err(format!("未知のaid指定: {other}")),
+  };
+  // 各操作は DynamoDB に少なくとも 1 件の要求を送る。0 件なら記録の接続か操作番号の対応が壊れている。
+  if report.requests.is_empty() {
+    return Err("操作の間に記録した要求がない".to_string());
+  }
+  let mut violations = Vec::new();
+  for (index, request) in report.requests.iter().enumerate() {
+    let api = request.api.as_str();
+    if !apis.contains(api) {
+      violations.push(format!("要求{index}: 許されないAPI {api}"));
+      continue;
+    }
+    match item_aids(api, &request.body) {
+      Err(error) => violations.push(format!("要求{index}: {api}: {error}")),
+      Ok(aids) if aids.is_empty() => violations.push(format!("要求{index}: {api}が読み書きする項目のaidがない")),
+      Ok(aids) => violations.extend(
+        aids
+          .iter()
+          .filter(|aid| aid.as_str() != operation_aid)
+          .map(|other| format!("要求{index}: {api}が別の集約のaid {other}を読み書きする")),
+      ),
+    }
+  }
+  if violations.is_empty() {
+    Ok(())
+  } else {
+    Err(violations.join("; "))
+  }
+}
+
 #[derive(Default, serde::Serialize)]
 pub(super) struct Checks {
   pub entries: Vec<Value>,
@@ -647,6 +776,9 @@ pub(super) fn check(observe: &Value, report: &OperationReport, context: &Request
         );
       }
     }
+  }
+  if let Some(scope) = observe.get("request_scope") {
+    checks.record("request_scope".into(), request_scope(scope, report, context));
   }
   if report.unfinished_history {
     checks.record(

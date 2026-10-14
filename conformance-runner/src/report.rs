@@ -12,7 +12,7 @@ use crate::fault::UnfiredFault;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum RepresentationGap {
-  /// 値を表せない（`representation.signed_seq_nr = true` のケースだけ）。
+  /// 値や設定を表せない（`representation.signed_seq_nr = true` と `store.change_feed = true` のケース）。
   Unrepresentable,
   /// 時刻の精度の選択（`representation.time_precision = milliseconds` のケース）。
   TimePrecision,

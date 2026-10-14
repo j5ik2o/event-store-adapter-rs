@@ -32,7 +32,7 @@ fn shipped_schemas() -> SchemaSet {
 }
 
 fn valid_coverage() -> Value {
-  json!({"format": "coverage", "version": "1.0.0", "required_rules": ["T-1"], "exclusions": [], "notes": []})
+  json!({"format": "coverage", "version": "1.1.0", "required_rules": ["T-1"], "exclusions": [], "notes": []})
 }
 
 // ---------------------------------------------------------------------------
@@ -48,6 +48,7 @@ fn should_schema_format_maps_each_kind_of_data_file_to_its_schema() {
     ("scenarios/core/write-read.json", Some("scenarios")),
     ("dynamodb/configuration.json", Some("scenarios")),
     ("dynamodb/write-errors.json", Some("scenarios")),
+    ("memory/configuration.json", Some("scenarios")),
     ("manifest.json", None),
     ("schema/coverage.schema.json", None),
     (".gitattributes", None),
@@ -163,7 +164,7 @@ fn should_schema_set_treats_a_whole_number_with_a_zero_fraction_as_an_integer() 
   let schemas = shipped_schemas();
   let values = |seq_nr: &str| {
     serde_json::from_str::<Value>(&format!(
-      r#"{{"format":"values","version":"1.0.0","cases":[{{
+      r#"{{"format":"values","version":"1.1.0","cases":[{{
         "id":"synthetic","rules":["T-1"],"description":"d","operation":"validateSeqNr",
         "input":{{"seq_nr":{seq_nr},"context":"value"}},"expect":{{"value":1}}
       }}]}}"#
