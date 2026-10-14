@@ -1,6 +1,6 @@
 # 公開 API の形の照合（rs）
 
-共通契約 v5 が公開 API に求める「形」を、`event-store-adapter-rs` の公開 API が満たすかを CI で照合します。形の定義と読み方はハブの [api-surface/](https://github.com/j5ik2o/event-store-adapter/tree/main/api-surface) にあります（形式 0.1.0。まだ受け入れ条件ではありません）。
+共通契約 v5 が公開 API に求める「形」を、`event-store-adapter-rs` の公開 API が満たすかを CI で照合します。形の定義と読み方はハブの [api-surface/](https://github.com/j5ik2o/event-store-adapter/tree/main/api-surface) にあります（形式 0.1.0）。この照合が通ることは、ハブの [実装計画](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/plan/implementation-plan.md) の 5 章の受け入れ条件の 4 番に入っています。
 
 | ファイル | 内容 |
 |:--|:--|
@@ -20,7 +20,7 @@ cargo test -p event-store-adapter-api-surface-rs
 
 試験は、固定日の nightly で `event-store-adapter-rs` を feature なし（`--no-default-features`）で文書化して JSON を作り、`rustdoc-types`（0.61.0、形式の版 61）で読みます。期待する形は `surface.json` と `rs.json` から導き、ずれを `<場所>: <メッセージ>` の形で報告します（例: `event_envelope.seq_nr: EventEnvelope::seq_nr returns u32, want SeqNr`）。`rs.json` にない共通の項目も、飛ばさずに報告します。`cargo test --workspace` にも含まれるので、この nightly が要ります。
 
-nightly の日付を上げるときは、`check/src/rustdoc.rs` の `TOOLCHAIN`、`.github/workflows/ci.yml` の `api-surface` ジョブ、`check/Cargo.toml` の `rustdoc-types` の版の 3 か所を一緒に変え、導入の案内（`AGENTS.md`・`README.md`・`README.ja.md`・この文書）の日付も直します。`surface.json` を差し替えるときは、`ci.yml` の SHA-256 も更新します。
+nightly の日付を上げるときは、`check/src/rustdoc.rs` の `TOOLCHAIN`、`.github/workflows/ci.yml` の `api-surface` ジョブ、`check/Cargo.toml` の `rustdoc-types` の版の 3 か所を一緒に変え、導入の案内（`AGENTS.md`・`README.md`・`README.ja.md`・この文書）の日付も直します。`surface.json` を差し替えるときは、`ci.yml` の SHA-256 と手順の名前の版、この文書の版と SHA-256 も更新します。同じ PR で変えるものの一覧は、ハブの [版を上げるときの手順](https://github.com/j5ik2o/event-store-adapter/blob/main/api-surface/README.md#版を上げるときの手順) にあります。
 
 ## 確かめていること
 
