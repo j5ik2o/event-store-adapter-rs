@@ -1,5 +1,5 @@
 [workspace]
-members = ["lib", "test-utils", "examples/*", "conformance-runner", "migration-cli"]
+members = ["lib", "test-utils", "examples/*", "conformance-runner", "migration-cli", "api-surface/check", "api-surface/fixtures"]
 
 resolver = "2"
 
