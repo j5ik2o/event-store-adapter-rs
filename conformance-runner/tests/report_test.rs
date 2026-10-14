@@ -14,7 +14,7 @@ use event_store_adapter_conformance_rs::runner::run;
 use event_store_adapter_conformance_rs::target_memory;
 use serde_json::{json, Value};
 
-const FIXED_MANIFEST_SHA256: &str = "61c26614dbbfba88eebce72cc1d2b0220218839e74dcfb64c19268f7ee2302ce";
+const FIXED_MANIFEST_SHA256: &str = "0e4dfe44dec0a912ed9d6b28f0634af9fd0dc840895734790e87cf96772e1d50";
 
 fn conformance_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")
@@ -22,8 +22,8 @@ fn conformance_dir() -> PathBuf {
 
 fn data_set(problems: Vec<ManifestProblem>, required: &[&str], exclusions: Vec<CoverageExclusion>) -> DataSet {
   DataSet {
-    manifest_version: Some("1.0.0".to_string()),
-    manifest_files: 22,
+    manifest_version: Some("1.1.0".to_string()),
+    manifest_files: 24,
     manifest_sha256: FIXED_MANIFEST_SHA256.to_string(),
     manifest: ManifestVerification { problems },
     coverage: Coverage {
@@ -133,7 +133,7 @@ fn should_report_exposes_data_version_and_manifest_verification_result() {
 
   let json = to_json(&report);
 
-  assert_eq!(json["data"]["version"], "1.0.0");
+  assert_eq!(json["data"]["version"], "1.1.0");
   assert_eq!(json["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(json["data"]["manifest"]["verification"], "passed");
 }
@@ -434,7 +434,7 @@ fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_cas
       passed + failed + not_applicable + unverified
     })
     .sum();
-  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 116);
+  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 120);
   assert_eq!(
     counted as usize, memberships,
     "複数の規則を持つケースを、最初の規則だけで数えない"
@@ -450,6 +450,22 @@ fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_cas
     .as_str()
     .unwrap()
     .contains("caller-obligation"));
+}
+
+#[test]
+fn should_report_of_real_data_counts_the_new_request_scope_and_memory_configuration_rules() {
+  let data = load(&conformance_dir()).expect("実データを読める");
+  let case_reports = run(&data, &target_memory::TARGET, target_memory::run_case);
+
+  let report = Report::build(&data, "memory", case_reports, implementation());
+
+  let json = to_json(&report);
+  // (passed, failed, not-applicable, unverified)。DynamoDB だけの 2 件はメモリでは対象外。
+  assert_eq!(counts_of(rule_row(&json, "DY-19")), (0, 0, 2, 0));
+  // 期限切れ方式の設定エラーは成功し、変更フィードを求める設定は表現不能として対象外になる。
+  assert_eq!(counts_of(rule_row(&json, "MEM-3")), (1, 0, 1, 0));
+  assert_eq!(counts_of(rule_row(&json, "MEM-12")), (1, 0, 0, 0));
+  assert_eq!(counts_of(rule_row(&json, "MEM-13")), (0, 0, 1, 0));
 }
 
 #[test]

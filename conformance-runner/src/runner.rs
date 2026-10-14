@@ -68,10 +68,19 @@ fn targets_backend(case: &Case, target: &Target) -> bool {
   }
 }
 
+/// `store.change_feed` を読む。省略時は変更フィードを求めない（false）。
+fn requests_change_feed(body: &Value) -> bool {
+  body
+    .pointer("/store/change_feed")
+    .and_then(Value::as_bool)
+    .unwrap_or(false)
+}
+
 /// ケース 1 つを分類し、実装済みの保存先へ渡す。
 ///
-/// 判定の順は、保存先の対象、表現不能、精度の選択、FNV-1a 64 の決定、`coverage.json` の除外、準備の失敗、
-/// 実装していない条件の語、値の表の `buildAid` の実行、渡された保存先実行関数への委譲、の順。
+/// 判定の順は、保存先の対象、表現不能（`signed_seq_nr`・`store.change_feed`）、精度の選択、FNV-1a 64 の決定、
+/// `coverage.json` の除外、準備の失敗、実装していない条件の語、値の表の `buildAid` の実行、
+/// 渡された保存先実行関数への委譲、の順。
 pub fn run_case(
   case: &Case,
   target: &Target,
@@ -90,6 +99,13 @@ pub fn run_case(
     return not_applicable(NotApplicableReason::Representation {
       representation: RepresentationGap::Unrepresentable,
       detail: "SeqNr は u64 で、負数を表せない（signed_seq_nr）".to_string(),
+    });
+  }
+  if requests_change_feed(&case.body) {
+    return not_applicable(NotApplicableReason::Representation {
+      representation: RepresentationGap::Unrepresentable,
+      detail: "設定の型（RetentionSettings・DynamoDbOptions）に変更フィードの項目がなく、change_feed = true を表せない"
+        .to_string(),
     });
   }
   if case.body.pointer("/representation/time_precision") == Some(&Value::String("milliseconds".to_string())) {

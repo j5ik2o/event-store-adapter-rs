@@ -85,7 +85,7 @@ impl SchemaSet {
 /// 配布物の中の相対パス `path` のデータのファイルを検査する、スキーマの形式を返す。
 ///
 /// `coverage.json` は coverage、`dynamodb/layout.json` は layout、`values/` の下は values、
-/// `scenarios/` の下と `dynamodb/` の下（layout 以外）は scenarios。それ以外（`manifest.json` や、
+/// `scenarios/` の下と `dynamodb/` の下（layout 以外）と `memory/` の下は scenarios。それ以外（`manifest.json` や、
 /// ケースを持たないファイル）は `None` を返す。
 pub fn schema_format(path: &str) -> Option<&'static str> {
   if !path.ends_with(".json") {
@@ -95,7 +95,9 @@ pub fn schema_format(path: &str) -> Option<&'static str> {
     "coverage.json" => Some("coverage"),
     "dynamodb/layout.json" => Some("layout"),
     _ if path.starts_with("values/") => Some("values"),
-    _ if path.starts_with("scenarios/") || path.starts_with("dynamodb/") => Some("scenarios"),
+    _ if path.starts_with("scenarios/") || path.starts_with("dynamodb/") || path.starts_with("memory/") => {
+      Some("scenarios")
+    }
     _ => None,
   }
 }

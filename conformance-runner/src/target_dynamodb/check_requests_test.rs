@@ -198,3 +198,258 @@ fn should_check_delete_batches_retries_ttl_expressions_and_failure_returns() {
     .errors
     .is_empty());
 }
+
+// ---------------------------------------------------------------------------
+// observe.request_scope（DY-19）: 操作の間に送った要求の API 名と、読み書きする項目の aid
+// ---------------------------------------------------------------------------
+
+const SIX_APIS: [&str; 6] = [
+  "GetItem",
+  "BatchGetItem",
+  "Query",
+  "TransactWriteItems",
+  "BatchWriteItem",
+  "UpdateItem",
+];
+
+fn scope(apis: &[&str]) -> Value {
+  json!({"request_scope":{"apis":apis,"aid":"aggregate_id"}})
+}
+
+fn unphased(entries: Vec<(&str, Value)>) -> OperationReport {
+  OperationReport {
+    requests: entries
+      .into_iter()
+      .map(|(api, body)| RequestObservation {
+        api: api.into(),
+        phase: None,
+        body,
+      })
+      .collect(),
+    responses: Vec::new(),
+    unfired: Vec::new(),
+    applications: Vec::new(),
+    unfinished_history: false,
+  }
+}
+
+fn scoped_query(id: Value) -> Value {
+  json!({"TableName":"j","ConsistentRead":true,"ScanIndexForward":true,"KeyConditionExpression":"#id = :id AND (#seq >= :seq)",
+    "ExpressionAttributeNames":{"#id":"aid","#seq":"seq_nr"},"ExpressionAttributeValues":{":id":id,":seq":{"N":"4"}}})
+}
+
+/// 6 種類の API について、`aid` の集約だけを読み書きする要求の本文を返す。
+fn scoped_requests(aid: &str) -> Vec<(&'static str, Value)> {
+  vec![
+    ("GetItem", json!({"TableName":"h","Key":{"aid":{"S":aid}}})),
+    (
+      "BatchGetItem",
+      json!({"RequestItems":{"j":{"ConsistentRead":true,"Keys":[{"aid":{"S":aid},"seq_nr":{"N":"0"}}]},
+        "h":{"ConsistentRead":true,"Keys":[{"aid":{"S":aid}}]}}}),
+    ),
+    ("Query", scoped_query(json!({"S":aid}))),
+    (
+      "TransactWriteItems",
+      json!({"TransactItems":[
+        {"Put":{"TableName":"j","Item":{"aid":{"S":aid},"seq_nr":{"N":"1"}}}},
+        {"Update":{"TableName":"h","Key":{"aid":{"S":aid}}}}]}),
+    ),
+    (
+      "BatchWriteItem",
+      json!({"RequestItems":{"s":[{"DeleteRequest":{"Key":{"aid":{"S":aid},"skey":{"N":"1"}}}}]}}),
+    ),
+    (
+      "UpdateItem",
+      json!({"TableName":"s","Key":{"aid":{"S":aid},"skey":{"N":"2"}}}),
+    ),
+  ]
+}
+
+fn check_scope(apis: &[&str], requests: Vec<(&str, Value)>) -> Checks {
+  let layout = RequestLayout::new("j", "s", "h", "gsi").unwrap();
+  check(&scope(apis), &unphased(requests), &context(&layout, &[], None))
+}
+
+/// `request_scope` を実際に判定し、誤りがないことを確かめる。判定の記録がなければ成功と見なさない。
+fn assert_scope_passed(checks: &Checks) {
+  assert!(checks.errors.is_empty(), "{:?}", checks.errors);
+  assert!(
+    checks
+      .entries
+      .iter()
+      .any(|entry| entry["constraint"] == "request_scope" && entry["error"].is_null()),
+    "request_scope の判定の記録がない: {:?}",
+    checks.entries
+  );
+}
+
+/// `request_scope` が失敗し、その詳細に `details` の語がすべて載ることを確かめる。
+fn assert_scope_failed(checks: &Checks, details: &[&str]) {
+  let failures: Vec<&str> = checks
+    .errors
+    .iter()
+    .filter(|error| error.starts_with("request_scope"))
+    .map(String::as_str)
+    .collect();
+  assert!(
+    !failures.is_empty(),
+    "request_scope が失敗していない: {:?}",
+    checks.errors
+  );
+  let joined = failures.join(" / ");
+  for detail in details {
+    assert!(joined.contains(detail), "{detail} が詳細にない: {joined}");
+  }
+}
+
+#[test]
+fn should_check_request_scope_passes_when_six_apis_touch_only_the_operation_aggregate() {
+  let checks = check_scope(&SIX_APIS, scoped_requests("Order-9"));
+
+  assert_scope_passed(&checks);
+}
+
+#[test]
+fn should_check_request_scope_passes_query_whose_key_condition_equals_the_operation_aid() {
+  let checks = check_scope(&["Query"], vec![("Query", scoped_query(json!({"S":"Order-9"})))]);
+
+  assert_scope_passed(&checks);
+}
+
+#[test]
+fn should_check_request_scope_fails_scan_that_the_declaration_does_not_allow() {
+  let mut requests = scoped_requests("Order-9");
+  requests.push(("Scan", json!({"TableName":"j"})));
+
+  let checks = check_scope(&SIX_APIS, requests);
+
+  assert_scope_failed(&checks, &["Scan"]);
+}
+
+#[test]
+fn should_check_request_scope_fails_scan_even_when_the_request_carries_a_phase() {
+  let layout = RequestLayout::new("j", "s", "h", "gsi").unwrap();
+  let mut report = unphased(scoped_requests("Order-9"));
+  report.requests.push(RequestObservation {
+    api: "Scan".into(),
+    phase: Some(Phase::ReadEvents),
+    body: json!({"TableName":"j"}),
+  });
+
+  let checks = check(&scope(&SIX_APIS), &report, &context(&layout, &[], None));
+
+  assert_scope_failed(&checks, &["Scan"]);
+}
+
+#[test]
+fn should_check_request_scope_fails_api_missing_from_the_declared_apis() {
+  let checks = check_scope(
+    &["Query"],
+    vec![
+      ("Query", scoped_query(json!({"S":"Order-9"}))),
+      ("GetItem", json!({"TableName":"h","Key":{"aid":{"S":"Order-9"}}})),
+    ],
+  );
+
+  assert_scope_failed(&checks, &["GetItem"]);
+}
+
+#[test]
+fn should_check_request_scope_fails_query_key_condition_of_another_aggregate() {
+  let checks = check_scope(&["Query"], vec![("Query", scoped_query(json!({"S":"Customer-5"})))]);
+
+  assert_scope_failed(&checks, &["Customer-5"]);
+}
+
+#[test]
+fn should_check_request_scope_fails_query_without_a_key_condition() {
+  let checks = check_scope(&["Query"], vec![("Query", json!({"TableName":"j"}))]);
+
+  assert_scope_failed(&checks, &[]);
+}
+
+#[test]
+fn should_check_request_scope_fails_query_whose_key_condition_has_no_aid_equality() {
+  let without_aid = json!({"TableName":"j","KeyConditionExpression":"#seq >= :seq",
+    "ExpressionAttributeNames":{"#seq":"seq_nr"},"ExpressionAttributeValues":{":seq":{"N":"4"}}});
+  let between = json!({"TableName":"j","KeyConditionExpression":"#id BETWEEN :a AND :b",
+    "ExpressionAttributeNames":{"#id":"aid"},"ExpressionAttributeValues":{":a":{"S":"Order-9"},":b":{"S":"Order-9"}}});
+
+  for (label, body) in [("aid の等価条件がない", without_aid), ("BETWEEN", between)] {
+    let checks = check_scope(&["Query"], vec![("Query", body)]);
+
+    assert!(
+      checks.errors.iter().any(|error| error.starts_with("request_scope")),
+      "{label}: {:?}",
+      checks.errors
+    );
+  }
+}
+
+#[test]
+fn should_check_request_scope_fails_each_api_whose_item_belongs_to_another_aggregate() {
+  let foreign = scoped_requests("Customer-5");
+  for (index, (api, _)) in foreign.iter().enumerate() {
+    let mut requests = scoped_requests("Order-9");
+    requests[index] = foreign[index].clone();
+
+    let checks = check_scope(&SIX_APIS, requests);
+
+    assert!(
+      checks
+        .errors
+        .iter()
+        .any(|error| error.starts_with("request_scope") && error.contains("Customer-5")),
+      "{api}: {:?}",
+      checks.errors
+    );
+  }
+}
+
+#[test]
+fn should_check_request_scope_fails_a_request_that_mixes_in_an_aid_of_another_aggregate() {
+  let mixed_batch_get = json!({"RequestItems":{"h":{"Keys":[{"aid":{"S":"Order-9"}},{"aid":{"S":"Customer-5"}}]}}});
+  let mixed_transaction = json!({"TransactItems":[
+    {"Put":{"TableName":"j","Item":{"aid":{"S":"Order-9"},"seq_nr":{"N":"1"}}}},
+    {"Update":{"TableName":"h","Key":{"aid":{"S":"Customer-5"}}}}]});
+
+  for (api, body) in [
+    ("BatchGetItem", mixed_batch_get),
+    ("TransactWriteItems", mixed_transaction),
+  ] {
+    let checks = check_scope(&SIX_APIS, vec![(api, body)]);
+
+    assert_scope_failed(&checks, &["Customer-5"]);
+  }
+}
+
+#[test]
+fn should_check_request_scope_fails_when_the_aid_cannot_be_extracted() {
+  let layout = RequestLayout::new("j", "s", "h", "gsi").unwrap();
+  let number_aid = json!({"TableName":"h","Key":{"aid":{"N":"9"}}});
+  let missing_key = json!({"TableName":"h"});
+  let empty_batch = json!({"RequestItems":{}});
+
+  for (label, api, body) in [
+    ("aid が S 属性でない", "GetItem", number_aid),
+    ("Key がない", "GetItem", missing_key),
+    ("RequestItems が空", "BatchGetItem", empty_batch),
+  ] {
+    let checks = check_scope(&SIX_APIS, vec![(api, body)]);
+
+    assert!(
+      checks.errors.iter().any(|error| error.starts_with("request_scope")),
+      "{label}: {:?}",
+      checks.errors
+    );
+  }
+
+  let mut unbound = context(&layout, &[], None);
+  unbound.aid = None;
+  let checks = check(&scope(&SIX_APIS), &unphased(scoped_requests("Order-9")), &unbound);
+  assert!(
+    checks.errors.iter().any(|error| error.starts_with("request_scope")),
+    "集約の束縛がない: {:?}",
+    checks.errors
+  );
+}

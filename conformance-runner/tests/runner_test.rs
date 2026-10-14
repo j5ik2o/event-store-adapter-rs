@@ -756,7 +756,7 @@ fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory()
     .filter(|case| case.body.get("backends") == Some(&json!(["dynamodb"])) || matches!(case.kind, CaseKind::Layout))
     .map(|case| case.id.as_str())
     .collect();
-  assert_eq!(dynamodb_only.len(), 44, "DynamoDB だけが対象の場面 43 件と、配置 1 件");
+  assert_eq!(dynamodb_only.len(), 46, "DynamoDB だけが対象の場面 45 件と、配置 1 件");
 
   for id in dynamodb_only {
     let outcome = outcome_of(&reports, id);
@@ -765,17 +765,21 @@ fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory()
 }
 
 #[test]
-fn should_run_does_not_mark_any_case_as_not_targeted_on_dynamodb() {
+fn should_run_marks_only_memory_only_cases_as_not_targeted_on_dynamodb() {
   let data = real_data();
 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
-  let not_targeted: Vec<&str> = reports
+  let mut not_targeted: Vec<&str> = reports
     .iter()
     .filter(|report| is_backend_not_targeted(&report.outcome))
     .map(|report| report.id.as_str())
     .collect();
-  assert!(not_targeted.is_empty(), "{not_targeted:?}");
+  not_targeted.sort_unstable();
+  assert_eq!(
+    not_targeted,
+    vec!["memory-change-feed-unsupported", "memory-ttl-unsupported"]
+  );
 }
 
 #[test]
@@ -784,8 +788,8 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
 
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
-  // (passed, failed, not-applicable, unverified)。保持・通知の4件も実操作で成功する。
-  assert_eq!(counts(&reports), (58, 0, 58, 0));
+  // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーも実操作で成功する。
+  assert_eq!(counts(&reports), (59, 0, 61, 0));
 }
 
 #[test]
@@ -794,8 +798,90 @@ fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() 
 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
-  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。
-  assert_eq!(counts(&reports), (9, 0, 14, 93));
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 16 のうち 2 は、メモリだけが対象の場面。
+  assert_eq!(counts(&reports), (9, 0, 16, 95));
+}
+
+#[test]
+fn should_run_reports_new_memory_configuration_cases_on_memory() {
+  let data = real_data();
+
+  let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
+
+  assert_eq!(
+    outcome_of(&reports, "memory-ttl-unsupported"),
+    &CaseOutcome::Passed { values: None }
+  );
+  let change_feed = outcome_of(&reports, "memory-change-feed-unsupported");
+  assert!(
+    matches!(change_feed, CaseOutcome::NotApplicable {
+      reason: NotApplicableReason::Representation { representation: RepresentationGap::Unrepresentable, detail }
+    } if !detail.is_empty()),
+    "{change_feed:?}"
+  );
+}
+
+#[test]
+fn should_run_leaves_new_dynamodb_request_scope_cases_not_executed_on_dynamodb_and_not_targeted_on_memory() {
+  let data = real_data();
+  let on_memory = run(&data, &target_memory::TARGET, target_memory::run_case);
+  let on_dynamodb = run(&data, &target_dynamodb::TARGET, classification_executor);
+
+  for id in ["dynamodb-single-aggregate-delete", "dynamodb-single-aggregate-ttl"] {
+    assert!(is_backend_not_targeted(outcome_of(&on_memory, id)), "memory {id}");
+    assert!(is_not_executed(outcome_of(&on_dynamodb, id)), "dynamodb {id}");
+  }
+}
+
+fn change_feed_case(backends: &[&str], change_feed: Option<bool>) -> Case {
+  let mut body = scenario_body(backends);
+  if let Some(change_feed) = change_feed {
+    body["store"]["change_feed"] = json!(change_feed);
+  }
+  scenario(&["T-1"], body)
+}
+
+#[test]
+fn should_run_case_marks_a_case_requesting_the_change_feed_as_unrepresentable_on_every_backend() {
+  let case = change_feed_case(&["memory", "dynamodb"], Some(true));
+
+  for (target, _) in TARGETS {
+    let outcome = run_case(&case, target, &no_exclusions(), |_, _| {
+      panic!("表現不能のケースを保存先実行関数へ委譲しない")
+    });
+
+    assert!(
+      matches!(&outcome, CaseOutcome::NotApplicable {
+        reason: NotApplicableReason::Representation { representation: RepresentationGap::Unrepresentable, detail }
+      } if !detail.is_empty()),
+      "{}: {outcome:?}",
+      target.name
+    );
+  }
+}
+
+#[test]
+fn should_run_case_executes_a_case_with_change_feed_false_or_omitted() {
+  for change_feed in [Some(false), None] {
+    let case = change_feed_case(&["memory", "dynamodb"], change_feed);
+
+    for (target, _) in TARGETS {
+      let calls = Cell::new(0);
+
+      let outcome = run_case(&case, target, &no_exclusions(), |_, _| {
+        calls.set(calls.get() + 1);
+        CaseOutcome::Passed { values: None }
+      });
+
+      assert_eq!(calls.get(), 1, "{} {change_feed:?}", target.name);
+      assert_eq!(
+        outcome,
+        CaseOutcome::Passed { values: None },
+        "{} {change_feed:?}",
+        target.name
+      );
+    }
+  }
 }
 
 // buildAid の 9 件が両保存先で成功する。

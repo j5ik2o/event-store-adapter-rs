@@ -189,6 +189,41 @@ fn should_required_retention_cases_pass_real_operations() {
   }
 }
 
+#[test]
+fn should_memory_report_ttl_store_creation_as_configuration_error_and_pass() {
+  let case = retention_case("memory-ttl-unsupported");
+  let mut observations = Vec::new();
+
+  let outcome = target_memory::run_case_observed(
+    &case,
+    event_store_adapter_conformance_rs::runner::prepare(&case).unwrap(),
+    &mut observations,
+  );
+
+  assert_eq!(outcome, CaseOutcome::Passed { values: None });
+  let initialization = observations.iter().find(|v| v["operation"] == 0).unwrap();
+  assert_eq!(initialization["actual"]["category"], "configuration");
+}
+
+#[test]
+fn should_memory_fail_when_store_creation_succeeds_instead_of_the_expected_configuration_error() {
+  let mut case = retention_case("memory-ttl-unsupported");
+  case.body["store"] = json!({"retention_count":1,"retention_mode":"delete"});
+
+  let outcome = execute(&case);
+
+  assert!(
+    matches!(
+      outcome,
+      CaseOutcome::Failed {
+        failed_operation: Some(0),
+        ..
+      }
+    ),
+    "{outcome:?}"
+  );
+}
+
 fn retention_case(id: &str) -> Case {
   load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance"))
     .unwrap()

@@ -8,7 +8,7 @@
   - 保存先: `src/memory/`（`EventStoreForMemory`・`MemoryStorage`。常に使えます）と `src/dynamodb/`（`EventStoreForDynamoDB`・`DynamoDbTables`・`DynamoDbOptions`。feature `dynamodb` のときだけ公開）です。
   - 共通のモジュール: `aggregate_id`・`event_envelope`・`event_store`・`error`・`seq_nr`・`serializer`・`retention`、非公開の `generic_event_store`・`storage_backend` です。
   - 移行: `src/migration/`（feature `migration` のときだけ公開）です。
-- `conformance/`: 共通契約と DynamoDB プロファイルの期待値を配る適合テストデータ（データの版は 1.0.0）です。`python3 tools/conformance/manifest.py verify` で整合を確かめます。
+- `conformance/`: 共通契約と DynamoDB プロファイルの期待値を配る適合テストデータ（データの版は 1.1.0）です。`python3 tools/conformance/manifest.py verify` で整合を確かめます。
 - `conformance-runner/`: 適合テストデータを実行する実行器です。パッケージ名は `event-store-adapter-conformance-rs` で、公開しません。引数は `--backend memory|dynamodb --data <パス> --report <パス> [--require-all]` です。実際の DynamoDB に対して実行するには feature `dynamodb` が要ります。付けないと、DynamoDB のケースは未検証として報告されます。
 - `migration-cli/`: v3 から 5.x への移行の実行ファイルです。パッケージ名は `event-store-adapter-migration-rs` で、公開しません。移行関数 `migrate_v3_dynamodb` を呼ぶ薄い実行ファイルです。使い方は `docs/MIGRATION_GUIDE_v5.md` にあります。
 - `test-utils/`: パッケージ名は `event-store-adapter-test-utils-rs` です。`docker::dynamodb_local()` が、digest で固定した DynamoDB Local 3.3.1 を testcontainers で起動します。`dynamodb::create_dynamodb_local_client` はダミーの region と資格情報を明示したクライアントを返し、`dynamodb::create_tables` が journal・snapshot・head の 3 テーブルを作ります。
