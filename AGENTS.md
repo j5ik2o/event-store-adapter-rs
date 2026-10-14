@@ -17,12 +17,12 @@
 - `tools/`: `conformance/manifest.py`（適合テストデータの整合の確認）と、観測基盤のサンプル設定ファイルがあります。ビルドとテストでは使いません。
 
 ## ビルド・テスト・開発コマンド
-ツールチェーンは固定しません。CI は stable を使います（整形だけ nightly）。
+ツールチェーンは固定しません。CI は stable を使います（整形と、公開 API の形の照合だけ nightly）。公開 API の形の照合（`api-surface/`）は、日付を固定した nightly で rustdoc の JSON を作るので、`rustup toolchain install nightly-2026-09-27 --profile minimal` で入れておきます。
 
 - ビルド: `cargo build --workspace --all-targets --all-features`
 - Docker なしでメモリの保存先だけを確かめる: `cargo test -p event-store-adapter-rs --no-default-features`
 - ライブラリの全テスト（DynamoDB の試験を含む。Docker が必要）: `cargo test -p event-store-adapter-rs --all-features`
-- workspace 全体のテスト（Docker が必要）: `cargo test --workspace --all-features`
+- workspace 全体のテスト（Docker と固定日の nightly が必要）: `cargo test --workspace --all-features`
 - 特定の保存先に絞るときは、テスト名で絞ります。例: `cargo test -p event-store-adapter-rs --all-features dynamodb`
 - 静的解析: `cargo clippy --workspace --all-targets --all-features -- -D warnings`
 - 整形: `cargo +nightly fmt --all`（確認は `cargo +nightly fmt --all -- --check`）。nightly がなければ `rustup install nightly` を実行します。

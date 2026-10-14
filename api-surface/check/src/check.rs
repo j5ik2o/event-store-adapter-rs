@@ -9,7 +9,7 @@ use std::fmt;
 use rustdoc_types::{Crate, Function, GenericBound, Generics, Id, Impl, Item, ItemEnum, Type, WherePredicate};
 
 use crate::mapping::{ConstructorMapping, Mapping, TypeMapping};
-use crate::render::{render_bound, render_type, unwrap_async_output};
+use crate::render::{async_output_is_send, render_bound, render_type, unwrap_async_output};
 use crate::surface::{Surface, SurfaceElement, SurfaceOperation, SurfaceType, TypeExpr};
 
 /// 照合で見つけたずれ 1 件。`path` はずれた要素の場所、`message` は期待する形と実際の形。
@@ -953,6 +953,14 @@ impl<'a> Checker<'a> {
       );
       return;
     };
+    if !async_output_is_send(self.krate, output) {
+      self.report(
+        path.clone(),
+        format!(
+          "{store_name}::{method} returns a future without Send (want #[async_trait], not #[async_trait(?Send)])"
+        ),
+      );
+    }
     let actual_output = render_type(self.krate, awaited);
     if actual_output != want_output {
       self.report(

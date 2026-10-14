@@ -170,6 +170,22 @@ pub fn unwrap_async_output<'a>(krate: &Crate, ty: &'a Type) -> Option<&'a Type> 
   })
 }
 
+/// `#[async_trait]` が書き換えた戻り値の `dyn Future` が `Send` を持つか。`#[async_trait(?Send)]` なら持たない。
+pub fn async_output_is_send(krate: &Crate, ty: &Type) -> bool {
+  let Some(boxed) =
+    single_type_argument(krate, ty, "Pin").and_then(|pinned| single_type_argument(krate, pinned, "Box"))
+  else {
+    return false;
+  };
+  let Type::DynTrait(dyn_trait) = boxed else {
+    return false;
+  };
+  dyn_trait
+    .traits
+    .iter()
+    .any(|poly_trait| path_name(krate, &poly_trait.trait_) == "Send")
+}
+
 /// 名前が `expected_name` のパスで、型の引数が 1 つのとき、その型の引数を返す。
 fn single_type_argument<'a>(krate: &Crate, ty: &'a Type, expected_name: &str) -> Option<&'a Type> {
   let Type::ResolvedPath(path) = ty else {

@@ -193,6 +193,31 @@ fn should_report_data_type_parameter_bound_that_the_surface_does_not_allow() {
   );
 }
 
+#[test]
+fn should_report_store_futures_without_send() {
+  let problems = check_fixture("store_future_not_send");
+
+  let paths: Vec<&str> = problems.iter().map(|problem| problem.path.as_str()).collect();
+  assert_eq!(
+    paths,
+    vec![
+      "store.persist_event",
+      "store.persist_event_and_snapshot",
+      "store.get_latest_snapshot_by_id",
+      "store.get_events_by_id_since_seq_nr",
+    ],
+    "4 つの操作だけを報告する。実際の報告:\n{}",
+    describe(&problems)
+  );
+  assert!(
+    problems
+      .iter()
+      .all(|problem| problem.message.contains("returns a future without Send")),
+    "Send がないことを報告する。実際の報告:\n{}",
+    describe(&problems)
+  );
+}
+
 // ---- 対応表にない項目は飛ばさずに報告する ----
 
 #[test]

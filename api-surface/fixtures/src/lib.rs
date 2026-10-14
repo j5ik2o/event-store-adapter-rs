@@ -442,3 +442,36 @@ pub mod snapshot_read_clone_bound {
     }
   }
 }
+
+/// `EventStore` を `#[async_trait(?Send)]` にした。操作の戻り値の `Future` が `Send` を持たない。
+pub mod store_future_not_send {
+  use async_trait::async_trait;
+
+  pub use super::baseline::{AggregateId, EventEnvelope, EventStoreError, SeqNr, SnapshotEnvelope, SnapshotRead};
+
+  #[async_trait(?Send)]
+  pub trait EventStore: Send + Sync + 'static {
+    type AID: AggregateId;
+    type A: Send + Sync + 'static;
+    type P: Send + Sync + 'static;
+
+    async fn persist_event(&self, event: EventEnvelope<Self::AID, Self::P>) -> Result<(), EventStoreError>;
+
+    async fn persist_event_and_snapshot(
+      &self,
+      event: EventEnvelope<Self::AID, Self::P>,
+      snapshot: SnapshotEnvelope<Self::A>,
+    ) -> Result<(), EventStoreError>;
+
+    async fn get_latest_snapshot_by_id(
+      &self,
+      aid: &Self::AID,
+    ) -> Result<Option<SnapshotRead<Self::A>>, EventStoreError>;
+
+    async fn get_events_by_id_since_seq_nr(
+      &self,
+      aid: &Self::AID,
+      seq_nr: SeqNr,
+    ) -> Result<Vec<EventEnvelope<Self::AID, Self::P>>, EventStoreError>;
+  }
+}

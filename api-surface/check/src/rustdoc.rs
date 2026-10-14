@@ -8,6 +8,7 @@ use rustdoc_types::{Crate, FORMAT_VERSION};
 /// rustdoc の JSON を作る nightly。`rustdoc-types` の版と組になるので、上げるときは一緒に上げる。
 ///
 /// 3 か所を一緒に変える: この定数、`.github/workflows/ci.yml` の `api-surface` ジョブ、`api-surface/check/Cargo.toml` の `rustdoc-types` の版。
+/// 導入の案内（`AGENTS.md`・`README.md`・`README.ja.md`・`api-surface/README.md`）の日付も直す。
 /// `nightly-2026-09-27` は rustdoc の JSON の形式の版 61、`rustdoc-types` 0.61.0 と組になる。
 pub const TOOLCHAIN: &str = "nightly-2026-09-27";
 
@@ -26,6 +27,7 @@ pub fn document_library(workspace_root: &Path, package: &str, target_dir: &Path)
       "-p",
       package,
       "--lib",
+      "--no-default-features",
       "--manifest-path",
     ])
     .arg(&manifest)
