@@ -657,6 +657,10 @@ fn request_scope(expected: &Value, report: &OperationReport, context: &RequestCo
     "aggregate_id" => context.aid.ok_or("集約の束縛がない")?,
     other => return Err(format!("未知のaid指定: {other}")),
   };
+  // 各操作は DynamoDB に少なくとも 1 件の要求を送る。0 件なら記録の接続か操作番号の対応が壊れている。
+  if report.requests.is_empty() {
+    return Err("操作の間に記録した要求がない".to_string());
+  }
   let mut violations = Vec::new();
   for (index, request) in report.requests.iter().enumerate() {
     let api = request.api.as_str();

@@ -317,6 +317,13 @@ fn should_check_request_scope_passes_query_whose_key_condition_equals_the_operat
 }
 
 #[test]
+fn should_check_request_scope_fails_an_operation_without_any_recorded_request() {
+  let checks = check_scope(&SIX_APIS, vec![]);
+
+  assert_scope_failed(&checks, &["記録した要求がない"]);
+}
+
+#[test]
 fn should_check_request_scope_fails_scan_that_the_declaration_does_not_allow() {
   let mut requests = scoped_requests("Order-9");
   requests.push(("Scan", json!({"TableName":"j"})));
