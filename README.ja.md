@@ -102,6 +102,14 @@ async fn main() -> Result<(), EventStoreError> {
 
 3 つの表は同じリージョンに置き、書き込みもそのリージョンからだけ行ってください。グローバルテーブル（複数リージョンのレプリカ）は範囲外です。
 
+このクレートは `aws-sdk-dynamodb` の既定の機能を外し、`default-https-client` と `rt-tokio` だけを有効にしています。そのため、SDK の古い通信部品（hyper 0.14 と rustls 0.21）を引き込みません。Cargo はビルドに含まれるすべてのクレートが求める機能を合わせて有効にするので、利用する側の `aws-sdk-dynamodb` の依存が既定の機能のままだと、既定の `rustls` によって古い通信部品がまた有効になります。外すには、SDK を同じ形で指定してください。
+
+```toml
+aws-sdk-dynamodb = { version = "1.68.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
+```
+
+古い通信部品が外れていれば、`cargo tree -i rustls@0.21` は該当するパッケージがないと報告します。
+
 SDK Clientにはretry sleeperが必要です。実行可能な[user-account例](examples/user-account/src/main.rs)はTokioの待機処理を設定し、DynamoDB Localを起動して表を作成し、新しい`open`を呼びます。[repository](examples/user-account/src/user_account_repository.rs)はイベント書込、イベントとsnapshotの書込、snapshot読取、イベント再生を実行します。snapshotなしの作成、headと同じsnapshot、その後のイベントからの復元を確認します。
 
 ```sh
