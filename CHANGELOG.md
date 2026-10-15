@@ -2,8 +2,9 @@
 
 This file is no longer updated. From 5.0.2 on, the record of changes is the
 release notes on [GitHub Releases](https://github.com/j5ik2o/event-store-adapter-rs/releases),
-which the version bump workflow generates from the Conventional Commits titles of
-the merged pull requests.
+which the version bump workflow generates from the Conventional Commits subjects
+of the commits on `main` since the previous release. Pull requests are merged by
+squash only, so each subject is the title given to a pull request at merge.
 
 The entries below cover releases up to 5.0.1. They follow
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this project adheres
