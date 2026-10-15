@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [5.0.2] - 2026-10-15
+
+### Security
+
+- DynamoDB: the `aws-sdk-dynamodb` dependency no longer enables its default
+  `rustls` feature, which pulled in the legacy HTTP client (hyper 0.14 with
+  rustls 0.21). Only `default-https-client` and `rt-tokio` are enabled now, so
+  this crate no longer brings rustls 0.21 (RUSTSEC-2026-0346, RUSTSEC-2026-0349),
+  rustls-webpki 0.101 (RUSTSEC-2026-0098, RUSTSEC-2026-0099, RUSTSEC-2026-0104),
+  or h2 0.3 (RUSTSEC-2026-0258) into your build. If your own `aws-sdk-dynamodb`
+  dependency keeps its default features, Cargo still enables the legacy client;
+  set `default-features = false` and enable `default-https-client` and `rt-tokio`
+  there to drop it. The minimum `aws-sdk-dynamodb` version is now 1.68.0, the
+  first release with `default-https-client`. The public API is unchanged.
+
 ## [5.0.1] - 2026-10-13
 
 ### Fixed
