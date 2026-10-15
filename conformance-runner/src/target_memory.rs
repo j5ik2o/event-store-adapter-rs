@@ -1,19 +1,24 @@
 //! 新契約メモリの公開操作を実行し、保存後の封筒と障害消費を検証する。
 
+mod stores;
+
 use std::sync::{Arc, Mutex};
 
 use event_store_adapter_rs::{
   aggregate_id::AidString,
   error::{EventStoreError, SerializationPhase, StorageOperation},
-  memory::{EventStoreForMemory, MemoryStorage, MemoryTestHooks},
+  memory::{MemoryStorage, MemoryTestHooks},
   retention::RetentionSettings,
   serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer},
 };
 use serde_json::{json, Value};
+use stores::{LibraryStores, PayloadHandle, StoreFactory, Stores};
 use tracing::Instrument;
 
 use crate::{
-  case::{compare_result, failed, required, run_value, seq, settings, step, unverified, CaseId, ComparisonFailure},
+  case::{
+    compare_result, failed, required, run_value, seq, settings, step, string, unverified, CaseId, ComparisonFailure,
+  },
   compare::json_equal,
   data::{Case, CaseKind},
   fault::{FaultKind, Injection, OperationFaults, Phase},
@@ -30,8 +35,6 @@ pub const TARGET: Target = Target {
   capabilities: &[],
   has_layout: false,
 };
-
-type Store = EventStoreForMemory<CaseId, Value, Value>;
 
 #[derive(Debug)]
 struct Callbacks {
@@ -161,15 +164,17 @@ fn visible_history(details: &Value, history: &[u64], just_written: Option<u64>) 
   Ok(visible)
 }
 
-impl EventSerializer<Value> for Callbacks {
-  fn serialize(&self, payload: &Value) -> Result<Vec<u8>, EventStoreError> {
+impl EventSerializer<PayloadHandle> for Callbacks {
+  fn serialize(&self, payload: &PayloadHandle) -> Result<Vec<u8>, EventStoreError> {
     self.inject(Phase::SerializeEvent)?;
-    JsonEventSerializer::new().serialize(payload)
+    JsonEventSerializer::<Value>::new().serialize(&payload.value())
   }
 
-  fn deserialize(&self, data: &[u8]) -> Result<Value, EventStoreError> {
+  fn deserialize(&self, data: &[u8]) -> Result<PayloadHandle, EventStoreError> {
     self.inject(Phase::DeserializeEvent)?;
-    JsonEventSerializer::new().deserialize(data)
+    JsonEventSerializer::<Value>::new()
+      .deserialize(data)
+      .map(PayloadHandle::new)
   }
 }
 
@@ -247,6 +252,16 @@ pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
 
 /// 同じ実行経路の公開結果・障害計数・保持履歴と通知を操作単位で保存する。
 pub fn run_case_observed(case: &Case, prepared: PreparedCase, observations: &mut Vec<Value>) -> CaseOutcome {
+  run_with(case, prepared, observations, &LibraryStores)
+}
+
+/// 保存先とストアの作り方を `factory` で差し替えて、場面を実行する。
+fn run_with<F: StoreFactory>(
+  case: &Case,
+  prepared: PreparedCase,
+  observations: &mut Vec<Value>,
+  factory: &F,
+) -> CaseOutcome {
   let body = &prepared.body;
   for fault in prepared.faults.faults() {
     let supported = match fault.phase {
@@ -281,7 +296,7 @@ pub fn run_case_observed(case: &Case, prepared: PreparedCase, observations: &mut
     Ok(v) => v,
     Err(e) => return failed(Some(0), e),
   };
-  let storage = MemoryStorage::new_with_hooks(settings, callbacks.clone());
+  let storage = factory.create_storage(settings.clone(), callbacks.clone());
   let faults = std::mem::replace(
     &mut *callbacks.faults.lock().expect("障害消費のロック"),
     prepared.faults.begin_operation(0),
@@ -322,14 +337,21 @@ pub fn run_case_observed(case: &Case, prepared: PreparedCase, observations: &mut
       return failed(Some(0), e);
     }
   }
-  let store = Store::with_serializers(storage.clone(), callbacks.clone(), callbacks.clone());
+  let mut stores = Stores::new(
+    factory,
+    settings,
+    callbacks.clone(),
+    callbacks.clone(),
+    callbacks.clone(),
+    storage,
+  );
   let runtime = match tokio::runtime::Builder::new_current_thread().build() {
     Ok(runtime) => runtime,
     Err(e) => return failed(None, e.to_string()),
   };
   if matches!(case.kind, CaseKind::ValueTable) {
     let mut actual = Vec::new();
-    let result = runtime.block_on(run_value(case, &store, &mut actual));
+    let result = runtime.block_on(run_value(case, &stores.primary().store, &mut actual));
     observations.push(
       json!({"operation":1,"actual":actual,"expect":body["expect"],"failure":result.as_ref().err().map(|v| &v.detail)}),
     );
@@ -347,11 +369,12 @@ pub fn run_case_observed(case: &Case, prepared: PreparedCase, observations: &mut
       Err(e) => return failed(None, e.to_string()),
     };
     *callbacks.faults.lock().expect("障害消費のロック") = prepared.faults.begin_operation(operation);
+    stores.begin(operation);
     let notifications = match OperationNotifications::begin(&case.id, operation) {
       Ok(notifications) => notifications,
       Err(error) => return unverified(&error),
     };
-    let result = runtime.block_on(step(&store, body, input).instrument(notifications.span()));
+    let result = execute_step(&mut stores, &runtime, body, input, notifications.span());
     let notifications = notifications.finish();
     let faults = std::mem::replace(
       &mut *callbacks.faults.lock().expect("障害消費のロック"),
@@ -365,7 +388,7 @@ pub fn run_case_observed(case: &Case, prepared: PreparedCase, observations: &mut
     };
     let observed = crate::case::operation_context(body, input)
       .map_err(ComparisonFailure::from)
-      .and_then(|(id, _)| observe(&storage, input, id.as_ref(), &notifications));
+      .and_then(|(id, _)| observe(&stores.select(input)?.storage, input, id.as_ref(), &notifications));
     observations.push(json!({"operation":operation,"actual":actual,"expect":input["expect"],"observe":input.get("observe"),
       "observed":match &observed {Ok(v)=>Some(v.clone()),Err(e)=>e.actual.clone()},"observation_error":observed.as_ref().err().map(|v| &v.detail),
       "notifications":notifications,"fault_applications":applications,"unfired_faults":fault_result.as_ref().err()}));
@@ -395,3 +418,47 @@ pub fn run_case_observed(case: &Case, prepared: PreparedCase, observations: &mut
   }
   CaseOutcome::Passed { values: None }
 }
+
+/// 1 つの操作を、`store` が指すストアか、ストアの表そのものに対して実行し、期待値と比べる。
+///
+/// データの誤り（生成前のストア名、予約名の再利用、ペイロードにない位置など）は、期待値を載せた比較の失敗にする。
+fn execute_step<F: StoreFactory>(
+  stores: &mut Stores<'_, F>,
+  runtime: &tokio::runtime::Runtime,
+  body: &Value,
+  input: &Value,
+  span: tracing::Span,
+) -> Result<Value, ComparisonFailure> {
+  let expect = required(input, "expect")?;
+  let data_error = |detail: String| ComparisonFailure {
+    detail,
+    expected: Some(expect.clone()),
+    actual: None,
+  };
+  match string(required(input, "op")?)? {
+    "createStore" => {
+      let created = stores.create(required(input, "arguments")?).map_err(data_error)?;
+      compare_result(expect, created.map(|()| json!({"result":"success"})))
+    }
+    "mutateWrittenPayload" => {
+      stores
+        .mutate_written(required(input, "arguments")?)
+        .map_err(data_error)?;
+      compare_result(expect, Ok(json!({"result":"success"})))
+    }
+    "mutateReadPayload" => {
+      stores
+        .mutate_read(body, required(input, "arguments")?)
+        .map_err(data_error)?;
+      compare_result(expect, Ok(json!({"result":"success"})))
+    }
+    _ => {
+      let named = stores.select(input).map_err(data_error)?;
+      runtime.block_on(step(&named.store, body, input).instrument(span))
+    }
+  }
+}
+
+#[cfg(test)]
+#[path = "target_memory_test.rs"]
+mod tests;
