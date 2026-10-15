@@ -14,7 +14,7 @@ use event_store_adapter_conformance_rs::runner::run;
 use event_store_adapter_conformance_rs::target_memory;
 use serde_json::{json, Value};
 
-const FIXED_MANIFEST_SHA256: &str = "0e4dfe44dec0a912ed9d6b28f0634af9fd0dc840895734790e87cf96772e1d50";
+const FIXED_MANIFEST_SHA256: &str = "432241f3a9e45fc169b3fcdead480b505832af1eed9f4f48357210daccce84eb";
 
 fn conformance_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")
@@ -22,8 +22,8 @@ fn conformance_dir() -> PathBuf {
 
 fn data_set(problems: Vec<ManifestProblem>, required: &[&str], exclusions: Vec<CoverageExclusion>) -> DataSet {
   DataSet {
-    manifest_version: Some("1.1.0".to_string()),
-    manifest_files: 24,
+    manifest_version: Some("1.2.0".to_string()),
+    manifest_files: 26,
     manifest_sha256: FIXED_MANIFEST_SHA256.to_string(),
     manifest: ManifestVerification { problems },
     coverage: Coverage {
@@ -133,7 +133,7 @@ fn should_report_exposes_data_version_and_manifest_verification_result() {
 
   let json = to_json(&report);
 
-  assert_eq!(json["data"]["version"], "1.1.0");
+  assert_eq!(json["data"]["version"], "1.2.0");
   assert_eq!(json["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(json["data"]["manifest"]["verification"], "passed");
 }
@@ -434,7 +434,7 @@ fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_cas
       passed + failed + not_applicable + unverified
     })
     .sum();
-  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 120);
+  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 124);
   assert_eq!(
     counted as usize, memberships,
     "複数の規則を持つケースを、最初の規則だけで数えない"
@@ -466,6 +466,19 @@ fn should_report_of_real_data_counts_the_new_request_scope_and_memory_configurat
   assert_eq!(counts_of(rule_row(&json, "MEM-3")), (1, 0, 1, 0));
   assert_eq!(counts_of(rule_row(&json, "MEM-12")), (1, 0, 0, 0));
   assert_eq!(counts_of(rule_row(&json, "MEM-13")), (0, 0, 1, 0));
+}
+
+#[test]
+fn should_report_of_real_data_counts_the_memory_store_and_payload_isolation_rules_as_passed() {
+  let data = load(&conformance_dir()).expect("実データを読める");
+  let case_reports = run(&data, &target_memory::TARGET, target_memory::run_case);
+
+  let report = Report::build(&data, "memory", case_reports, implementation());
+
+  let json = to_json(&report);
+  // (passed, failed, not-applicable, unverified)。2 つ目のストア（MEM-2）とペイロードの隔離（MEM-6）は、各 2 件がメモリで成功する。
+  assert_eq!(counts_of(rule_row(&json, "MEM-2")), (2, 0, 0, 0));
+  assert_eq!(counts_of(rule_row(&json, "MEM-6")), (2, 0, 0, 0));
 }
 
 #[test]

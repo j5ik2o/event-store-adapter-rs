@@ -190,6 +190,25 @@ fn should_required_retention_cases_pass_real_operations() {
 }
 
 #[test]
+fn should_required_store_and_payload_cases_pass_real_operations() {
+  let data = load(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")).unwrap();
+  let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
+  const REQUIRED_MEMORY_STORE_AND_PAYLOAD_CASES: &[&str] = &[
+    "memory-store-new-independent",
+    "memory-store-shared",
+    "memory-payload-written-mutation",
+    "memory-payload-read-mutation",
+  ];
+  for &id in REQUIRED_MEMORY_STORE_AND_PAYLOAD_CASES {
+    let report = reports
+      .iter()
+      .find(|report| report.id == id)
+      .expect("必須の 2 つ目のストアとペイロードの隔離のケースが存在する");
+    assert_eq!(report.outcome, CaseOutcome::Passed { values: None }, "{id}");
+  }
+}
+
+#[test]
 fn should_memory_report_ttl_store_creation_as_configuration_error_and_pass() {
   let case = retention_case("memory-ttl-unsupported");
   let mut observations = Vec::new();

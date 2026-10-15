@@ -13,7 +13,7 @@ use crate::number::to_integer;
 use crate::schema::{schema_format, SchemaError, SchemaSet};
 
 /// 実行器が読めるデータの版を表す。
-pub const DATA_VERSION: &str = "1.1.0";
+pub const DATA_VERSION: &str = "1.2.0";
 
 /// JSON として読めない入力の理由を表す。
 #[derive(Debug, thiserror::Error)]

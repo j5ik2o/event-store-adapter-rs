@@ -778,7 +778,14 @@ fn should_run_marks_only_memory_only_cases_as_not_targeted_on_dynamodb() {
   not_targeted.sort_unstable();
   assert_eq!(
     not_targeted,
-    vec!["memory-change-feed-unsupported", "memory-ttl-unsupported"]
+    vec![
+      "memory-change-feed-unsupported",
+      "memory-payload-read-mutation",
+      "memory-payload-written-mutation",
+      "memory-store-new-independent",
+      "memory-store-shared",
+      "memory-ttl-unsupported"
+    ]
   );
 }
 
@@ -788,8 +795,9 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
 
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
-  // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーも実操作で成功する。
-  assert_eq!(counts(&reports), (59, 0, 61, 0));
+  // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーに加え、
+  // 2 つ目のストアの 2 件とペイロードの隔離の 2 件も実操作で成功する。
+  assert_eq!(counts(&reports), (63, 0, 61, 0));
 }
 
 #[test]
@@ -798,8 +806,8 @@ fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() 
 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
-  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 16 のうち 2 は、メモリだけが対象の場面。
-  assert_eq!(counts(&reports), (9, 0, 16, 95));
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 20 のうち 6 は、メモリだけが対象の場面。
+  assert_eq!(counts(&reports), (9, 0, 20, 95));
 }
 
 #[test]
