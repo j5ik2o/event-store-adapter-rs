@@ -102,6 +102,14 @@ Enable `features = ["dynamodb"]`. Provision three distinct tables and the snapsh
 
 Keep the three tables in one Region and write to them only from that Region. Global tables (multi-Region replicas) are not supported.
 
+This crate depends on `aws-sdk-dynamodb` without its default features and enables only `default-https-client` and `rt-tokio`, so it does not bring in the SDK's legacy HTTP client (hyper 0.14 with rustls 0.21). Cargo merges the features that every crate in a build requests, so if your own `aws-sdk-dynamodb` dependency keeps its default features, the `rustls` default turns the legacy client back on. To keep it out, declare the SDK the same way:
+
+```toml
+aws-sdk-dynamodb = { version = "1.68.0", default-features = false, features = ["default-https-client", "rt-tokio"] }
+```
+
+`cargo tree -i rustls@0.21` reports that no package matches when the legacy client is gone.
+
 The SDK client must have a retry sleeper. The runnable [user-account example](examples/user-account/src/main.rs) installs a Tokio sleeper, starts DynamoDB Local, creates the tables, and calls the new `open`. Its [repository](examples/user-account/src/user_account_repository.rs) writes an event, writes an event plus snapshot, reads snapshots, and replays events. It verifies creation without a snapshot, a snapshot at the head, and later events after the snapshot:
 
 ```sh
