@@ -32,7 +32,7 @@ fn shipped_schemas() -> SchemaSet {
 }
 
 fn valid_coverage() -> Value {
-  json!({"format": "coverage", "version": "1.2.0", "required_rules": ["T-1"], "exclusions": [], "notes": []})
+  json!({"format": "coverage", "version": "1.3.0", "required_rules": ["T-1"], "exclusions": [], "notes": []})
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +51,15 @@ fn should_schema_format_maps_each_kind_of_data_file_to_its_schema() {
     ("memory/configuration.json", Some("scenarios")),
     ("memory/stores.json", Some("scenarios")),
     ("memory/payload-isolation.json", Some("scenarios")),
+    ("sqlite/configuration.json", Some("scenarios")),
+    ("sqlite/write-lock.json", Some("scenarios")),
+    ("spanner/configuration.json", Some("scenarios")),
+    ("spanner/commit.json", Some("scenarios")),
+    ("bigtable/configuration.json", Some("scenarios")),
+    ("bigtable/envelope-limit.json", Some("scenarios")),
+    ("bigtable/journal-write.json", Some("scenarios")),
+    ("scenarios/stores/shared.json", Some("scenarios")),
+    ("values/bigtable-envelope.json", Some("values")),
     ("manifest.json", None),
     ("schema/coverage.schema.json", None),
     (".gitattributes", None),
@@ -166,7 +175,7 @@ fn should_schema_set_treats_a_whole_number_with_a_zero_fraction_as_an_integer() 
   let schemas = shipped_schemas();
   let values = |seq_nr: &str| {
     serde_json::from_str::<Value>(&format!(
-      r#"{{"format":"values","version":"1.2.0","cases":[{{
+      r#"{{"format":"values","version":"1.3.0","cases":[{{
         "id":"synthetic","rules":["T-1"],"description":"d","operation":"validateSeqNr",
         "input":{{"seq_nr":{seq_nr},"context":"value"}},"expect":{{"value":1}}
       }}]}}"#

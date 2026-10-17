@@ -10,7 +10,8 @@ use crate::report::{CaseOutcome, CaseReport, NotApplicableReason, Representation
 /// 実行する保存先を、ケースの分類に必要な値だけで表す。
 ///
 /// 保存先ごとの差は `target_*` に閉じる。入口（`main.rs`）が `target_*` の定数から選んで渡すので、
-/// このモジュールは保存先の種類を知らない。
+/// このモジュールは、実行する保存先の種類では分岐しない。この言語が提供する保存先の一覧
+/// （[`PROVIDED_BACKENDS`]）は、対象でないケースの理由（提供しない／今回の保存先でない）の選択にだけ使う。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Target {
   /// 報告と引数で使う保存先の名前。ケースの `backends` の要素と比べる。
@@ -30,6 +31,29 @@ pub struct PreparedCase {
 /// 入口が選ぶ保存先のケース実行関数を表す。
 pub type CaseExecutor = fn(&Case, PreparedCase) -> CaseOutcome;
 
+/// この言語が提供する保存先。
+pub const PROVIDED_BACKENDS: [&str; 2] = ["memory", "dynamodb"];
+
+/// 特定の保存先に属する値の表の操作と、その保存先。
+const VALUE_OPERATION_BACKENDS: [(&str, &str); 3] = [
+  ("encodeBigtableEventEnvelope", "bigtable"),
+  ("encodeBigtableSnapshotEnvelope", "bigtable"),
+  ("decodeBigtableEnvelope", "bigtable"),
+];
+
+/// 実行器が解釈する `store` の設定。
+const KNOWN_STORE_SETTINGS: [&str; 6] = [
+  "retention_count",
+  "retention_mode",
+  "ttl_grace_seconds",
+  "layout_version",
+  "retry_limit",
+  "change_feed",
+];
+
+/// 実行器が解釈する `seed` の項目。
+const KNOWN_SEED_ITEMS: [&str; 1] = ["items"];
+
 /// ケースの本体を複製し、generators を展開して障害を登録する。誤りは、その説明を返す。
 pub fn prepare(case: &Case) -> Result<PreparedCase, String> {
   let mut body = case.body.clone();
@@ -40,6 +64,47 @@ pub fn prepare(case: &Case) -> Result<PreparedCase, String> {
 
 fn not_applicable(reason: NotApplicableReason) -> CaseOutcome {
   CaseOutcome::NotApplicable { reason }
+}
+
+/// ケースが対象とする保存先を返す。場面は `backends`、値の表は操作が属する保存先。
+///
+/// どの保存先でも実行する値の表と、配置のケースは `None` を返す。
+fn declared_backends(case: &Case) -> Option<Vec<&str>> {
+  match case.kind {
+    CaseKind::Layout => None,
+    CaseKind::Scenario => Some(
+      case
+        .body
+        .get("backends")
+        .and_then(Value::as_array)
+        .map(|backends| backends.iter().filter_map(Value::as_str).collect())
+        .unwrap_or_default(),
+    ),
+    CaseKind::ValueTable => {
+      let operation = case.body.get("operation").and_then(Value::as_str)?;
+      VALUE_OPERATION_BACKENDS
+        .iter()
+        .find(|(name, _)| *name == operation)
+        .map(|(_, backend)| vec![*backend])
+    }
+  }
+}
+
+/// `store`・`seed` のうち、実行器が知らない項目を `store.<名前>`・`seed.<名前>` の形で返す。
+fn unknown_elements(body: &Value) -> Vec<String> {
+  let unknown_in = |section: &str, known: &[&str]| -> Vec<String> {
+    body
+      .get(section)
+      .and_then(Value::as_object)
+      .into_iter()
+      .flat_map(|items| items.keys())
+      .filter(|key| !known.contains(&key.as_str()))
+      .map(|key| format!("{section}.{key}"))
+      .collect()
+  };
+  let mut unknown = unknown_in("store", &KNOWN_STORE_SETTINGS);
+  unknown.extend(unknown_in("seed", &KNOWN_SEED_ITEMS));
+  unknown
 }
 
 fn targets_backend(case: &Case, target: &Target) -> bool {
@@ -64,7 +129,29 @@ fn targets_backend(case: &Case, target: &Target) -> bool {
         });
       listed && provided
     }
-    CaseKind::ValueTable => true,
+    CaseKind::ValueTable => declared_backends(case).is_none_or(|backends| backends.contains(&target.name)),
+  }
+}
+
+/// 実行する保存先が対象にしないケースの理由を選ぶ。
+///
+/// ケースの対象の保存先が、実行する保存先も、この言語が提供する保存先も含まないときだけ「提供しない」にする。
+/// 実行する保存先が `backends` にあるのに対象でないのは、能力（`requires`）が足りないためなので、
+/// 「提供しない」にしない。
+fn not_targeted_reason(case: &Case, target: &Target) -> NotApplicableReason {
+  if let Some(backends) = declared_backends(case) {
+    let provides_any = backends.iter().any(|backend| PROVIDED_BACKENDS.contains(backend));
+    if !backends.is_empty() && !backends.contains(&target.name) && !provides_any {
+      return NotApplicableReason::BackendNotProvided {
+        detail: format!("この言語は保存先 {} を提供しない", backends.join("・")),
+      };
+    }
+  }
+  NotApplicableReason::BackendNotTargeted {
+    detail: format!(
+      "ケースの backends・requires に、保存先 {} で実行できるものがない",
+      target.name
+    ),
   }
 }
 
@@ -78,9 +165,11 @@ fn requests_change_feed(body: &Value) -> bool {
 
 /// ケース 1 つを分類し、実装済みの保存先へ渡す。
 ///
-/// 判定の順は、保存先の対象、表現不能（`signed_seq_nr`・`store.change_feed`）、精度の選択、FNV-1a 64 の決定、
-/// `coverage.json` の除外、準備の失敗、実装していない条件の語、値の表の `buildAid` の実行、
-/// 渡された保存先実行関数への委譲、の順。
+/// 判定の順は、保存先の対象（対象でなければ、提供しない保存先か今回の保存先でないかの理由）、
+/// 表現不能（`signed_seq_nr`・`store.change_feed`）、精度の選択、FNV-1a 64 の決定、
+/// `coverage.json` の除外、実行器が知らない `store`・`seed` の要素、準備の失敗、実装していない条件の語、
+/// 値の表の `buildAid` の実行、渡された保存先実行関数への委譲、の順。
+/// 対象外のケースは、中身を解釈する前に分類するので、知らない要素があっても誤りにならない。
 pub fn run_case(
   case: &Case,
   target: &Target,
@@ -88,12 +177,7 @@ pub fn run_case(
   execute: impl Fn(&Case, PreparedCase) -> CaseOutcome,
 ) -> CaseOutcome {
   if !targets_backend(case, target) {
-    return not_applicable(NotApplicableReason::BackendNotTargeted {
-      detail: format!(
-        "ケースの backends・requires に、保存先 {} で実行できるものがない",
-        target.name
-      ),
-    });
+    return not_applicable(not_targeted_reason(case, target));
   }
   if case.body.pointer("/representation/signed_seq_nr") == Some(&Value::Bool(true)) {
     return not_applicable(NotApplicableReason::Representation {
@@ -130,6 +214,16 @@ pub fn run_case(
     return not_applicable(NotApplicableReason::CoverageExclusion {
       detail: "ケースの全規則が coverage.json の除外の対象".to_string(),
     });
+  }
+  let unknown = unknown_elements(&case.body);
+  if !unknown.is_empty() {
+    return CaseOutcome::Failed {
+      failed_operation: None,
+      detail: format!("実行器が解釈しない要素がある: {}", unknown.join("、")),
+      expected: None,
+      actual: None,
+      unfired_faults: Vec::new(),
+    };
   }
   let prepared = match prepare(case) {
     Ok(prepared) => prepared,

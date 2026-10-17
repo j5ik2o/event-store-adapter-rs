@@ -13,7 +13,7 @@ use crate::number::to_integer;
 use crate::schema::{schema_format, SchemaError, SchemaSet};
 
 /// 実行器が読めるデータの版を表す。
-pub const DATA_VERSION: &str = "1.2.0";
+pub const DATA_VERSION: &str = "1.3.0";
 
 /// JSON として読めない入力の理由を表す。
 #[derive(Debug, thiserror::Error)]
@@ -539,10 +539,8 @@ pub fn load(root: &Path) -> Result<DataSet, DataError> {
   let mut cases = Vec::new();
   let mut ids = HashSet::new();
   for entry in &files {
-    let in_case_directory = ["values/", "scenarios/", "dynamodb/", "memory/"]
-      .iter()
-      .any(|directory| entry.path.starts_with(directory));
-    if !in_case_directory || !entry.path.ends_with(".json") || !listed.contains(entry.path.as_str()) {
+    let is_case_file = matches!(schema_format(&entry.path), Some("values" | "scenarios" | "layout"));
+    if !is_case_file || !listed.contains(entry.path.as_str()) {
       continue;
     }
     let value = parse_file(&entry.path, &entry.bytes)?;

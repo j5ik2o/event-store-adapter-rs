@@ -81,6 +81,36 @@ impl StoreFactory for SharingNewStorage {
   }
 }
 
+/// 共有して生成するストアに、保存先の共有ではなく、自分の既定の設定（履歴を残さない）を持つ別の保存先を返す偽の作り手。
+/// 設定を共有せず、共有した 2 つ目のストアが自分の既定の設定で動く実装を表す。
+#[derive(Debug, Default)]
+struct SharedWithOwnDefaultSettings;
+
+impl StoreFactory for SharedWithOwnDefaultSettings {
+  type Store = <LibraryStores as StoreFactory>::Store;
+
+  fn create_storage(
+    &self,
+    settings: RetentionSettings,
+    hooks: Arc<dyn MemoryTestHooks>,
+  ) -> Result<MemoryStorage, EventStoreError> {
+    LibraryStores.create_storage(settings, hooks)
+  }
+
+  fn open(
+    &self,
+    storage: MemoryStorage,
+    events: Arc<dyn EventSerializer<PayloadHandle>>,
+    snapshots: Arc<dyn SnapshotSerializer<Value>>,
+  ) -> Self::Store {
+    LibraryStores.open(storage, events, snapshots)
+  }
+
+  fn share_storage(&self, _storage: &MemoryStorage) -> MemoryStorage {
+    MemoryStorage::new(RetentionSettings::current_only()).expect("既定の設定で作れる")
+  }
+}
+
 /// 受け取った封筒をそのまま積み、読み取りには積んだ封筒の同じ実体を複製せずに返す偽のストア。
 #[derive(Debug, Clone, Default)]
 struct ReturnsStoredPayload {
@@ -269,6 +299,48 @@ fn should_fail_the_independent_scene_when_new_storage_shares_records() {
       }
     ),
     "記録を共有する新しい保存先は、2 つ目のストアの最初の読み取りで失敗にする: {outcome:?}"
+  );
+}
+
+#[test]
+fn should_pass_the_shared_configuration_scene_and_keep_only_the_latest_history_with_the_library() {
+  let case = real_case("memory-store-shared-configuration");
+
+  let (outcome, observations) = execute(&case, &LibraryStores);
+
+  assert_eq!(outcome, CaseOutcome::Passed { values: None });
+  assert_eq!(
+    observation_of(&observations, 4)["observed"]["history"],
+    json!({"active":[3],"marked":[]}),
+    "共有した 2 つ目のストアからの追記でも、1 つ目の保持件数 1 に従い、履歴は最新の 1 件だけが残る"
+  );
+}
+
+#[test]
+fn should_fail_the_shared_configuration_scene_when_the_shared_store_uses_its_own_default_settings() {
+  let case = real_case("memory-store-shared-configuration");
+
+  let (outcome, observations) = execute(&case, &SharedWithOwnDefaultSettings);
+
+  assert!(
+    matches!(
+      outcome,
+      CaseOutcome::Failed {
+        failed_operation: Some(2),
+        ..
+      }
+    ),
+    "保存先の設定を使わない 2 つ目のストアは、最初の追記の後の履歴の観測で失敗にする: {outcome:?}"
+  );
+  assert_eq!(
+    observation_of(&observations, 2)["actual"],
+    json!({"result":"success"}),
+    "追記そのものは成功し、設定の違いだけが履歴に現れる"
+  );
+  assert_eq!(
+    observation_of(&observations, 2)["observed"],
+    json!({"active":[],"marked":[]}),
+    "保持件数を持たない既定の設定では、履歴が残らない"
   );
 }
 
