@@ -14,7 +14,7 @@ use event_store_adapter_conformance_rs::runner::run;
 use event_store_adapter_conformance_rs::target_memory;
 use serde_json::{json, Value};
 
-const FIXED_MANIFEST_SHA256: &str = "432241f3a9e45fc169b3fcdead480b505832af1eed9f4f48357210daccce84eb";
+const FIXED_MANIFEST_SHA256: &str = "0157c012042afa9a19f0bff509a433a4bd5ddc5b674de864a41bec453c460691";
 
 fn conformance_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")
@@ -22,8 +22,8 @@ fn conformance_dir() -> PathBuf {
 
 fn data_set(problems: Vec<ManifestProblem>, required: &[&str], exclusions: Vec<CoverageExclusion>) -> DataSet {
   DataSet {
-    manifest_version: Some("1.2.0".to_string()),
-    manifest_files: 26,
+    manifest_version: Some("1.3.0".to_string()),
+    manifest_files: 35,
     manifest_sha256: FIXED_MANIFEST_SHA256.to_string(),
     manifest: ManifestVerification { problems },
     coverage: Coverage {
@@ -133,7 +133,7 @@ fn should_report_exposes_data_version_and_manifest_verification_result() {
 
   let json = to_json(&report);
 
-  assert_eq!(json["data"]["version"], "1.2.0");
+  assert_eq!(json["data"]["version"], "1.3.0");
   assert_eq!(json["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(json["data"]["manifest"]["verification"], "passed");
 }
@@ -253,10 +253,11 @@ fn should_report_case_entry_of_failed_case_carries_operation_values_and_unfired_
   assert_eq!(entry["unfired_faults"][0]["applied"], 1);
 }
 
-/// 対象外の理由の種類名。理由が 4 つだけであることを、網羅的な `match` で型に固定する。
+/// 対象外の理由の種類名。理由が 5 つだけであることを、網羅的な `match` で型に固定する。
 fn kind_name(reason: &NotApplicableReason) -> &'static str {
   match reason {
     NotApplicableReason::BackendNotTargeted { .. } => "backend-not-targeted",
+    NotApplicableReason::BackendNotProvided { .. } => "backend-not-provided",
     NotApplicableReason::Representation { .. } => "representation",
     NotApplicableReason::Fnv1a64Decision { .. } => "fnv1a64-decision",
     NotApplicableReason::CoverageExclusion { .. } => "coverage-exclusion",
@@ -264,10 +265,13 @@ fn kind_name(reason: &NotApplicableReason) -> &'static str {
 }
 
 #[test]
-fn should_report_case_entry_of_not_applicable_case_carries_one_of_the_four_reasons() {
+fn should_report_case_entry_of_not_applicable_case_carries_one_of_the_five_reasons() {
   let reasons = vec![
     NotApplicableReason::BackendNotTargeted {
       detail: "保存先が対象外".to_string(),
+    },
+    NotApplicableReason::BackendNotProvided {
+      detail: "この言語は保存先 sqlite を提供しない".to_string(),
     },
     NotApplicableReason::Representation {
       representation: RepresentationGap::Unrepresentable,
@@ -434,12 +438,12 @@ fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_cas
       passed + failed + not_applicable + unverified
     })
     .sum();
-  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 124);
+  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 169);
   assert_eq!(
     counted as usize, memberships,
     "複数の規則を持つケースを、最初の規則だけで数えない"
   );
-  assert!(json["rules"].as_array().unwrap().len() >= 46);
+  assert!(json["rules"].as_array().unwrap().len() >= 47);
   assert_eq!(json["data"]["manifest"]["verification"], "passed");
   assert_eq!(json["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert!(rule_row(&json, "W-5")["reason"]["detail"]
@@ -476,9 +480,54 @@ fn should_report_of_real_data_counts_the_memory_store_and_payload_isolation_rule
   let report = Report::build(&data, "memory", case_reports, implementation());
 
   let json = to_json(&report);
-  // (passed, failed, not-applicable, unverified)。2 つ目のストア（MEM-2）とペイロードの隔離（MEM-6）は、各 2 件がメモリで成功する。
-  assert_eq!(counts_of(rule_row(&json, "MEM-2")), (2, 0, 0, 0));
+  // (passed, failed, not-applicable, unverified)。2 つ目のストア（MEM-2）は 3 件（独立・共有・共有した設定）、
+  // ペイロードの隔離（MEM-6）は 2 件が、メモリで成功する。
+  assert_eq!(counts_of(rule_row(&json, "MEM-2")), (3, 0, 0, 0));
   assert_eq!(counts_of(rule_row(&json, "MEM-6")), (2, 0, 0, 0));
+}
+
+#[test]
+fn should_report_of_real_data_lists_the_sqlite_spanner_and_bigtable_profile_rules_as_not_applicable_only() {
+  let data = load(&conformance_dir()).expect("実データを読める");
+  let case_reports = run(&data, &target_memory::TARGET, target_memory::run_case);
+
+  let report = Report::build(&data, "memory", case_reports, implementation());
+
+  let json = to_json(&report);
+  let profile_rows: Vec<&Value> = json["rules"]
+    .as_array()
+    .expect("rules は配列")
+    .iter()
+    .filter(|row| {
+      let rule = row["rule"].as_str().expect("rule は文字列");
+      ["SQ-", "SPN-", "BT-"].iter().any(|prefix| rule.starts_with(prefix))
+    })
+    .collect();
+  for prefix in ["SQ-", "SPN-", "BT-"] {
+    assert!(
+      profile_rows
+        .iter()
+        .any(|row| row["rule"].as_str().is_some_and(|rule| rule.starts_with(prefix))),
+      "{prefix} で始まる規則の行がある"
+    );
+  }
+  for row in &profile_rows {
+    let (passed, failed, not_applicable, unverified) = counts_of(row);
+    assert_eq!(
+      (passed, failed, unverified),
+      (0, 0, 0),
+      "この言語が提供しない保存先の規則は、成功にも失敗にも未検証にも数えない: {row}"
+    );
+    assert!(
+      not_applicable >= 1 || row["reason"]["kind"] == "coverage-exclusion",
+      "対象外の件数か、除外の理由を持つ: {row}"
+    );
+  }
+  // (passed, failed, not-applicable, unverified)。
+  assert_eq!(counts_of(rule_row(&json, "BT-D6a")), (0, 0, 10, 0));
+  assert_eq!(counts_of(rule_row(&json, "SQ-7")), (0, 0, 1, 0));
+  assert_eq!(counts_of(rule_row(&json, "SPN-7")), (0, 0, 2, 0));
+  assert_eq!(counts_of(rule_row(&json, "BT-16")), (0, 0, 6, 0));
 }
 
 #[test]

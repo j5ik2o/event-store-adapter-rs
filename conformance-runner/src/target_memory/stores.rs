@@ -78,6 +78,11 @@ pub(super) trait StoreFactory {
     events: Arc<dyn EventSerializer<PayloadHandle>>,
     snapshots: Arc<dyn SnapshotSerializer<Value>>,
   ) -> Self::Store;
+
+  /// `storage` と記録・設定・排他制御を共有する保存先を返す。既定は、公開 API の `MemoryStorage::clone` で共有する。
+  fn share_storage(&self, storage: &MemoryStorage) -> MemoryStorage {
+    storage.clone()
+  }
 }
 
 /// ライブラリの公開 API でストアを作る。
@@ -352,12 +357,13 @@ impl<'f, F: StoreFactory> Stores<'f, F> {
       },
       "shared" => {
         let shared_with = string(required(arguments, "shared_with")?)?;
-        self
+        let shared = &self
           .named
           .get(shared_with)
           .ok_or_else(|| format!("shared_with のストア {shared_with} はまだ生成していない"))?
-          .storage
-          .clone()
+          .storage;
+        // 設定は共有する保存先が持つ。`self.settings` を渡して新しく作らない（MEM-D11）。
+        self.factory.share_storage(shared)
       }
       other => return Err(format!("未知の storage: {other}")),
     };

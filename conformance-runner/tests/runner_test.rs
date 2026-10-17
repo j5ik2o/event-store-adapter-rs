@@ -784,6 +784,7 @@ fn should_run_marks_only_memory_only_cases_as_not_targeted_on_dynamodb() {
       "memory-payload-written-mutation",
       "memory-store-new-independent",
       "memory-store-shared",
+      "memory-store-shared-configuration",
       "memory-ttl-unsupported"
     ]
   );
@@ -796,8 +797,9 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
   // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーに加え、
-  // 2 つ目のストアの 2 件とペイロードの隔離の 2 件も実操作で成功する。
-  assert_eq!(counts(&reports), (63, 0, 61, 0));
+  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 44 は、
+  // この言語が提供しない保存先（SQLite・Spanner・Bigtable）の場面と、Bigtable の封筒の値の表。
+  assert_eq!(counts(&reports), (64, 0, 105, 0));
 }
 
 #[test]
@@ -806,8 +808,9 @@ fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() 
 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
-  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 20 のうち 6 は、メモリだけが対象の場面。
-  assert_eq!(counts(&reports), (9, 0, 20, 95));
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 65 のうち 7 は、
+  // メモリだけが対象の場面、44 は、この言語が提供しない保存先の場面と値の表。
+  assert_eq!(counts(&reports), (9, 0, 65, 95));
 }
 
 #[test]
@@ -1019,4 +1022,413 @@ fn should_run_keeps_the_id_and_all_rules_of_each_case() {
   assert_eq!(reports.len(), data.cases.len());
   assert_eq!(report.rules, layout.rules);
   assert_eq!(report.rules.len(), 12);
+}
+
+// ---------------------------------------------------------------------------
+// この言語が提供しない保存先（SQLite・Spanner・Bigtable）のケース
+// ---------------------------------------------------------------------------
+
+/// Bigtable の封筒の値の表の操作名。
+const BIGTABLE_ENVELOPE_OPERATIONS: [&str; 3] = [
+  "encodeBigtableEventEnvelope",
+  "encodeBigtableSnapshotEnvelope",
+  "decodeBigtableEnvelope",
+];
+
+/// 報告の JSON と同じ形にした、ケースの結果を返す。
+fn report_of_outcome(outcome: &CaseOutcome) -> Value {
+  serde_json::to_value(outcome).expect("結果を直列化できる")
+}
+
+/// 結果が、理由の種類 `kind` の対象外なら真。
+fn is_not_applicable_of_kind(outcome: &CaseOutcome, kind: &str) -> bool {
+  let report = report_of_outcome(outcome);
+  report["status"] == "not-applicable" && report["reason"]["kind"] == kind
+}
+
+fn is_backend_not_provided(outcome: &CaseOutcome) -> bool {
+  is_not_applicable_of_kind(outcome, "backend-not-provided")
+}
+
+fn is_failed(outcome: &CaseOutcome) -> bool {
+  matches!(outcome, CaseOutcome::Failed { .. })
+}
+
+/// 実データのケースを ID で取り出す。
+fn case_of_real_data<'a>(data: &'a DataSet, id: &str) -> &'a Case {
+  data
+    .cases
+    .iter()
+    .find(|case| case.id == id)
+    .unwrap_or_else(|| panic!("実データにケース {id} がある"))
+}
+
+/// 実データのうち、この言語が提供しない保存先のケースを返す。
+///
+/// 場面は `backends` にメモリも DynamoDB もないもの、値の表は Bigtable の封筒の操作。
+fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
+  data
+    .cases
+    .iter()
+    .filter(|case| match case.kind {
+      CaseKind::Scenario => case.body["backends"].as_array().is_some_and(|backends| {
+        !backends.is_empty()
+          && backends
+            .iter()
+            .all(|name| !matches!(name.as_str(), Some("memory" | "dynamodb")))
+      }),
+      CaseKind::ValueTable => case.body["operation"]
+        .as_str()
+        .is_some_and(|operation| BIGTABLE_ENVELOPE_OPERATIONS.contains(&operation)),
+      CaseKind::Layout => false,
+    })
+    .collect()
+}
+
+#[test]
+fn should_run_marks_the_44_cases_of_backends_not_provided_as_not_provided_on_every_backend() {
+  let data = real_data();
+  let cases = cases_of_backends_not_provided(&data);
+  assert_eq!(
+    cases.len(),
+    44,
+    "SQLite・Spanner・Bigtable の場面 34 件と、Bigtable の封筒の値の表 10 件"
+  );
+
+  for (target, _) in TARGETS {
+    for case in &cases {
+      let outcome = run_case(case, target, &data.coverage, |_, _| {
+        panic!("提供しない保存先のケースを保存先実行関数へ委譲しない")
+      });
+
+      assert!(
+        is_backend_not_provided(&outcome),
+        "{} {}: {outcome:?}",
+        target.name,
+        case.id
+      );
+    }
+  }
+}
+
+#[test]
+fn should_run_case_marks_a_sqlite_only_scene_as_not_provided_and_names_the_backend() {
+  let data = real_data();
+  let case = case_of_real_data(&data, "sqlite-ttl-unsupported");
+  assert_eq!(case.body["backends"], json!(["sqlite"]));
+  assert!(case.body["store"].get("change_feed").is_none());
+
+  for (target, _) in TARGETS {
+    let outcome = run_case(case, target, &data.coverage, |_, _| {
+      panic!("提供しない保存先のケースを保存先実行関数へ委譲しない")
+    });
+
+    let report = report_of_outcome(&outcome);
+    assert_eq!(report["status"], "not-applicable", "{}: {report}", target.name);
+    assert_eq!(
+      report["reason"]["kind"], "backend-not-provided",
+      "{}: {report}",
+      target.name
+    );
+    let detail = report["reason"]["detail"].as_str().expect("detail は文字列");
+    assert!(
+      detail.contains("提供しない") && detail.contains("sqlite"),
+      "{}: {detail}",
+      target.name
+    );
+  }
+}
+
+#[test]
+fn should_run_case_does_not_mark_a_dynamodb_only_scene_or_a_common_scene_as_not_provided() {
+  let data = real_data();
+  let dynamodb_only = case_of_real_data(&data, "dynamodb-config-new");
+  let common = case_of_real_data(&data, "core-retention-delete-1");
+  assert_eq!(
+    common.body["backends"],
+    json!(["memory", "dynamodb", "sqlite", "spanner", "bigtable"])
+  );
+
+  let dynamodb_only_on_memory = run_case(
+    dynamodb_only,
+    &target_memory::TARGET,
+    &data.coverage,
+    target_memory::run_case,
+  );
+  let common_on_memory = run_case(common, &target_memory::TARGET, &data.coverage, target_memory::run_case);
+  let common_on_dynamodb = run_case(
+    common,
+    &target_dynamodb::TARGET,
+    &data.coverage,
+    classification_executor,
+  );
+
+  assert!(
+    is_not_applicable_of_kind(&dynamodb_only_on_memory, "backend-not-targeted"),
+    "{dynamodb_only_on_memory:?}"
+  );
+  assert_eq!(common_on_memory, CaseOutcome::Passed { values: None });
+  assert!(is_not_executed(&common_on_dynamodb), "{common_on_dynamodb:?}");
+}
+
+#[test]
+fn should_run_case_keeps_a_scene_listing_a_provided_backend_not_targeted_instead_of_marking_it_not_provided() {
+  let case = scenario(&["T-1"], scenario_body(&["dynamodb", "sqlite"]));
+
+  let on_memory = run_case(&case, &target_memory::TARGET, &no_exclusions(), |_, _| {
+    panic!("メモリが対象でない場面を保存先実行関数へ委譲しない")
+  });
+  let on_dynamodb = run_case(
+    &case,
+    &target_dynamodb::TARGET,
+    &no_exclusions(),
+    classification_executor,
+  );
+
+  assert!(
+    is_not_applicable_of_kind(&on_memory, "backend-not-targeted"),
+    "この言語が提供する DynamoDB を含む場面は、メモリでは提供しないのではなく対象でない: {on_memory:?}"
+  );
+  assert!(is_not_executed(&on_dynamodb), "{on_dynamodb:?}");
+}
+
+#[test]
+fn should_run_case_marks_the_bigtable_envelope_value_table_as_not_provided_without_calling_the_executor() {
+  let data = real_data();
+  let case = case_of_real_data(&data, "bigtable-envelope-event-empty");
+  assert!(matches!(case.kind, CaseKind::ValueTable));
+  assert_eq!(case.body["operation"], "encodeBigtableEventEnvelope");
+
+  for (target, _) in TARGETS {
+    let outcome = run_case(case, target, &data.coverage, |_, _| {
+      panic!("提供しない保存先の値の表を保存先実行関数へ委譲しない")
+    });
+
+    assert!(is_backend_not_provided(&outcome), "{}: {outcome:?}", target.name);
+  }
+}
+
+#[test]
+fn should_run_does_not_mark_fnv1a64_or_build_aid_value_tables_as_not_provided() {
+  let data = real_data();
+  let first_of = |operation: &str| {
+    data
+      .cases
+      .iter()
+      .find(|case| case.body.get("operation") == Some(&json!(operation)))
+      .unwrap_or_else(|| panic!("operation が {operation} のケースがある"))
+  };
+  let fnv1a64 = first_of("fnv1a64");
+  let build_aid = first_of("buildAid");
+
+  for (target, _) in TARGETS {
+    let fnv1a64_outcome = run_case(fnv1a64, target, &data.coverage, |_, _| {
+      panic!("FNV-1a 64 の決定は共通処理で止まる")
+    });
+    let build_aid_outcome = run_case(build_aid, target, &data.coverage, |_, _| {
+      panic!("buildAid は共通処理で実行する")
+    });
+
+    assert!(
+      is_fnv1a64_decision(&fnv1a64_outcome),
+      "{}: {fnv1a64_outcome:?}",
+      target.name
+    );
+    assert!(
+      matches!(build_aid_outcome, CaseOutcome::Passed { values: Some(_) }),
+      "{}: {build_aid_outcome:?}",
+      target.name
+    );
+  }
+}
+
+#[test]
+fn should_run_case_hands_the_cases_of_the_given_backend_to_the_executor_instead_of_marking_them_not_provided() {
+  let bigtable = Target {
+    name: "bigtable",
+    capabilities: &[],
+    has_layout: false,
+  };
+  let data = real_data();
+  let envelope = case_of_real_data(&data, "bigtable-envelope-event-empty");
+  let scene = scenario(&["T-1"], scenario_body(&["bigtable"]));
+
+  for case in [envelope, &scene] {
+    let calls = Cell::new(0);
+
+    let outcome = run_case(case, &bigtable, &no_exclusions(), |_, _| {
+      calls.set(calls.get() + 1);
+      CaseOutcome::Passed { values: None }
+    });
+
+    assert_eq!(calls.get(), 1, "{}", case.id);
+    assert_eq!(outcome, CaseOutcome::Passed { values: None }, "{}", case.id);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 知らない要素（対象外と分類してから中身を解釈する）
+// ---------------------------------------------------------------------------
+
+/// SQLite・Spanner・Bigtable の場面だけが使う要素（`store` の設定、シード、操作、障害の種類と段階）を全部持つ場面を作る。
+fn scene_with_elements_of_other_backends(backends: &[&str]) -> Case {
+  let mut body = scenario_body(backends);
+  body["store"]["lock_wait_milliseconds"] = json!(100);
+  body["seed"] = json!({"configuration": {"store_id": "5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11", "layout_version": 1}});
+  body["steps"] = json!([
+    {"op": "holdWriteLock", "arguments": {}, "expect": {"result": "success"}},
+    {"op": "releaseWriteLock", "arguments": {}, "expect": {"result": "success"}}
+  ]);
+  body["faults"] = json!([{
+    "operation": 1, "phase": "journal-write-previous", "kind": "transaction-aborted",
+    "injection": "replace-request", "repeat": {"mode": "count", "count": 1}, "details": {"message": "INJECTED"}
+  }]);
+  scenario(&["T-1"], body)
+}
+
+#[test]
+fn should_run_case_fails_a_provided_backend_scene_with_an_unknown_store_setting_as_unknown_element() {
+  for (target, execute) in TARGETS {
+    let mut body = scenario_body(&[target.name]);
+    body["store"] = json!({"retention_count": null, "retention_mode": "delete", "lock_wait_milliseconds": 100});
+    let case = scenario(&["T-1"], body);
+
+    let outcome = run_case(&case, target, &no_exclusions(), execute);
+
+    assert!(
+      matches!(&outcome, CaseOutcome::Failed { detail, .. } if detail.contains("store.lock_wait_milliseconds")),
+      "{}: {outcome:?}",
+      target.name
+    );
+  }
+}
+
+#[test]
+fn should_run_case_fails_each_remaining_unknown_store_setting_and_seed_item_as_unknown_element() {
+  let elements = [
+    ("store", "transaction_retry_limit", json!(3)),
+    ("store", "ttl_grace_days", json!(1)),
+    ("store", "envelope_limit_bytes", json!(1_048_576)),
+    ("seed", "configuration", json!({"layout_version": 1})),
+    ("seed", "row_deletion_policy_days", json!(1)),
+  ];
+
+  for (target, execute) in TARGETS {
+    for (section, key, value) in &elements {
+      let mut body = scenario_body(&[target.name]);
+      if *section == "seed" {
+        body["seed"] = json!({});
+      }
+      body[*section][*key] = value.clone();
+      let case = scenario(&["T-1"], body);
+
+      let outcome = run_case(&case, target, &no_exclusions(), execute);
+
+      assert!(
+        matches!(&outcome, CaseOutcome::Failed { detail, .. } if detail.contains(&format!("{section}.{key}"))),
+        "{} {section}.{key}: {outcome:?}",
+        target.name
+      );
+    }
+  }
+}
+
+#[test]
+fn should_run_case_does_not_treat_known_store_settings_or_seed_items_as_unknown_element() {
+  let mut memory_body = scenario_body(&["memory"]);
+  memory_body["store"] = json!({"retention_count": null, "retention_mode": "delete", "change_feed": false});
+  let mut dynamodb_body = scenario_body(&["dynamodb"]);
+  dynamodb_body["store"] = json!({
+    "retention_count": 1, "retention_mode": "ttl", "ttl_grace_seconds": 60,
+    "layout_version": 1, "retry_limit": 3, "change_feed": false
+  });
+  dynamodb_body["seed"] = json!({"items": []});
+
+  let on_memory = run_case(
+    &scenario(&["T-1"], memory_body),
+    &target_memory::TARGET,
+    &no_exclusions(),
+    target_memory::run_case,
+  );
+  let on_dynamodb = run_case(
+    &scenario(&["T-1"], dynamodb_body),
+    &target_dynamodb::TARGET,
+    &no_exclusions(),
+    classification_executor,
+  );
+
+  assert_eq!(on_memory, CaseOutcome::Passed { values: None });
+  assert!(is_not_executed(&on_dynamodb), "{on_dynamodb:?}");
+}
+
+#[test]
+fn should_run_case_marks_a_not_provided_scene_before_interpreting_any_unknown_element() {
+  let case = scene_with_elements_of_other_backends(&["sqlite"]);
+
+  for (target, _) in TARGETS {
+    let outcome = run_case(&case, target, &no_exclusions(), |_, _| {
+      panic!("提供しない保存先の場面を保存先実行関数へ委譲しない")
+    });
+
+    assert!(is_backend_not_provided(&outcome), "{}: {outcome:?}", target.name);
+  }
+}
+
+#[test]
+fn should_run_case_fails_the_same_elements_as_unknown_element_in_a_scene_of_a_provided_backend() {
+  for (target, execute) in TARGETS {
+    let case = scene_with_elements_of_other_backends(&[target.name]);
+
+    let outcome = run_case(&case, target, &no_exclusions(), execute);
+
+    assert!(is_failed(&outcome), "{}: {outcome:?}", target.name);
+  }
+}
+
+#[test]
+fn should_run_case_fails_unknown_operations_fault_declarations_and_value_operations_as_unknown_element() {
+  for operation in ["holdWriteLock", "releaseWriteLock"] {
+    let mut body = scenario_body(&["memory"]);
+    body["steps"] = json!([{"op": operation, "arguments": {}, "expect": {"result": "success"}}]);
+
+    let outcome = run_case(
+      &scenario(&["T-1"], body),
+      &target_memory::TARGET,
+      &no_exclusions(),
+      target_memory::run_case,
+    );
+
+    assert!(is_failed(&outcome), "{operation}: {outcome:?}");
+  }
+
+  for (phase, kind) in [
+    ("commit", "transaction-aborted"),
+    ("journal-write-previous", "storage-error"),
+    ("journal-write-tail", "storage-error"),
+  ] {
+    for (target, execute) in TARGETS {
+      let mut body = scenario_body(&[target.name]);
+      body["faults"] = json!([{
+        "operation": 1, "phase": phase, "kind": kind, "injection": "replace-request",
+        "repeat": {"mode": "count", "count": 1}, "details": {"message": "INJECTED"}
+      }]);
+
+      let outcome = run_case(&scenario(&["T-1"], body), target, &no_exclusions(), execute);
+
+      assert!(is_failed(&outcome), "{} {phase} {kind}: {outcome:?}", target.name);
+    }
+  }
+
+  let mut value_table = scenario(&["T-1"], json!({"id": "synthetic", "rules": ["T-1"]}));
+  value_table.kind = CaseKind::ValueTable;
+  value_table.body["operation"] = json!("unknownOperation");
+  value_table.body["input"] = json!({});
+  value_table.body["expect"] = json!({});
+  let outcome = run_case(
+    &value_table,
+    &target_memory::TARGET,
+    &no_exclusions(),
+    target_memory::run_case,
+  );
+  assert!(is_failed(&outcome), "{outcome:?}");
 }
