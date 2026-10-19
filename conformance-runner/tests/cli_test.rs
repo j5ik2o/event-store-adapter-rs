@@ -1,5 +1,5 @@
 //! コマンドの入口（引数・報告の書き出し・終了コード）の試験。
-//! 実行ファイルを起動し、Memoryの64件と、feature有効時の実DynamoDBの104件を検査する。
+//! 実行ファイルを起動し、Memoryの64件と、feature有効時の実DynamoDBの104件・実SQLiteの66件を検査する。
 
 mod support;
 
@@ -19,6 +19,18 @@ const MEMORY_STORE_AND_PAYLOAD_CASES: [&str; 5] = [
   "memory-store-shared-configuration",
   "memory-payload-written-mutation",
   "memory-payload-read-mutation",
+];
+
+/// SQLite だけが対象の場面。SQLite を提供するので、メモリ・DynamoDB では「提供しない」でなく「今回の保存先でない」対象外になる。
+const SQLITE_ONLY_CASES: [&str; 8] = [
+  "sqlite-ttl-unsupported",
+  "sqlite-change-feed-unsupported",
+  "sqlite-seeded-keep-count-mismatch",
+  "sqlite-seeded-layout-version-mismatch",
+  "sqlite-seeded-change-feed-enabled",
+  "sqlite-seeded-configuration-match",
+  "sqlite-write-lock-busy",
+  "store-shared-persistent",
 ];
 
 /// 実行器を、与えた引数のまま起動する。
@@ -265,7 +277,7 @@ fn rule_counts(report: &Value, rule: &str) -> (u64, u64, u64, u64) {
   )
 }
 
-/// この言語が提供しない保存先（SQLite・Spanner・Bigtable）の場面 34 件と、Bigtable の封筒の値の表 10 件が、
+/// この言語が提供しない保存先（Spanner・Bigtable）の場面 26 件と、Bigtable の封筒の値の表 10 件が、
 /// 理由付きの対象外になり、BT-D6a の行にも対象外だけが数えられていることを確かめる。
 fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Value) {
   let not_provided: Vec<&Value> = report["cases"]
@@ -274,7 +286,7 @@ fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Val
     .iter()
     .filter(|case| case["reason"]["kind"] == "backend-not-provided")
     .collect();
-  assert_eq!(not_provided.len(), 44, "{not_provided:?}");
+  assert_eq!(not_provided.len(), 36, "{not_provided:?}");
   for case in not_provided {
     assert_eq!(case["status"], "not-applicable", "{case}");
     assert!(
@@ -284,12 +296,21 @@ fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Val
       "{case}"
     );
   }
-  for id in ["sqlite-ttl-unsupported", "bigtable-envelope-event-empty"] {
+  for id in ["spanner-change-feed-unsupported", "bigtable-envelope-event-empty"] {
     let case = case_of(report, id);
     assert_eq!(case["status"], "not-applicable", "{id}");
     assert_eq!(case["reason"]["kind"], "backend-not-provided", "{id}");
   }
   assert_eq!(rule_counts(report, "BT-D6a"), (0, 0, 10, 0));
+}
+
+/// SQLite だけが対象の場面 8 件が、この言語が提供する保存先の場面として「今回の保存先でない」対象外になることを確かめる。
+fn assert_sqlite_only_cases_are_not_targeted(report: &Value) {
+  for id in SQLITE_ONLY_CASES {
+    let case = case_of(report, id);
+    assert_eq!(case["status"], "not-applicable", "{id}");
+    assert_eq!(case["reason"]["kind"], "backend-not-targeted", "{id}");
+  }
 }
 
 #[test]
@@ -318,6 +339,7 @@ fn should_cli_with_require_all_reports_the_new_memory_cases_and_their_rules() {
     assert_eq!(case_of(&report, id)["status"], "passed", "{id}");
   }
   assert_cases_of_backends_not_provided_are_reported_with_a_reason(&report);
+  assert_sqlite_only_cases_are_not_targeted(&report);
   // (passed, failed, not-applicable, unverified)
   assert_eq!(rule_counts(&report, "DY-19"), (0, 0, 2, 0));
   assert_eq!(rule_counts(&report, "MEM-2"), (3, 0, 0, 0));
@@ -362,6 +384,7 @@ fn should_cli_with_require_all_preserves_dynamodb_execution_failures() {
     assert_eq!(case_of(&report, id)["reason"]["kind"], "backend-not-targeted", "{id}");
   }
   assert_cases_of_backends_not_provided_are_reported_with_a_reason(&report);
+  assert_sqlite_only_cases_are_not_targeted(&report);
   assert_eq!(rule_counts(&report, "MEM-2"), (0, 0, 3, 0));
   assert_eq!(rule_counts(&report, "MEM-6"), (0, 0, 2, 0));
   assert_eq!(
@@ -372,6 +395,52 @@ fn should_cli_with_require_all_preserves_dynamodb_execution_failures() {
       (0, 0, 0, 2)
     }
   );
+}
+
+#[test]
+fn should_cli_with_require_all_runs_the_sqlite_cases() {
+  let execution = execute_on_real_data("cli-require-all-sqlite", &["--backend", "sqlite", "--require-all"]);
+
+  let report = execution.report();
+  assert_eq!(report["backend"], "sqlite");
+  assert_eq!(
+    execution.code(),
+    Some(if cfg!(feature = "sqlite") { 0 } else { 1 }),
+    "stderr: {}",
+    String::from_utf8_lossy(&execution.output.stderr)
+  );
+  assert_eq!(
+    count_status(&report, "passed"),
+    if cfg!(feature = "sqlite") { 66 } else { 9 }
+  );
+  assert_eq!(count_status(&report, "failed"), 0);
+  assert_eq!(count_status(&report, "not-applicable"), 103);
+  assert_eq!(
+    count_status(&report, "unverified"),
+    if cfg!(feature = "sqlite") { 0 } else { 57 }
+  );
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  // SQLite の場面は、feature があれば実 SQLite で成功し、なければ未検証と報告される。
+  for id in SQLITE_ONLY_CASES {
+    assert_eq!(
+      case_of(&report, id)["status"],
+      if cfg!(feature = "sqlite") {
+        "passed"
+      } else {
+        "unverified"
+      },
+      "{id}"
+    );
+  }
+  assert_cases_of_backends_not_provided_are_reported_with_a_reason(&report);
+  if cfg!(feature = "sqlite") {
+    // (passed, failed, not-applicable, unverified)
+    assert_eq!(rule_counts(&report, "SQ-2"), (3, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "SQ-7"), (1, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "SQ-11"), (1, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "SQ-19"), (2, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "SQ-20"), (2, 0, 0, 0));
+  }
 }
 
 #[test]
@@ -483,7 +552,7 @@ fn should_cli_rejects_unknown_argument() {
 
 #[test]
 fn should_cli_rejects_unknown_backend() {
-  let execution = execute_on_real_data("cli-unknown-backend", &["--backend", "sqlite"]);
+  let execution = execute_on_real_data("cli-unknown-backend", &["--backend", "spanner"]);
 
   assert_eq!(execution.code(), Some(2));
   assert!(!execution.report_exists());

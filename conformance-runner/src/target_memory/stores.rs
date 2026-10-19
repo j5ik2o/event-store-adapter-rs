@@ -20,9 +20,7 @@ use event_store_adapter_rs::{
 use serde_json::Value;
 
 use crate::case::{fixture, id, required, seq, string, CaseId};
-
-/// 1 つ目のストアの予約名を表す。`store` を省略した操作はこのストアに対する操作になる。
-pub(super) const PRIMARY: &str = "primary";
+use crate::store_registry::{CreateRequest, StorageRequest, StoreRegistry};
 
 /// 実行器が手元に持つペイロードの実体を表す。
 ///
@@ -276,7 +274,27 @@ pub(super) struct NamedStore<S> {
   pub(super) store: TrackedStore<S>,
 }
 
-/// 場面の中の、参照名から引けるストアの表を表す。
+/// 保存先を、ペイロードの記録を共通にした追跡つきのストアとして開く。
+fn open_named<F: StoreFactory>(
+  factory: &F,
+  events: &Arc<dyn EventSerializer<PayloadHandle>>,
+  snapshots: &Arc<dyn SnapshotSerializer<Value>>,
+  log: &Arc<Mutex<PayloadLog>>,
+  storage: MemoryStorage,
+) -> NamedStore<F::Store> {
+  let inner = factory.open(storage.clone(), events.clone(), snapshots.clone());
+  NamedStore {
+    storage,
+    store: TrackedStore {
+      inner,
+      log: log.clone(),
+    },
+  }
+}
+
+/// 場面の中の、参照名から引けるストアの表と、ペイロードの記録を表す。
+///
+/// 参照名の規則は [`StoreRegistry`] が持つ。ここは、保存先の作成と共有、ペイロードの記録だけを持つ。
 pub(super) struct Stores<'f, F: StoreFactory> {
   factory: &'f F,
   settings: RetentionSettings,
@@ -284,11 +302,11 @@ pub(super) struct Stores<'f, F: StoreFactory> {
   events: Arc<dyn EventSerializer<PayloadHandle>>,
   snapshots: Arc<dyn SnapshotSerializer<Value>>,
   log: Arc<Mutex<PayloadLog>>,
-  named: BTreeMap<String, NamedStore<F::Store>>,
+  pub(super) registry: StoreRegistry<NamedStore<F::Store>>,
 }
 
 impl<'f, F: StoreFactory> Stores<'f, F> {
-  /// 1 つ目の保存先を予約名 [`PRIMARY`] のストアとして開き、表を作る。
+  /// 1 つ目の保存先を予約名 `primary` のストアとして開き、表を作る。
   pub(super) fn new(
     factory: &'f F,
     settings: RetentionSettings,
@@ -297,78 +315,34 @@ impl<'f, F: StoreFactory> Stores<'f, F> {
     snapshots: Arc<dyn SnapshotSerializer<Value>>,
     primary: MemoryStorage,
   ) -> Self {
-    let mut stores = Self {
+    let log = Arc::new(Mutex::new(PayloadLog::default()));
+    let primary = open_named(factory, &events, &snapshots, &log, primary);
+    Self {
       factory,
       settings,
       hooks,
       events,
       snapshots,
-      log: Arc::new(Mutex::new(PayloadLog::default())),
-      named: BTreeMap::new(),
-    };
-    let primary = stores.open(primary);
-    stores.named.insert(PRIMARY.to_owned(), primary);
-    stores
-  }
-
-  fn open(&self, storage: MemoryStorage) -> NamedStore<F::Store> {
-    let inner = self
-      .factory
-      .open(storage.clone(), self.events.clone(), self.snapshots.clone());
-    NamedStore {
-      storage,
-      store: TrackedStore {
-        inner,
-        log: self.log.clone(),
-      },
+      log,
+      registry: StoreRegistry::new(primary),
     }
-  }
-
-  /// 1 つ目のストアを返す。
-  pub(super) fn primary(&self) -> &NamedStore<F::Store> {
-    &self.named[PRIMARY]
-  }
-
-  /// 操作の `store` が指すストアを返す。省略時は 1 つ目のストア。生成前の名前は誤りとして返す。
-  pub(super) fn select(&self, step: &Value) -> Result<&NamedStore<F::Store>, String> {
-    let name = match step.get("store") {
-      Some(name) => string(name)?,
-      None => PRIMARY,
-    };
-    self
-      .named
-      .get(name)
-      .ok_or_else(|| format!("ストア {name} はまだ生成していない"))
   }
 
   /// `createStore` を実行する。
   ///
-  /// データの誤り（予約名・使用済みの名前、生成前の `shared_with`、未知の `storage`）は外側の `Err`、
-  /// 保存先の生成の失敗は内側の `Err` で返す。
+  /// データの誤りは外側の `Err`（検査は [`StoreRegistry::parse_create`]）、保存先の生成の失敗は内側の `Err` で返す。
   pub(super) fn create(&mut self, arguments: &Value) -> Result<Result<(), EventStoreError>, String> {
-    let name = string(required(arguments, "name")?)?.to_owned();
-    if self.named.contains_key(&name) {
-      return Err(format!("ストア名 {name} は予約名か、生成済みの名前である"));
-    }
-    let storage = match string(required(arguments, "storage")?)? {
-      "new" => match self.factory.create_storage(self.settings.clone(), self.hooks.clone()) {
+    let CreateRequest { name, storage } = self.registry.parse_create(arguments)?;
+    let storage = match storage {
+      StorageRequest::New => match self.factory.create_storage(self.settings.clone(), self.hooks.clone()) {
         Ok(storage) => storage,
         Err(error) => return Ok(Err(error)),
       },
-      "shared" => {
-        let shared_with = string(required(arguments, "shared_with")?)?;
-        let shared = &self
-          .named
-          .get(shared_with)
-          .ok_or_else(|| format!("shared_with のストア {shared_with} はまだ生成していない"))?
-          .storage;
-        // 設定は共有する保存先が持つ。`self.settings` を渡して新しく作らない（MEM-D11）。
-        self.factory.share_storage(shared)
-      }
-      other => return Err(format!("未知の storage: {other}")),
+      // 設定は共有する保存先が持つ。`self.settings` を渡して新しく作らない（MEM-D11）。
+      StorageRequest::Shared(shared) => self.factory.share_storage(&shared.storage),
     };
-    let created = self.open(storage);
-    self.named.insert(name, created);
+    let created = open_named(self.factory, &self.events, &self.snapshots, &self.log, storage);
+    self.registry.insert(name, created);
     Ok(Ok(()))
   }
 

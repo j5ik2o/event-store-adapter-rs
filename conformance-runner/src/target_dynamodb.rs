@@ -32,6 +32,9 @@ pub const TARGET: Target = Target {
   name: "dynamodb",
   capabilities: &["ttl"],
   has_layout: true,
+  extra_store_settings: &[],
+  extra_seed_items: &[],
+  represents_change_feed: false,
 };
 
 /// DynamoDBが無効なケースを、理由付きの未検証として返す。

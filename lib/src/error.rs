@@ -102,6 +102,27 @@ pub enum ConfigurationReason {
   DynamoDbStoreIdMismatch,
   /// 設定項目の layout_version が版1ではない（DY-8）。
   UnsupportedDynamoDbLayoutVersion,
+  /// SQLite の保存先は期限切れ方式（`RetentionMode::Ttl`）を提供しない（SQ-11）。
+  SqliteTtlUnsupported,
+  /// SQLite の保存先は最初の版で変更フィードを提供しない。フィードを求める設定と、
+  /// 記録した `change_feed_enabled` が 1 のストアを開く操作は、この理由になる（SQ-D8・SQ-20）。
+  SqliteChangeFeedUnsupported,
+  /// 保持件数が SQLite の符号付き 64bit の整数に収まらない（2 章の config の形）。
+  SqliteKeepSnapshotCountOutOfRange,
+  /// busy の待ち時間が 32bit のミリ秒に収まらない（SQ-1）。
+  SqliteLockWaitOutOfRange,
+  /// 実際に使う SQLite 本体の版が 3.51.3 未満（SQ-15）。
+  UnsupportedSqliteVersion,
+  /// 接続の設定（`locking_mode`・`journal_mode`・`synchronous`・`read_uncommitted`）を要求の値にできない（SQ-1・SQ-14）。
+  SqliteConnectionSettingMismatch,
+  /// 初期化の対象が、アプリケーションのオブジェクトを持つか初期化済みのデータベースである（SQ-2・SQ-D6）。
+  SqliteDatabaseNotEmpty,
+  /// テーブルの定義・主キー・STRICT の宣言が、期待する配置と一致しない（SQ-2・SQ-16）。
+  SqliteLayoutMismatch,
+  /// config の layout_version が版1ではない（SQ-2）。
+  UnsupportedSqliteLayoutVersion,
+  /// 記録した config の store_id・保持件数・保持方式・変更フィードの有無が、期待と一致しない（SQ-2・SQ-19）。
+  SqliteConfigurationMismatch,
 }
 
 impl fmt::Display for ConfigurationReason {
@@ -126,6 +147,30 @@ impl fmt::Display for ConfigurationReason {
       ConfigurationReason::DynamoDbStoreIdMismatch => formatter.write_str("DynamoDB configuration store_id mismatch"),
       ConfigurationReason::UnsupportedDynamoDbLayoutVersion => {
         formatter.write_str("DynamoDB configuration layout_version must be 1")
+      }
+      ConfigurationReason::SqliteTtlUnsupported => {
+        formatter.write_str("the sqlite backend does not support retention mode ttl")
+      }
+      ConfigurationReason::SqliteChangeFeedUnsupported => {
+        formatter.write_str("the sqlite backend does not support the change feed")
+      }
+      ConfigurationReason::SqliteKeepSnapshotCountOutOfRange => {
+        formatter.write_str("keep_snapshot_count does not fit in a signed 64-bit integer")
+      }
+      ConfigurationReason::SqliteLockWaitOutOfRange => {
+        formatter.write_str("the sqlite lock wait does not fit in 32-bit milliseconds")
+      }
+      ConfigurationReason::UnsupportedSqliteVersion => formatter.write_str("SQLite 3.51.3 or later is required"),
+      ConfigurationReason::SqliteConnectionSettingMismatch => {
+        formatter.write_str("the sqlite connection could not apply the required settings")
+      }
+      ConfigurationReason::SqliteDatabaseNotEmpty => formatter.write_str("the sqlite database is not uninitialized"),
+      ConfigurationReason::SqliteLayoutMismatch => formatter.write_str("the sqlite table layout does not match"),
+      ConfigurationReason::UnsupportedSqliteLayoutVersion => {
+        formatter.write_str("sqlite configuration layout_version must be 1")
+      }
+      ConfigurationReason::SqliteConfigurationMismatch => {
+        formatter.write_str("the sqlite configuration does not match the client settings")
       }
     }
   }
