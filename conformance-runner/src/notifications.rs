@@ -15,6 +15,12 @@ use tracing_subscriber::{layer::Context, prelude::*, registry::LookupSpan, Layer
 #[path = "notifications_test.rs"]
 mod tests;
 
+/// 収集する通知の、発信元（target）と分類（category）の組。レベルは WARN だけを収集する。
+const NOTIFICATIONS: [(&str, &str); 2] = [
+  ("event_store_adapter::retention", "retention-failure"),
+  ("event_store_adapter::journal", "journal-write-failure"),
+];
+
 type Collected = Arc<Mutex<HashMap<u64, BTreeSet<String>>>>;
 static COLLECTOR: OnceLock<Result<Collected, String>> = OnceLock::new();
 static NEXT_OPERATION: AtomicU64 = AtomicU64::new(1);
@@ -55,14 +61,17 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for Collector {
   }
 
   fn on_event(&self, event: &Event<'_>, ctx: Context<'_, S>) {
-    if event.metadata().target() != "event_store_adapter::retention"
-      || *event.metadata().level() != tracing::Level::WARN
-    {
+    if *event.metadata().level() != tracing::Level::WARN {
       return;
     }
+    let target = event.metadata().target();
     let mut fields = Fields::default();
     event.record(&mut fields);
-    if fields.category.as_deref() != Some("retention-failure") {
+    let is_known = fields
+      .category
+      .as_deref()
+      .is_some_and(|category| NOTIFICATIONS.contains(&(target, category)));
+    if !is_known {
       return;
     }
     let Some(mut scope) = ctx.event_scope(event) else {

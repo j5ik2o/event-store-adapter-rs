@@ -1,6 +1,6 @@
 //! 適合テストデータの実行器のコマンド。
 //!
-//! 使い方: `event-store-adapter-conformance-rs --backend <memory|dynamodb|sqlite> --data <パス> --report <パス> [--require-all]`
+//! 使い方: `event-store-adapter-conformance-rs --backend <memory|dynamodb|sqlite|bigtable> --data <パス> --report <パス> [--require-all]`
 
 use std::path::PathBuf;
 use std::process::ExitCode;
@@ -8,10 +8,10 @@ use std::process::ExitCode;
 use event_store_adapter_conformance_rs::data;
 use event_store_adapter_conformance_rs::report::{Implementation, Report};
 use event_store_adapter_conformance_rs::runner::{self, Target};
-use event_store_adapter_conformance_rs::{target_dynamodb, target_memory, target_sqlite};
+use event_store_adapter_conformance_rs::{target_bigtable, target_dynamodb, target_memory, target_sqlite};
 
 const USAGE: &str =
-  "使い方: event-store-adapter-conformance-rs --backend <memory|dynamodb|sqlite> --data <conformance のパス> --report <報告のパス> [--require-all]";
+  "使い方: event-store-adapter-conformance-rs --backend <memory|dynamodb|sqlite|bigtable> --data <conformance のパス> --report <報告のパス> [--require-all]";
 
 /// コマンドの引数を解析した結果を表す。
 #[derive(Debug)]
@@ -28,6 +28,7 @@ fn parse_target(value: &str) -> Option<Target> {
     "memory" => Some(target_memory::TARGET),
     "dynamodb" => Some(target_dynamodb::TARGET),
     "sqlite" => Some(target_sqlite::TARGET),
+    "bigtable" => Some(target_bigtable::TARGET),
     _ => None,
   }
 }
@@ -92,6 +93,9 @@ fn main() -> ExitCode {
     if target == target_sqlite::TARGET {
       return target_sqlite::run_case(case, prepared);
     }
+    if target == target_bigtable::TARGET {
+      return target_bigtable::run_case(case, prepared);
+    }
     #[cfg(feature = "dynamodb")]
     {
       match execution.as_ref().expect("parse_targetが選んだDynamoDBの生成") {
@@ -104,6 +108,9 @@ fn main() -> ExitCode {
     #[cfg(not(feature = "dynamodb"))]
     target_dynamodb::run_case(case, prepared)
   });
+  // 共有したエミュレーターのコンテナは、報告を組み立てる前に削除する。
+  #[cfg(feature = "bigtable")]
+  target_bigtable::release_emulator();
   let mut report = Report::build(&data, target.name, cases, Implementation::detect());
   report.observations = memory_observations.into_inner();
   #[cfg(feature = "dynamodb")]
@@ -245,6 +252,23 @@ mod tests {
     .expect("正しい引数");
 
     assert_eq!(args.backend, target_sqlite::TARGET);
+    assert!(args.require_all);
+  }
+
+  #[test]
+  fn test_parse_args_selects_bigtable_backend() {
+    let args = parse_args(arguments(&[
+      "--backend",
+      "bigtable",
+      "--data",
+      "conformance",
+      "--report",
+      "report.json",
+      "--require-all",
+    ]))
+    .expect("正しい引数");
+
+    assert_eq!(args.backend, target_bigtable::TARGET);
     assert!(args.require_all);
   }
 

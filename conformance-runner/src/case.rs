@@ -234,6 +234,15 @@ pub(crate) fn unverified(detail: &str) -> CaseOutcome {
 }
 
 pub(crate) fn settings(body: &Value) -> Result<RetentionSettings, String> {
+  settings_with_default_grace(body, None)
+}
+
+/// 保持の設定を読む。`ttl_grace_seconds` を持たない TTL の場面は、`default_grace_seconds` があればその猶予で読み、
+/// なければ必須要素の欠落として誤りにする。TTL を提供しない保存先が、設定エラーになる生成を確かめる場面で使う。
+pub(crate) fn settings_with_default_grace(
+  body: &Value,
+  default_grace_seconds: Option<u64>,
+) -> Result<RetentionSettings, String> {
   let store = required(body, "store")?;
   let count = required(store, "retention_count")?;
   let settings = if count.is_null() {
@@ -243,9 +252,13 @@ pub(crate) fn settings(body: &Value) -> Result<RetentionSettings, String> {
   };
   match string(required(store, "retention_mode")?)? {
     "delete" => Ok(settings),
-    "ttl" => Ok(settings.with_mode(RetentionMode::Ttl {
-      grace_seconds: seq(required(store, "ttl_grace_seconds")?)?,
-    })),
+    "ttl" => {
+      let grace_seconds = match store.get("ttl_grace_seconds") {
+        Some(value) => seq(value)?,
+        None => default_grace_seconds.ok_or("必須要素 ttl_grace_seconds がない")?,
+      };
+      Ok(settings.with_mode(RetentionMode::Ttl { grace_seconds }))
+    }
     _ => Err("未知の保持方式".to_owned()),
   }
 }

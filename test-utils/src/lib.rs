@@ -1,3 +1,6 @@
+pub mod bigtable;
+#[cfg(test)]
+mod bigtable_emulator_test;
 pub mod docker;
 pub mod dynamodb;
 #[cfg(test)]

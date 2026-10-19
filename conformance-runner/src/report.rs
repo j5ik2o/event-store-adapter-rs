@@ -26,8 +26,7 @@ pub enum RepresentationGap {
 pub enum NotApplicableReason {
   /// ケースの `backends` に、実行する保存先がない。
   BackendNotTargeted { detail: String },
-  /// この言語（この実行器）が、ケースの対象の保存先をどれも提供しない（Spanner・Bigtable の場面と、
-  /// Bigtable の封筒の値の表）。
+  /// この言語（この実行器）が、ケースの対象の保存先をどれも提供しない（Spanner の場面）。
   BackendNotProvided { detail: String },
   /// 表現能力の違い。
   Representation {

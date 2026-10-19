@@ -24,6 +24,8 @@ pub enum Phase {
   RetentionMark,
   ConfigurationRead,
   ConfigurationCreate,
+  JournalWritePrevious,
+  JournalWriteTail,
 }
 
 impl Phase {
@@ -42,6 +44,8 @@ impl Phase {
       "retention-mark" => Some(Phase::RetentionMark),
       "configuration-read" => Some(Phase::ConfigurationRead),
       "configuration-create" => Some(Phase::ConfigurationCreate),
+      "journal-write-previous" => Some(Phase::JournalWritePrevious),
+      "journal-write-tail" => Some(Phase::JournalWriteTail),
       _ => None,
     }
   }
@@ -117,6 +121,14 @@ pub struct FaultError {
   pub message: String,
 }
 
+/// 場面の `backends` が、ちょうど `bigtable` だけかを返す。`backends` がなければ偽を返す。
+fn targets_only_bigtable(case: &Value) -> bool {
+  case
+    .get("backends")
+    .and_then(Value::as_array)
+    .is_some_and(|backends| backends.len() == 1 && backends[0].as_str() == Some("bigtable"))
+}
+
 fn fault_error(index: usize, message: &str) -> FaultError {
   FaultError {
     index,
@@ -151,6 +163,12 @@ impl FaultPlan {
         .and_then(Value::as_str)
         .and_then(Phase::parse)
         .ok_or_else(|| fault_error(index, "phase が知らない段階"))?;
+      if matches!(phase, Phase::JournalWritePrevious | Phase::JournalWriteTail) && !targets_only_bigtable(case) {
+        return Err(fault_error(
+          index,
+          "journal-write の段階は backends が bigtable だけの場面でしか宣言できない",
+        ));
+      }
       let kind = fault
         .get("kind")
         .and_then(Value::as_str)
@@ -255,10 +273,24 @@ impl OperationFaults {
     self.complete_application(index)
   }
 
+  /// 段階 `phase` への適用を、差し込みの方式 `injection` の障害だけを対象に 1 回始める。
+  ///
+  /// 要求の置き換えと応答の置き換えを、別々の呼び出し点で適用するために使う。選び方は
+  /// [`OperationFaults::start_application`] と同じ。
+  pub fn start_application_injected(&mut self, phase: Phase, injection: Injection) -> Option<&Fault> {
+    let index = self.select(phase, Some(injection))?.index;
+    self.complete_application(index)
+  }
+
   /// 段階に適用できる障害を、適用回数を変えずに宣言順で選ぶ。
   pub fn select_application(&self, phase: Phase) -> Option<&Fault> {
+    self.select(phase, None)
+  }
+
+  fn select(&self, phase: Phase, injection: Option<Injection>) -> Option<&Fault> {
     self.entries.iter().find_map(|(fault, applied)| {
       (fault.phase == phase
+        && injection.is_none_or(|injection| fault.injection == injection)
         && match fault.repeat {
           Repeat::Count { count } => *applied < count,
           Repeat::UntilOperationFinishes => true,

@@ -1,6 +1,6 @@
-//! メモリと SQLite が共有する、障害の差し込みと保持履歴・観測の処理。
+//! メモリ・SQLite・Bigtable が共有する、障害の差し込みと保持履歴・観測の処理。
 //!
-//! 両保存先は、同じ段階を同じ誤りの分類へ対応付け、`retention-query` の応答計画（`history_pages`）を
+//! 各保存先は、同じ段階を同じ誤りの分類へ対応付け、`retention-query` の応答計画（`history_pages`）を
 //! 論理的な履歴のフックへ対応付ける（`conformance/README.md`）。同じ契約を 2 か所に書かないよう、ここに置く。
 
 use std::sync::Mutex;
@@ -14,31 +14,61 @@ use serde_json::{json, Value};
 use crate::{
   case::{required, seq, CaseId, ComparisonFailure},
   compare::json_equal,
-  fault::{FaultKind, FaultPlan, Injection, OperationFaults, Phase},
+  fault::{Fault, FaultKind, FaultPlan, Injection, OperationFaults, Phase},
 };
 
-/// 宣言された障害がすべて、フックと直列化の差し込みで表せるかを返す。
+/// メモリ・SQLite・Bigtable の全てが、フックと直列化の差し込みで表せる障害かを返す。
+fn is_common_fault_supported(fault: &Fault) -> bool {
+  match fault.phase {
+    Phase::SerializeEvent | Phase::SerializeSnapshot | Phase::DeserializeEvent | Phase::DeserializeSnapshot => {
+      fault.kind == FaultKind::SerializationError && fault.injection == Injection::ReplaceRequest
+    }
+    Phase::Commit | Phase::ReadEvents | Phase::ReadSnapshot | Phase::RetentionDelete => {
+      fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceRequest
+    }
+    Phase::RetentionQuery => {
+      (fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceRequest)
+        || (fault.kind == FaultKind::SdkResponse
+          && fault.injection == Injection::ReplaceResponse
+          && fault.details.get("history_pages").is_some())
+    }
+    _ => false,
+  }
+}
+
+/// Bigtable だけが表せる障害かを返す。機能 `bigtable` と試験のときだけ使う。
+///
+/// head の条件付き更新の応答の消失（BT-7・W-7）と、journal への書き出しの失敗（BT-7）が対象である。
+#[cfg(any(feature = "bigtable", test))]
+fn is_bigtable_fault_supported(fault: &Fault) -> bool {
+  match fault.phase {
+    Phase::Commit => fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceResponse,
+    Phase::JournalWritePrevious | Phase::JournalWriteTail => {
+      fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceRequest
+    }
+    _ => false,
+  }
+}
+
+/// 宣言された障害がすべて、メモリと SQLite のフックと直列化の差し込みで表せるかを返す。
 ///
 /// ストアの生成（操作 0）の障害は表せない。表せない障害があるケースは、実行せずに未検証にする。
 pub(crate) fn supports_all(plan: &FaultPlan) -> bool {
-  plan.faults().iter().all(|fault| {
-    let supported = match fault.phase {
-      Phase::SerializeEvent | Phase::SerializeSnapshot | Phase::DeserializeEvent | Phase::DeserializeSnapshot => {
-        fault.kind == FaultKind::SerializationError && fault.injection == Injection::ReplaceRequest
-      }
-      Phase::Commit | Phase::ReadEvents | Phase::ReadSnapshot | Phase::RetentionDelete => {
-        fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceRequest
-      }
-      Phase::RetentionQuery => {
-        (fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceRequest)
-          || (fault.kind == FaultKind::SdkResponse
-            && fault.injection == Injection::ReplaceResponse
-            && fault.details.get("history_pages").is_some())
-      }
-      _ => false,
-    };
-    fault.operation != 0 && supported
-  })
+  plan
+    .faults()
+    .iter()
+    .all(|fault| fault.operation != 0 && is_common_fault_supported(fault))
+}
+
+/// 宣言された障害がすべて、Bigtable のフックと直列化の差し込みで表せるかを返す。
+///
+/// 共通の障害に加えて、応答の消失と書き出しの失敗を表せる。ストアの生成（操作 0）の障害は表せない。
+#[cfg(any(feature = "bigtable", test))]
+pub(crate) fn supports_all_bigtable(plan: &FaultPlan) -> bool {
+  plan
+    .faults()
+    .iter()
+    .all(|fault| fault.operation != 0 && (is_common_fault_supported(fault) || is_bigtable_fault_supported(fault)))
 }
 
 /// 操作ごとの障害の適用回数と、応答計画の誤りを持ち、フックと直列化から呼ばれる。
@@ -67,10 +97,22 @@ impl HookFaults {
     self.invalid_response.lock().expect("応答検査のロック").take()
   }
 
-  /// 段階 `phase` に適用できる障害があれば、その段階の誤りを返す。なければ成功を返す。
+  /// 段階 `phase` に適用できる要求の置き換え（`replace-request`）の障害があれば、その段階の誤りを返す。
+  /// なければ成功を返す。応答の置き換えの障害は消費しない。
   pub(crate) fn inject(&self, phase: Phase) -> Result<(), EventStoreError> {
+    self.apply(phase, Injection::ReplaceRequest)
+  }
+
+  /// 段階 `phase` に適用できる応答の置き換え（`replace-response`）の障害があれば、その段階の誤りを返す。
+  /// なければ成功を返す。要求の置き換えの障害は消費しない。
+  #[cfg(any(feature = "bigtable", test))]
+  pub(crate) fn inject_response(&self, phase: Phase) -> Result<(), EventStoreError> {
+    self.apply(phase, Injection::ReplaceResponse)
+  }
+
+  fn apply(&self, phase: Phase, injection: Injection) -> Result<(), EventStoreError> {
     let mut faults = self.faults.lock().expect("障害消費のロック");
-    let Some(fault) = faults.start_application(phase) else {
+    let Some(fault) = faults.start_application_injected(phase, injection) else {
       return Ok(());
     };
     let source = Box::new(std::io::Error::other(
@@ -98,10 +140,12 @@ impl HookFaults {
         phase: SerializationPhase::DeserializeSnapshot,
         source,
       },
-      Phase::Commit | Phase::RetentionDelete => EventStoreError::Storage {
-        operation: StorageOperation::Append,
-        source,
-      },
+      Phase::Commit | Phase::RetentionDelete | Phase::JournalWritePrevious | Phase::JournalWriteTail => {
+        EventStoreError::Storage {
+          operation: StorageOperation::Append,
+          source,
+        }
+      }
       Phase::ReadEvents => EventStoreError::Storage {
         operation: StorageOperation::LoadEvents,
         source,
@@ -231,3 +275,7 @@ pub(crate) fn observe(
   }
   Ok(Value::Object(observed))
 }
+
+#[cfg(test)]
+#[path = "hook_faults_test.rs"]
+mod tests;

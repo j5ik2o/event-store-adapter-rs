@@ -93,6 +93,9 @@ jobs:
           - name: sqlite
             flags: --no-default-features --features sqlite
             mode: test
+          - name: bigtable
+            flags: --no-default-features --features bigtable
+            mode: build
           - name: all-features
             flags: --all-features
             mode: build
@@ -109,7 +112,7 @@ jobs:
       - name: cloud SDKs must be absent without features
         if: matrix.name == 'no-features'
         run: |
-          if cargo tree -p event-store-adapter-rs -e normal --no-default-features | grep -E "aws-|tonic|googleapis"; then
+          if cargo tree -p event-store-adapter-rs -e normal --no-default-features | grep -E "aws-|tonic|prost|googleapis"; then
             echo "cloud SDK crates leaked into the featureless dependency graph"
             exit 1
           fi
@@ -144,6 +147,8 @@ jobs:
             flags: --no-default-features --features dynamodb
           - name: sqlite
             flags: --no-default-features --features sqlite
+          - name: bigtable
+            flags: --no-default-features --features bigtable
           - name: all-features
             flags: --all-features
     name: clippy (${{ matrix.name }})
@@ -170,7 +175,9 @@ jobs:
       matrix:
         # The dynamodb leg builds the runner with its dynamodb feature; the runner itself starts the
         # digest-pinned DynamoDB Local container. The sqlite leg builds the runner with its sqlite feature and
-        # runs each scene on a fresh temporary file (no container). --require-all fails a leg on any unverified case.
+        # runs each scene on a fresh temporary file (no container). The bigtable leg builds the runner with its bigtable
+        # feature; the runner itself starts the digest-pinned Bigtable emulator container and runs each scene on a new
+        # journal/head table pair. --require-all fails a leg on any unverified case.
         include:
           - backend: memory
             features: ''
@@ -178,6 +185,8 @@ jobs:
             features: --features dynamodb
           - backend: sqlite
             features: --features sqlite
+          - backend: bigtable
+            features: --features bigtable
     name: conformance (${{ matrix.backend }})
     steps:
       - uses: actions/checkout@v7

@@ -277,8 +277,8 @@ fn rule_counts(report: &Value, rule: &str) -> (u64, u64, u64, u64) {
   )
 }
 
-/// この言語が提供しない保存先（Spanner・Bigtable）の場面 26 件と、Bigtable の封筒の値の表 10 件が、
-/// 理由付きの対象外になり、BT-D6a の行にも対象外だけが数えられていることを確かめる。
+/// この言語が提供しない保存先（Spanner）の場面 14 件が理由付きの対象外になり、Bigtable の場面 12 件と封筒の値の表 10 件が
+/// 「今回の保存先でない」対象外になること、BT-D6a の行にも対象外だけが数えられていることを確かめる。
 fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Value) {
   let not_provided: Vec<&Value> = report["cases"]
     .as_array()
@@ -286,7 +286,7 @@ fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Val
     .iter()
     .filter(|case| case["reason"]["kind"] == "backend-not-provided")
     .collect();
-  assert_eq!(not_provided.len(), 36, "{not_provided:?}");
+  assert_eq!(not_provided.len(), 14, "{not_provided:?}");
   for case in not_provided {
     assert_eq!(case["status"], "not-applicable", "{case}");
     assert!(
@@ -296,10 +296,19 @@ fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Val
       "{case}"
     );
   }
-  for id in ["spanner-change-feed-unsupported", "bigtable-envelope-event-empty"] {
-    let case = case_of(report, id);
-    assert_eq!(case["status"], "not-applicable", "{id}");
-    assert_eq!(case["reason"]["kind"], "backend-not-provided", "{id}");
+  let case = case_of(report, "spanner-change-feed-unsupported");
+  assert_eq!(case["status"], "not-applicable");
+  assert_eq!(case["reason"]["kind"], "backend-not-provided");
+  let bigtable_only: Vec<&Value> = report["cases"]
+    .as_array()
+    .expect("cases は配列")
+    .iter()
+    .filter(|case| case["id"].as_str().is_some_and(|id| id.starts_with("bigtable-")))
+    .collect();
+  assert_eq!(bigtable_only.len(), 22, "Bigtable の場面 12 件と封筒の値の表 10 件");
+  for case in bigtable_only {
+    assert_eq!(case["status"], "not-applicable", "{case}");
+    assert_eq!(case["reason"]["kind"], "backend-not-targeted", "{case}");
   }
   assert_eq!(rule_counts(report, "BT-D6a"), (0, 0, 10, 0));
 }
@@ -440,6 +449,77 @@ fn should_cli_with_require_all_runs_the_sqlite_cases() {
     assert_eq!(rule_counts(&report, "SQ-11"), (1, 0, 0, 0));
     assert_eq!(rule_counts(&report, "SQ-19"), (2, 0, 0, 0));
     assert_eq!(rule_counts(&report, "SQ-20"), (2, 0, 0, 0));
+  }
+}
+
+/// Bigtable だけの場面 12 件（`bigtable/` の 3 つのファイル）。
+const BIGTABLE_ONLY_CASES: [&str; 12] = [
+  "bigtable-ttl-unsupported",
+  "bigtable-change-feed-unsupported",
+  "bigtable-seeded-table-envelope-limit-mismatch",
+  "bigtable-seeded-keep-count-mismatch",
+  "bigtable-seeded-envelope-limit-mismatch",
+  "bigtable-seeded-configuration-match",
+  "bigtable-envelope-limit-above-maximum",
+  "bigtable-envelope-limit-below-minimum",
+  "bigtable-envelope-over-limit",
+  "bigtable-previous-event-write-failure",
+  "bigtable-new-tail-write-failure",
+  "bigtable-cas-response-lost",
+];
+
+#[test]
+fn should_cli_with_require_all_runs_the_bigtable_cases() {
+  let execution = execute_on_real_data("cli-require-all-bigtable", &["--backend", "bigtable", "--require-all"]);
+
+  let report = execution.report();
+  assert_eq!(report["backend"], "bigtable");
+  assert_eq!(
+    execution.code(),
+    Some(if cfg!(feature = "bigtable") { 0 } else { 1 }),
+    "stderr: {}",
+    String::from_utf8_lossy(&execution.output.stderr)
+  );
+  assert_eq!(
+    count_status(&report, "passed"),
+    if cfg!(feature = "bigtable") { 81 } else { 9 }
+  );
+  assert_eq!(count_status(&report, "failed"), 0);
+  assert_eq!(count_status(&report, "not-applicable"), 88);
+  assert_eq!(
+    count_status(&report, "unverified"),
+    if cfg!(feature = "bigtable") { 0 } else { 72 }
+  );
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  // Bigtable の場面は、feature があれば実エミュレーターで成功し、なければ未検証と報告される。
+  for id in BIGTABLE_ONLY_CASES {
+    assert_eq!(
+      case_of(&report, id)["status"],
+      if cfg!(feature = "bigtable") {
+        "passed"
+      } else {
+        "unverified"
+      },
+      "{id}"
+    );
+  }
+  assert_eq!(
+    report["cases"]
+      .as_array()
+      .expect("cases は配列")
+      .iter()
+      .filter(|case| case["reason"]["kind"] == "backend-not-provided")
+      .count(),
+    14,
+    "提供しないのは Spanner の場面だけ"
+  );
+  if cfg!(feature = "bigtable") {
+    // (passed, failed, not-applicable, unverified)
+    assert_eq!(rule_counts(&report, "BT-7"), (3, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "BT-13"), (1, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "BT-16"), (6, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "BT-17"), (1, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "BT-D6a"), (10, 0, 0, 0));
   }
 }
 

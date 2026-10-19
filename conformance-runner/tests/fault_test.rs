@@ -527,3 +527,58 @@ fn should_register_still_rejects_operation_beyond_the_number_of_steps_when_writt
 
   assert_eq!(error.index, 0);
 }
+
+// ---------------------------------------------------------------------------
+// Bigtable の書き出しの段階（journal-write-previous・journal-write-tail）
+// ---------------------------------------------------------------------------
+
+/// `backends` を持つ場面に、`journal-write-*` の障害を宣言する。
+fn journal_write_case(backends: Value, phases: &[&str]) -> Value {
+  let faults = phases.iter().map(|phase| fault(2, phase, count(1))).collect();
+  let mut declared = case(2, faults);
+  declared["backends"] = backends;
+  declared
+}
+
+#[test]
+fn should_register_accepts_journal_write_phases_in_a_scene_that_targets_only_bigtable() {
+  let plan = register(&journal_write_case(
+    json!(["bigtable"]),
+    &["journal-write-previous", "journal-write-tail"],
+  ));
+  let mut operation = plan.begin_operation(2);
+
+  let previous = operation
+    .start_application(Phase::JournalWritePrevious)
+    .map(|fault| fault.index);
+  let tail = operation
+    .start_application(Phase::JournalWriteTail)
+    .map(|fault| fault.index);
+
+  assert_eq!(previous, Some(0));
+  assert_eq!(tail, Some(1));
+  assert_eq!(operation.finish(), Ok(()));
+}
+
+#[test]
+fn should_register_rejects_journal_write_phases_in_a_scene_that_does_not_target_only_bigtable() {
+  for backends in [
+    json!(["bigtable", "memory"]),
+    json!(["memory"]),
+    json!(["dynamodb"]),
+    json!([]),
+  ] {
+    for phase in ["journal-write-previous", "journal-write-tail"] {
+      let error = register_error(&journal_write_case(backends.clone(), &[phase]));
+
+      assert_eq!(error.index, 0, "{backends} {phase}");
+    }
+  }
+  let mut without_backends = case(2, vec![fault(2, "journal-write-previous", count(1))]);
+  without_backends.as_object_mut().unwrap().remove("backends");
+  assert_eq!(
+    register_error(&without_backends).index,
+    0,
+    "backends がない場面も受け付けない"
+  );
+}

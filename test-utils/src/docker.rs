@@ -27,3 +27,34 @@ pub async fn dynamodb_local() -> anyhow::Result<ContainerAsync<GenericImage>> {
   crate::dynamodb::wait_until_list_tables_succeeds(&crate::dynamodb::create_dynamodb_local_client(port)).await?;
   Ok(container)
 }
+
+// Bigtable エミュレーターは google-cloud-cli の 587.0.0-emulators（2026-09-29 公開）を digest で固定する。
+// 動くタグ（`emulators` など）は使わない。testcontainers 0.28.0 は name:tag で結合するため、
+// name に "@sha256" を含めて digest 参照にする。
+const BIGTABLE_EMULATOR_IMAGE_NAME: &str = "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256";
+const BIGTABLE_EMULATOR_IMAGE_DIGEST: &str = "8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54";
+
+/// Bigtable エミュレーターがコンテナ内で待ち受けるポート。
+pub const BIGTABLE_EMULATOR_PORT: u16 = 8086;
+
+/// Bigtable エミュレーターを digest 固定のイメージで起動し、管理 API の `ListTables` が成功してから返す。
+///
+/// 返したコンテナは呼び出し側が保持する（drop で削除される）。
+pub async fn bigtable_emulator() -> anyhow::Result<ContainerAsync<GenericImage>> {
+  let container = GenericImage::new(BIGTABLE_EMULATOR_IMAGE_NAME, BIGTABLE_EMULATOR_IMAGE_DIGEST)
+    .with_exposed_port(testcontainers::core::ContainerPort::Tcp(BIGTABLE_EMULATOR_PORT))
+    .with_env_var("CLOUDSDK_CORE_DISABLE_PROMPTS", "1")
+    .with_cmd([
+      "gcloud",
+      "beta",
+      "emulators",
+      "bigtable",
+      "start",
+      "--host-port=0.0.0.0:8086",
+    ])
+    .start()
+    .await?;
+  let port = container.get_host_port_ipv4(BIGTABLE_EMULATOR_PORT).await?;
+  crate::bigtable::wait_until_list_tables_succeeds(port).await?;
+  Ok(container)
+}

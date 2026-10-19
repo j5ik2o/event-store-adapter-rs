@@ -2,6 +2,8 @@
 //! Legacy DynamoDB data is supported only by the feature-gated migration module.
 
 pub mod aggregate_id;
+#[cfg(feature = "bigtable")]
+pub mod bigtable;
 #[cfg(feature = "dynamodb")]
 pub mod dynamodb;
 pub mod error;
@@ -20,6 +22,10 @@ mod generic_event_store;
 mod storage_backend;
 
 pub use aggregate_id::{AggregateId, AidString};
+#[cfg(feature = "bigtable")]
+pub use bigtable::{
+  initialize_bigtable_store, BigtableConnection, BigtableOptions, BigtableTables, EventStoreForBigtable,
+};
 #[cfg(feature = "dynamodb")]
 pub use dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
 pub use error::{ConfigurationReason, ContractRule, EventStoreError, SerializationPhase, StorageOperation};

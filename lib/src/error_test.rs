@@ -164,3 +164,18 @@ fn should_configuration_read_errors_keep_the_existing_categories_and_safe_displa
   assert!(!error.to_string().contains("SECRET_ENDPOINT"));
   assert!(!error.to_string().contains("SDK_SENTINEL"));
 }
+
+// BT-16: 封筒の上限を超える入力の契約違反は、規則番号 `BT-16` で表示する。
+#[test]
+fn should_envelope_size_limit_rule_display_as_bt_16() {
+  assert_eq!(ContractRule::EnvelopeSizeLimit.to_string(), "BT-16");
+}
+
+// BT-16: 上限を超えた追記の契約違反の表示は、規則 BT-16 と関係する seq_nr を含む（E-3）。
+#[test]
+fn should_contract_violation_display_include_bt_16_and_the_seq_nr_for_an_envelope_over_the_limit() {
+  let text = contract_violation(ContractRule::EnvelopeSizeLimit, Some(2), None).to_string();
+
+  assert!(text.contains("BT-16"));
+  assert!(text.contains("seq_nr=2"));
+}
