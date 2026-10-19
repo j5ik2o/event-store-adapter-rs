@@ -196,6 +196,7 @@ fn should_required_store_and_payload_cases_pass_real_operations() {
   const REQUIRED_MEMORY_STORE_AND_PAYLOAD_CASES: &[&str] = &[
     "memory-store-new-independent",
     "memory-store-shared",
+    "memory-store-shared-configuration",
     "memory-payload-written-mutation",
     "memory-payload-read-mutation",
   ];

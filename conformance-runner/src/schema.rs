@@ -85,8 +85,8 @@ impl SchemaSet {
 /// 配布物の中の相対パス `path` のデータのファイルを検査する、スキーマの形式を返す。
 ///
 /// `coverage.json` は coverage、`dynamodb/layout.json` は layout、`values/` の下は values、
-/// `scenarios/` の下と `dynamodb/` の下（layout 以外）と `memory/` の下は scenarios。それ以外（`manifest.json` や、
-/// ケースを持たないファイル）は `None` を返す。
+/// `scenarios/` の下と、保存先ごとのディレクトリ（`dynamodb/`〔layout 以外〕・`memory/`・`sqlite/`・`spanner/`・
+/// `bigtable/`）の下は scenarios。それ以外（`manifest.json` や、ケースを持たないファイル）は `None` を返す。
 pub fn schema_format(path: &str) -> Option<&'static str> {
   if !path.ends_with(".json") {
     return None;
@@ -95,7 +95,10 @@ pub fn schema_format(path: &str) -> Option<&'static str> {
     "coverage.json" => Some("coverage"),
     "dynamodb/layout.json" => Some("layout"),
     _ if path.starts_with("values/") => Some("values"),
-    _ if path.starts_with("scenarios/") || path.starts_with("dynamodb/") || path.starts_with("memory/") => {
+    _ if ["scenarios/", "dynamodb/", "memory/", "sqlite/", "spanner/", "bigtable/"]
+      .iter()
+      .any(|directory| path.starts_with(directory)) =>
+    {
       Some("scenarios")
     }
     _ => None,
