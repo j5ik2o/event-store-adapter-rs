@@ -10,7 +10,7 @@ use event_store_adapter_conformance_rs::report::{
   CaseOutcome, CaseReport, NotApplicableReason, ObservedValues, RepresentationGap, UnverifiedReason,
 };
 use event_store_adapter_conformance_rs::runner::{run, run_case, CaseExecutor, PreparedCase, Target};
-use event_store_adapter_conformance_rs::{target_dynamodb, target_memory};
+use event_store_adapter_conformance_rs::{target_dynamodb, target_memory, target_sqlite};
 use serde_json::{json, Value};
 
 fn classification_executor(_: &Case, _: PreparedCase) -> CaseOutcome {
@@ -131,6 +131,9 @@ fn should_run_delegates_prepared_cases_and_preserves_executor_outcomes() {
     name: "custom",
     capabilities: &[],
     has_layout: false,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
   let outcomes = [
     CaseOutcome::Passed {
@@ -514,7 +517,10 @@ fn should_target_constants_carry_the_capabilities_and_layout_of_each_backend() {
     Target {
       name: "memory",
       capabilities: &[],
-      has_layout: false
+      has_layout: false,
+      extra_store_settings: &[],
+      extra_seed_items: &[],
+      represents_change_feed: false,
     }
   );
   assert_eq!(
@@ -522,7 +528,21 @@ fn should_target_constants_carry_the_capabilities_and_layout_of_each_backend() {
     Target {
       name: "dynamodb",
       capabilities: &["ttl"],
-      has_layout: true
+      has_layout: true,
+      extra_store_settings: &[],
+      extra_seed_items: &[],
+      represents_change_feed: false,
+    }
+  );
+  assert_eq!(
+    target_sqlite::TARGET,
+    Target {
+      name: "sqlite",
+      capabilities: &[],
+      has_layout: false,
+      extra_store_settings: &["lock_wait_milliseconds"],
+      extra_seed_items: &["configuration"],
+      represents_change_feed: true,
     }
   );
 }
@@ -534,11 +554,17 @@ fn should_run_case_decides_capability_from_the_given_target_not_from_its_name() 
     name: "memory",
     capabilities: &["ttl"],
     has_layout: false,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
   let dynamodb_without_ttl = Target {
     name: "dynamodb",
     capabilities: &[],
     has_layout: true,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
 
   let with_ttl = run_case(&case, &memory_with_ttl, &no_exclusions(), classification_executor);
@@ -563,11 +589,17 @@ fn should_run_case_requires_every_capability_word_to_be_provided() {
     name: "x",
     capabilities: &["ttl"],
     has_layout: false,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
   let both = Target {
     name: "x",
     capabilities: &["other", "ttl"],
     has_layout: false,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
 
   assert!(is_backend_not_targeted(&run_case(
@@ -591,11 +623,17 @@ fn should_run_case_decides_layout_from_has_layout_not_from_the_name() {
     name: "memory",
     capabilities: &[],
     has_layout: true,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
   let dynamodb_without_layout = Target {
     name: "dynamodb",
     capabilities: &["ttl"],
     has_layout: false,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
 
   let with_layout = run_case(&case, &memory_with_layout, &no_exclusions(), classification_executor);
@@ -613,13 +651,16 @@ fn should_run_case_decides_layout_from_has_layout_not_from_the_name() {
 #[test]
 fn should_run_case_classifies_a_target_the_runner_has_never_heard_of() {
   let unknown = Target {
-    name: "sqlite",
+    name: "custom",
     capabilities: &[],
     has_layout: false,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
 
   let listed = run_case(
-    &scenario(&["T-1"], scenario_body(&["sqlite"])),
+    &scenario(&["T-1"], scenario_body(&["custom"])),
     &unknown,
     &no_exclusions(),
     classification_executor,
@@ -765,7 +806,7 @@ fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory()
 }
 
 #[test]
-fn should_run_marks_only_memory_only_cases_as_not_targeted_on_dynamodb() {
+fn should_run_marks_only_memory_only_and_sqlite_only_cases_as_not_targeted_on_dynamodb() {
   let data = real_data();
 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
@@ -776,18 +817,26 @@ fn should_run_marks_only_memory_only_cases_as_not_targeted_on_dynamodb() {
     .map(|report| report.id.as_str())
     .collect();
   not_targeted.sort_unstable();
-  assert_eq!(
-    not_targeted,
-    vec![
-      "memory-change-feed-unsupported",
-      "memory-payload-read-mutation",
-      "memory-payload-written-mutation",
-      "memory-store-new-independent",
-      "memory-store-shared",
-      "memory-store-shared-configuration",
-      "memory-ttl-unsupported"
-    ]
-  );
+  // SQLite を提供するので、SQLite だけが対象の場面 8 件も「提供しない」でなく「今回の保存先でない」になる。
+  let mut expected = vec![
+    "memory-change-feed-unsupported",
+    "memory-payload-read-mutation",
+    "memory-payload-written-mutation",
+    "memory-store-new-independent",
+    "memory-store-shared",
+    "memory-store-shared-configuration",
+    "memory-ttl-unsupported",
+    "sqlite-change-feed-unsupported",
+    "sqlite-seeded-change-feed-enabled",
+    "sqlite-seeded-configuration-match",
+    "sqlite-seeded-keep-count-mismatch",
+    "sqlite-seeded-layout-version-mismatch",
+    "sqlite-ttl-unsupported",
+    "sqlite-write-lock-busy",
+    "store-shared-persistent",
+  ];
+  expected.sort_unstable();
+  assert_eq!(not_targeted, expected);
 }
 
 #[test]
@@ -797,8 +846,8 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
   // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーに加え、
-  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 44 は、
-  // この言語が提供しない保存先（SQLite・Spanner・Bigtable）の場面と、Bigtable の封筒の値の表。
+  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 36 は、
+  // この言語が提供しない保存先（Spanner・Bigtable）の場面と、Bigtable の封筒の値の表。
   assert_eq!(counts(&reports), (64, 0, 105, 0));
 }
 
@@ -809,8 +858,20 @@ fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 65 のうち 7 は、
-  // メモリだけが対象の場面、44 は、この言語が提供しない保存先の場面と値の表。
+  // メモリだけが対象の場面、8 は SQLite だけが対象の場面、36 は、この言語が提供しない保存先の場面と値の表。
   assert_eq!(counts(&reports), (9, 0, 65, 95));
+}
+
+#[test]
+fn should_run_classifies_the_sqlite_leg_without_running_a_store() {
+  let data = real_data();
+
+  let reports = run(&data, &target_sqlite::TARGET, classification_executor);
+
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 57 は、SQLite が対象で
+  // 保存先の実行に回る場面 45 と値の表 12 で、SQLite だけの場面の `store`・`seed` の要素を未知の要素にしない。
+  // 対象外 103 のうち 36 は、この言語が提供しない保存先（Spanner・Bigtable）の場面と値の表。
+  assert_eq!(counts(&reports), (9, 0, 103, 57));
 }
 
 #[test]
@@ -893,6 +954,40 @@ fn should_run_case_executes_a_case_with_change_feed_false_or_omitted() {
       );
     }
   }
+}
+
+#[test]
+fn should_run_case_executes_a_case_requesting_the_change_feed_on_a_target_that_represents_it() {
+  let case = change_feed_case(&["sqlite"], Some(true));
+  let calls = Cell::new(0);
+
+  let outcome = run_case(&case, &target_sqlite::TARGET, &no_exclusions(), |_, _| {
+    calls.set(calls.get() + 1);
+    CaseOutcome::Passed { values: None }
+  });
+
+  assert_eq!(calls.get(), 1, "変更フィードを求める設定を表せる保存先へは委譲する");
+  assert_eq!(outcome, CaseOutcome::Passed { values: None });
+}
+
+#[test]
+fn should_run_case_executes_the_sqlite_change_feed_scene_while_the_memory_one_stays_unrepresentable() {
+  let data = real_data();
+  let sqlite = case_of_real_data(&data, "sqlite-change-feed-unsupported");
+  assert_eq!(sqlite.body["store"]["change_feed"], json!(true));
+  let memory = case_of_real_data(&data, "memory-change-feed-unsupported");
+
+  let on_sqlite = run_case(sqlite, &target_sqlite::TARGET, &data.coverage, classification_executor);
+  let on_memory = run_case(memory, &target_memory::TARGET, &data.coverage, target_memory::run_case);
+
+  assert!(
+    is_not_executed(&on_sqlite),
+    "SQLite は設定エラーとして実行する。表現不能にしない: {on_sqlite:?}"
+  );
+  assert!(
+    is_representation(&on_memory, RepresentationGap::Unrepresentable),
+    "{on_memory:?}"
+  );
 }
 
 // buildAid の 9 件が両保存先で成功する。
@@ -1025,7 +1120,7 @@ fn should_run_keeps_the_id_and_all_rules_of_each_case() {
 }
 
 // ---------------------------------------------------------------------------
-// この言語が提供しない保存先（SQLite・Spanner・Bigtable）のケース
+// この言語が提供しない保存先（Spanner・Bigtable）のケース
 // ---------------------------------------------------------------------------
 
 /// Bigtable の封筒の値の表の操作名。
@@ -1065,7 +1160,7 @@ fn case_of_real_data<'a>(data: &'a DataSet, id: &str) -> &'a Case {
 
 /// 実データのうち、この言語が提供しない保存先のケースを返す。
 ///
-/// 場面は `backends` にメモリも DynamoDB もないもの、値の表は Bigtable の封筒の操作。
+/// 場面は `backends` にメモリも DynamoDB も SQLite もないもの、値の表は Bigtable の封筒の操作。
 fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
   data
     .cases
@@ -1075,7 +1170,7 @@ fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
         !backends.is_empty()
           && backends
             .iter()
-            .all(|name| !matches!(name.as_str(), Some("memory" | "dynamodb")))
+            .all(|name| !matches!(name.as_str(), Some("memory" | "dynamodb" | "sqlite")))
       }),
       CaseKind::ValueTable => case.body["operation"]
         .as_str()
@@ -1086,13 +1181,13 @@ fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
 }
 
 #[test]
-fn should_run_marks_the_44_cases_of_backends_not_provided_as_not_provided_on_every_backend() {
+fn should_run_marks_the_36_cases_of_backends_not_provided_as_not_provided_on_every_backend() {
   let data = real_data();
   let cases = cases_of_backends_not_provided(&data);
   assert_eq!(
     cases.len(),
-    44,
-    "SQLite・Spanner・Bigtable の場面 34 件と、Bigtable の封筒の値の表 10 件"
+    36,
+    "Spanner・Bigtable の場面 26 件と、Bigtable の封筒の値の表 10 件"
   );
 
   for (target, _) in TARGETS {
@@ -1112,13 +1207,36 @@ fn should_run_marks_the_44_cases_of_backends_not_provided_as_not_provided_on_eve
 }
 
 #[test]
-fn should_run_case_marks_a_sqlite_only_scene_as_not_provided_and_names_the_backend() {
+fn should_run_case_marks_a_sqlite_only_scene_as_not_targeted_instead_of_not_provided() {
   let data = real_data();
   let case = case_of_real_data(&data, "sqlite-ttl-unsupported");
   assert_eq!(case.body["backends"], json!(["sqlite"]));
   assert!(case.body["store"].get("change_feed").is_none());
 
   for (target, _) in TARGETS {
+    let outcome = run_case(case, target, &data.coverage, |_, _| {
+      panic!("今回の保存先でない場面を保存先実行関数へ委譲しない")
+    });
+
+    let report = report_of_outcome(&outcome);
+    assert_eq!(report["status"], "not-applicable", "{}: {report}", target.name);
+    assert_eq!(
+      report["reason"]["kind"], "backend-not-targeted",
+      "SQLite は提供する保存先なので、「提供しない」にしない: {}: {report}",
+      target.name
+    );
+    let detail = report["reason"]["detail"].as_str().expect("detail は文字列");
+    assert!(detail.contains(target.name), "{}: {detail}", target.name);
+  }
+}
+
+#[test]
+fn should_run_case_marks_a_spanner_only_scene_as_not_provided_and_names_the_backend() {
+  let data = real_data();
+  let case = case_of_real_data(&data, "spanner-change-feed-unsupported");
+  assert_eq!(case.body["backends"], json!(["spanner"]));
+
+  for target in [&target_memory::TARGET, &target_dynamodb::TARGET, &target_sqlite::TARGET] {
     let outcome = run_case(case, target, &data.coverage, |_, _| {
       panic!("提供しない保存先のケースを保存先実行関数へ委譲しない")
     });
@@ -1132,7 +1250,7 @@ fn should_run_case_marks_a_sqlite_only_scene_as_not_provided_and_names_the_backe
     );
     let detail = report["reason"]["detail"].as_str().expect("detail は文字列");
     assert!(
-      detail.contains("提供しない") && detail.contains("sqlite"),
+      detail.contains("提供しない") && detail.contains("spanner"),
       "{}: {detail}",
       target.name
     );
@@ -1248,6 +1366,9 @@ fn should_run_case_hands_the_cases_of_the_given_backend_to_the_executor_instead_
     name: "bigtable",
     capabilities: &[],
     has_layout: false,
+    extra_store_settings: &[],
+    extra_seed_items: &[],
+    represents_change_feed: false,
   };
   let data = real_data();
   let envelope = case_of_real_data(&data, "bigtable-envelope-event-empty");
@@ -1271,6 +1392,7 @@ fn should_run_case_hands_the_cases_of_the_given_backend_to_the_executor_instead_
 // ---------------------------------------------------------------------------
 
 /// SQLite・Spanner・Bigtable の場面だけが使う要素（`store` の設定、シード、操作、障害の種類と段階）を全部持つ場面を作る。
+/// メモリ・DynamoDB の場面では、SQLite の要素も含めて知らない要素になる。
 fn scene_with_elements_of_other_backends(backends: &[&str]) -> Case {
   let mut body = scenario_body(backends);
   body["store"]["lock_wait_milliseconds"] = json!(100);
@@ -1362,8 +1484,57 @@ fn should_run_case_does_not_treat_known_store_settings_or_seed_items_as_unknown_
 }
 
 #[test]
+fn should_run_case_does_not_treat_sqlite_store_settings_and_seed_items_as_unknown_element() {
+  let mut body = scenario_body(&["sqlite"]);
+  body["store"] = json!({"retention_count": null, "retention_mode": "delete", "lock_wait_milliseconds": 100});
+  body["seed"] = json!({"configuration": {
+    "store_id": "5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11", "layout_version": 1, "keep_snapshot_count": null,
+    "retention_mode": "delete", "change_feed_enabled": 0
+  }});
+
+  let outcome = run_case(
+    &scenario(&["T-1"], body),
+    &target_sqlite::TARGET,
+    &no_exclusions(),
+    classification_executor,
+  );
+
+  assert!(is_not_executed(&outcome), "{outcome:?}");
+}
+
+#[test]
+fn should_run_case_fails_the_elements_of_other_backends_on_sqlite_as_unknown_element() {
+  let elements = [
+    ("store", "transaction_retry_limit", json!(3)),
+    ("store", "ttl_grace_days", json!(1)),
+    ("store", "envelope_limit_bytes", json!(1_048_576)),
+    ("seed", "row_deletion_policy_days", json!(1)),
+  ];
+
+  for (section, key, value) in &elements {
+    let mut body = scenario_body(&["sqlite"]);
+    if *section == "seed" {
+      body["seed"] = json!({});
+    }
+    body[*section][*key] = value.clone();
+
+    let outcome = run_case(
+      &scenario(&["T-1"], body),
+      &target_sqlite::TARGET,
+      &no_exclusions(),
+      classification_executor,
+    );
+
+    assert!(
+      matches!(&outcome, CaseOutcome::Failed { detail, .. } if detail.contains(&format!("{section}.{key}"))),
+      "{section}.{key}: {outcome:?}"
+    );
+  }
+}
+
+#[test]
 fn should_run_case_marks_a_not_provided_scene_before_interpreting_any_unknown_element() {
-  let case = scene_with_elements_of_other_backends(&["sqlite"]);
+  let case = scene_with_elements_of_other_backends(&["spanner"]);
 
   for (target, _) in TARGETS {
     let outcome = run_case(&case, target, &no_exclusions(), |_, _| {

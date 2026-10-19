@@ -90,6 +90,9 @@ jobs:
           - name: dynamodb
             flags: --no-default-features --features dynamodb
             mode: build
+          - name: sqlite
+            flags: --no-default-features --features sqlite
+            mode: test
           - name: all-features
             flags: --all-features
             mode: build
@@ -108,6 +111,13 @@ jobs:
         run: |
           if cargo tree -p event-store-adapter-rs -e normal --no-default-features | grep -E "aws-|tonic|googleapis"; then
             echo "cloud SDK crates leaked into the featureless dependency graph"
+            exit 1
+          fi
+      - name: SQLite must be absent without features
+        if: matrix.name == 'no-features'
+        run: |
+          if cargo tree -p event-store-adapter-rs -e normal --no-default-features | grep -E "rusqlite|libsqlite3-sys"; then
+            echo "SQLite crates leaked into the featureless dependency graph"
             exit 1
           fi
       - name: no hand-written unsafe impl
@@ -132,6 +142,8 @@ jobs:
             flags: --no-default-features
           - name: dynamodb
             flags: --no-default-features --features dynamodb
+          - name: sqlite
+            flags: --no-default-features --features sqlite
           - name: all-features
             flags: --all-features
     name: clippy (${{ matrix.name }})
@@ -157,12 +169,15 @@ jobs:
       fail-fast: false
       matrix:
         # The dynamodb leg builds the runner with its dynamodb feature; the runner itself starts the
-        # digest-pinned DynamoDB Local container. --require-all fails a leg on any unverified case.
+        # digest-pinned DynamoDB Local container. The sqlite leg builds the runner with its sqlite feature and
+        # runs each scene on a fresh temporary file (no container). --require-all fails a leg on any unverified case.
         include:
           - backend: memory
             features: ''
           - backend: dynamodb
             features: --features dynamodb
+          - backend: sqlite
+            features: --features sqlite
     name: conformance (${{ matrix.backend }})
     steps:
       - uses: actions/checkout@v7

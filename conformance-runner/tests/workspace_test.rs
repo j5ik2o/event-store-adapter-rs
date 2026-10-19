@@ -161,3 +161,67 @@ fn should_dynamodb_local_tests_require_the_opt_in_dynamodb_feature() {
     assert_eq!(target["required-features"], json!(["dynamodb"]));
   }
 }
+
+#[test]
+fn should_library_keep_the_bundled_sqlite_dependency_optional_behind_the_sqlite_feature() {
+  let metadata = workspace_metadata();
+  let library = metadata["packages"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|package| package["name"] == "event-store-adapter-rs")
+    .unwrap();
+
+  let defaults = library["features"]["default"].as_array().unwrap();
+  assert!(
+    !defaults.iter().any(|feature| feature == "sqlite"),
+    "SQLite は既定の機能に入れない: {defaults:?}"
+  );
+  let sqlite = library["features"]["sqlite"]
+    .as_array()
+    .expect("ライブラリに機能 sqlite がある");
+  assert!(
+    sqlite.contains(&json!("dep:rusqlite")),
+    "機能 sqlite が rusqlite を有効にする: {sqlite:?}"
+  );
+  let rusqlite = library["dependencies"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|dependency| dependency["name"] == "rusqlite" && dependency["kind"].is_null())
+    .expect("rusqlite は通常の依存として宣言される");
+  assert_eq!(
+    rusqlite["optional"], true,
+    "機能 sqlite を付けないビルドに rusqlite を入れない"
+  );
+  assert!(
+    requested_features(library, "rusqlite").contains(&"bundled".to_string()),
+    "SQLite 本体を同梱する: {:?}",
+    requested_features(library, "rusqlite")
+  );
+}
+
+#[test]
+fn should_sqlite_tests_require_the_opt_in_sqlite_feature() {
+  let package = runner_package(&workspace_metadata());
+
+  assert_eq!(package["features"]["default"], json!([]));
+  let sqlite = package["features"]["sqlite"]
+    .as_array()
+    .expect("実行器に機能 sqlite がある");
+  assert!(
+    sqlite.contains(&json!("event-store-adapter-rs/sqlite")),
+    "実行器の機能 sqlite がライブラリの機能 sqlite を有効にする: {sqlite:?}"
+  );
+  assert!(
+    !requested_features(&package, "event-store-adapter-rs").contains(&"sqlite".to_string()),
+    "ライブラリの機能 sqlite を常には有効にしない"
+  );
+  let target = package["targets"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|target| target["name"] == "sqlite_test")
+    .expect("sqlite_test がある");
+  assert_eq!(target["required-features"], json!(["sqlite"]));
+}

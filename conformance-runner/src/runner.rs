@@ -20,6 +20,14 @@ pub struct Target {
   pub capabilities: &'static [&'static str],
   /// 3 テーブルの配置のケースの対象なら真。
   pub has_layout: bool,
+  /// 共通の `store` の設定（[`KNOWN_STORE_SETTINGS`]）に加えて、この保存先が解釈する `store` の設定。
+  pub extra_store_settings: &'static [&'static str],
+  /// 共通の `seed` の項目（[`KNOWN_SEED_ITEMS`]）に加えて、この保存先が解釈する `seed` の項目。
+  pub extra_seed_items: &'static [&'static str],
+  /// 設定の型が、変更フィードを求める設定（`change_feed = true`）を表せるなら真。
+  ///
+  /// 表せる保存先は、その設定を「表現不能」にせず、実行して結果を比べる。
+  pub represents_change_feed: bool,
 }
 
 /// 準備（generators の展開と障害の登録）を通したケースを表す。
@@ -32,7 +40,7 @@ pub struct PreparedCase {
 pub type CaseExecutor = fn(&Case, PreparedCase) -> CaseOutcome;
 
 /// この言語が提供する保存先。
-pub const PROVIDED_BACKENDS: [&str; 2] = ["memory", "dynamodb"];
+pub const PROVIDED_BACKENDS: [&str; 3] = ["memory", "dynamodb", "sqlite"];
 
 /// 特定の保存先に属する値の表の操作と、その保存先。
 const VALUE_OPERATION_BACKENDS: [(&str, &str); 3] = [
@@ -91,19 +99,22 @@ fn declared_backends(case: &Case) -> Option<Vec<&str>> {
 }
 
 /// `store`・`seed` のうち、実行器が知らない項目を `store.<名前>`・`seed.<名前>` の形で返す。
-fn unknown_elements(body: &Value) -> Vec<String> {
-  let unknown_in = |section: &str, known: &[&str]| -> Vec<String> {
+///
+/// 知っている項目は、共通のものと、実行する保存先が解釈するもの（[`Target::extra_store_settings`]・
+/// [`Target::extra_seed_items`]）。ほかの保存先だけの項目は、知らない項目になる。
+fn unknown_elements(body: &Value, target: &Target) -> Vec<String> {
+  let unknown_in = |section: &str, known: &[&str], extra: &[&str]| -> Vec<String> {
     body
       .get(section)
       .and_then(Value::as_object)
       .into_iter()
       .flat_map(|items| items.keys())
-      .filter(|key| !known.contains(&key.as_str()))
+      .filter(|key| !known.contains(&key.as_str()) && !extra.contains(&key.as_str()))
       .map(|key| format!("{section}.{key}"))
       .collect()
   };
-  let mut unknown = unknown_in("store", &KNOWN_STORE_SETTINGS);
-  unknown.extend(unknown_in("seed", &KNOWN_SEED_ITEMS));
+  let mut unknown = unknown_in("store", &KNOWN_STORE_SETTINGS, target.extra_store_settings);
+  unknown.extend(unknown_in("seed", &KNOWN_SEED_ITEMS, target.extra_seed_items));
   unknown
 }
 
@@ -166,7 +177,7 @@ fn requests_change_feed(body: &Value) -> bool {
 /// ケース 1 つを分類し、実装済みの保存先へ渡す。
 ///
 /// 判定の順は、保存先の対象（対象でなければ、提供しない保存先か今回の保存先でないかの理由）、
-/// 表現不能（`signed_seq_nr`・`store.change_feed`）、精度の選択、FNV-1a 64 の決定、
+/// 表現不能（`signed_seq_nr`、変更フィードを表せない保存先での `store.change_feed`）、精度の選択、FNV-1a 64 の決定、
 /// `coverage.json` の除外、実行器が知らない `store`・`seed` の要素、準備の失敗、実装していない条件の語、
 /// 値の表の `buildAid` の実行、渡された保存先実行関数への委譲、の順。
 /// 対象外のケースは、中身を解釈する前に分類するので、知らない要素があっても誤りにならない。
@@ -185,11 +196,13 @@ pub fn run_case(
       detail: "SeqNr は u64 で、負数を表せない（signed_seq_nr）".to_string(),
     });
   }
-  if requests_change_feed(&case.body) {
+  if requests_change_feed(&case.body) && !target.represents_change_feed {
     return not_applicable(NotApplicableReason::Representation {
       representation: RepresentationGap::Unrepresentable,
-      detail: "設定の型（RetentionSettings・DynamoDbOptions）に変更フィードの項目がなく、change_feed = true を表せない"
-        .to_string(),
+      detail: format!(
+        "保存先 {} の設定の型に変更フィードの項目がなく、change_feed = true を表せない",
+        target.name
+      ),
     });
   }
   if case.body.pointer("/representation/time_precision") == Some(&Value::String("milliseconds".to_string())) {
@@ -215,7 +228,7 @@ pub fn run_case(
       detail: "ケースの全規則が coverage.json の除外の対象".to_string(),
     });
   }
-  let unknown = unknown_elements(&case.body);
+  let unknown = unknown_elements(&case.body, target);
   if !unknown.is_empty() {
     return CaseOutcome::Failed {
       failed_operation: None,

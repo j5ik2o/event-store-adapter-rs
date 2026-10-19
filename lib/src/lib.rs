@@ -13,6 +13,8 @@ pub mod migration;
 pub mod retention;
 pub mod seq_nr;
 pub mod serializer;
+#[cfg(feature = "sqlite")]
+pub mod sqlite;
 
 mod generic_event_store;
 mod storage_backend;
@@ -29,6 +31,8 @@ pub use migration::{migrate_v3_dynamodb, LegacyDynamoDbTables, MigrationError, M
 pub use retention::{select_expired_history, ttl_expires_epoch_seconds, RetentionMode, RetentionSettings};
 pub use seq_nr::{SeqNr, SEQ_NR_MAX};
 pub use serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer};
+#[cfg(feature = "sqlite")]
+pub use sqlite::{initialize_sqlite_store, EventStoreForSqlite, SqliteOptions};
 
 #[cfg(test)]
 mod aggregate_id_test;
