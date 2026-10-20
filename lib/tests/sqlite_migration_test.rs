@@ -373,9 +373,18 @@ fn should_reject_the_same_file_after_normalizing_the_path() {
   fs::create_dir(directory.file("sub")).expect("下のディレクトリを作れる");
   let old_before = old_bytes(&old);
 
-  // `.` と `..` を含む書き方は、文字列としても `Path` としても `old` と等しくならない。
-  for notation in ["./old.sqlite3", "sub/../old.sqlite3"] {
-    let same = directory.file(notation);
+  // `Path` の比較は途中の `.` を無視するが、`..` とシンボリックリンクは解決しない。
+  // どちらも `Path` としては `old` と異なるので、正規化してから比べないと拒めない。
+  let mut paths = vec![directory.file("sub/../old.sqlite3")];
+  #[cfg(unix)]
+  {
+    let link = directory.file("link.sqlite3");
+    std::os::unix::fs::symlink(&old, &link).expect("シンボリックリンクを作れる");
+    paths.push(link);
+  }
+  for same in paths {
+    assert_ne!(same, old);
+    let notation = same.display();
 
     let report = migrate_v3_sqlite(&old, &same, &mapping()).expect("同じファイルは拒否として報告される");
 
