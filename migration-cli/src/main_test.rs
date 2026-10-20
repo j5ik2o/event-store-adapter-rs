@@ -55,3 +55,68 @@ fn should_reject_missing_duplicate_and_unknown_arguments() {
   }
   assert!(Arguments::parse(["--help".into()]).unwrap().is_none());
 }
+
+fn sqlite_args() -> Vec<String> {
+  ["--old-sqlite", "old.sqlite3", "--sqlite", "new.sqlite3"]
+    .map(String::from)
+    .to_vec()
+}
+
+#[test]
+fn should_route_sqlite_arguments_and_keep_dynamodb_parsing() {
+  let Some(Command::Sqlite(sqlite)) = parse_command(sqlite_args()).unwrap() else {
+    panic!("SQLite の旗だけの引数は SQLite の移行へ回る");
+  };
+  assert_eq!(sqlite.legacy_path, "old.sqlite3");
+  assert_eq!(sqlite.path, "new.sqlite3");
+  assert_eq!(sqlite.mapping_path, None);
+
+  let mut with_mapping = sqlite_args();
+  with_mapping.extend(["--type-mapping", "types.json"].map(String::from));
+  let Some(Command::Sqlite(sqlite)) = parse_command(with_mapping).unwrap() else {
+    panic!("共通の --type-mapping は SQLite の旗と組み合わせられる");
+  };
+  assert_eq!(sqlite.mapping_path.as_deref(), Some("types.json"));
+
+  let Some(Command::DynamoDb(dynamodb)) = parse_command(args()).unwrap() else {
+    panic!("SQLite の旗がなければ従来の DynamoDB の解析へ回る");
+  };
+  assert_eq!(dynamodb.legacy.journal_table_name, "old-events");
+  assert_eq!(dynamodb.legacy.snapshot_table_name, "old-state");
+  assert_eq!(dynamodb.tables.journal_table_name, "new-events");
+  assert_eq!(dynamodb.tables.snapshot_table_name, "new-state");
+  assert_eq!(dynamodb.tables.head_table_name, "new-head");
+  assert_eq!(dynamodb.tables.snapshot_history_index_name, "new-history");
+  assert_eq!(dynamodb.mapping_path, None);
+
+  assert_eq!(
+    parse_command(vec!["--other".into(), "x".into()]).err().as_deref(),
+    Some("未対応の引数: --other")
+  );
+  assert!(parse_command(vec!["--help".into()]).unwrap().is_none());
+  assert!(parse_command(vec!["-h".into()]).unwrap().is_none());
+}
+
+#[test]
+fn should_reject_mixed_sqlite_and_dynamodb_arguments() {
+  for (flag, value) in [
+    ("--old-journal", "old-events"),
+    ("--old-snapshot", "old-state"),
+    ("--journal", "new-events"),
+    ("--snapshot", "new-state"),
+    ("--head", "new-head"),
+    ("--history-index", "new-history"),
+    ("--endpoint-url", "http://127.0.0.1:8000"),
+    ("--region", "us-west-1"),
+  ] {
+    let mut inputs = sqlite_args();
+    inputs.extend([flag, value].map(String::from));
+    assert!(
+      parse_command(inputs).is_err(),
+      "{flag} を SQLite の旗と混ぜたのに受け付けた"
+    );
+  }
+  let mut all = args();
+  all.extend(sqlite_args());
+  assert!(parse_command(all).is_err());
+}

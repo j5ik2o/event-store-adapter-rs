@@ -1,5 +1,5 @@
-//! Event stores for Memory and DynamoDB using the shared event envelope contract.
-//! Legacy DynamoDB data is supported only by the feature-gated migration module.
+//! Event stores for Memory, DynamoDB, and SQLite using the shared event envelope contract.
+//! Legacy DynamoDB and SQLite data is supported only by the feature-gated migration module.
 
 pub mod aggregate_id;
 #[cfg(feature = "bigtable")]
@@ -10,7 +10,7 @@ pub mod error;
 pub mod event_envelope;
 pub mod event_store;
 pub mod memory;
-#[cfg(feature = "migration")]
+#[cfg(any(feature = "migration", feature = "sqlite-migration"))]
 pub mod migration;
 pub mod retention;
 pub mod seq_nr;
@@ -32,8 +32,12 @@ pub use error::{ConfigurationReason, ContractRule, EventStoreError, Serializatio
 pub use event_envelope::{EventEnvelope, SnapshotEnvelope, SnapshotRead};
 pub use event_store::EventStore;
 pub use memory::{EventStoreForMemory, MemoryStorage};
+#[cfg(feature = "sqlite-migration")]
+pub use migration::migrate_v3_sqlite;
 #[cfg(feature = "migration")]
-pub use migration::{migrate_v3_dynamodb, LegacyDynamoDbTables, MigrationError, MigrationRejection, MigrationReport};
+pub use migration::{migrate_v3_dynamodb, LegacyDynamoDbTables};
+#[cfg(any(feature = "migration", feature = "sqlite-migration"))]
+pub use migration::{MigrationError, MigrationRejection, MigrationReport};
 pub use retention::{select_expired_history, ttl_expires_epoch_seconds, RetentionMode, RetentionSettings};
 pub use seq_nr::{SeqNr, SEQ_NR_MAX};
 pub use serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer};

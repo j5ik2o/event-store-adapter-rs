@@ -3,25 +3,10 @@ use std::collections::HashMap;
 use aws_sdk_dynamodb::primitives::Blob;
 use aws_sdk_dynamodb::types::AttributeValue;
 
-use crate::aggregate_id::{AggregateId, AidString};
+use super::legacy_key;
+use crate::aggregate_id::AidString;
 use crate::dynamodb::items::{Item, SnapshotKind, StoredEvent, StoredSnapshot};
 use crate::seq_nr::{SeqNr, SEQ_NR_MAX};
-
-#[derive(Debug, Clone)]
-pub(super) struct Id {
-  type_name: String,
-  value: String,
-}
-
-impl AggregateId for Id {
-  fn type_name(&self) -> String {
-    self.type_name.clone()
-  }
-
-  fn value(&self) -> String {
-    self.value.clone()
-  }
-}
 
 pub(super) struct LegacyKey {
   pub aid: AidString,
@@ -51,44 +36,14 @@ impl LegacySnapshot {
   }
 }
 
-fn unsigned_key_number(value: &str) -> Result<u64, String> {
-  let number = value
-    .parse::<u64>()
-    .map_err(|_| "P-22: キー末尾が非負整数ではありません".to_string())?;
-  if number.to_string() != value {
-    return Err("P-22: キー末尾が既定の整数表記ではありません".into());
-  }
-  Ok(number)
-}
-
 fn key(item: &Item, mapping: &HashMap<String, String>) -> Result<LegacyKey, String> {
   let pkey = string(item, "pkey")?;
   let skey = string(item, "skey")?;
-  let (old_type, shard) = pkey.rsplit_once('-').ok_or("P-22: pkeyにシャード番号がありません")?;
-  unsigned_key_number(shard)?;
-  let (prefix, suffix) = skey.rsplit_once('-').ok_or("P-22: skeyに番号がありません")?;
-  let key_seq_nr = unsigned_key_number(suffix)?;
-  let value = prefix
-    .strip_prefix(old_type)
-    .and_then(|value| value.strip_prefix('-'))
-    .ok_or("P-22: skeyの型名がpkeyと一致しません")?;
-  let type_name = if old_type.contains('-') {
-    mapping
-      .get(old_type)
-      .ok_or_else(|| format!("P-23: 型名 {old_type} の対応表がありません"))?
-      .clone()
-  } else {
-    old_type.to_string()
-  };
-  let aid = AidString::from_aggregate_id(&Id {
-    type_name,
-    value: value.into(),
-  })
-  .map_err(|error| error.to_string())?;
+  let parsed = legacy_key::parse(pkey, skey, mapping)?;
   Ok(LegacyKey {
-    aid,
+    aid: parsed.aid,
     pkey: pkey.into(),
-    key_seq_nr,
+    key_seq_nr: parsed.key_seq_nr,
   })
 }
 

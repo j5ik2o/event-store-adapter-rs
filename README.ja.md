@@ -8,11 +8,11 @@
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-rs)](https://github.com/XAMPPRocky/tokei)
 
 
-このライブラリは、CQRS/Event Sourcing用のMemory・DynamoDBイベントストアを提供します。
+このライブラリは、CQRS/Event Sourcing用のMemory・DynamoDB・SQLiteイベントストアを提供します。
 
 このクレートは[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)に従います。メジャーの番号 5 は、共通契約の版と同じです。
 
-> 5.0.0は、新しいAPIの最初の版です。SQLite・Bigtableを利用する場合は3系を継続してください。v3 DynamoDBの旧データは明示的なmigration関数またはCLIだけで支援します。
+> 5.0.0は、新しいAPIの最初の版です。Bigtableを利用する場合は3系を継続してください。v3 DynamoDB・SQLiteの旧データは明示的なmigration関数またはCLIだけで支援します。
 
 [English](./README.md)
 
@@ -22,9 +22,11 @@
 |:--------|:-------------|
 | （なし） | `EventStoreForMemory`、`MemoryStorage`。常時利用可能 |
 | `dynamodb` | `aws-sdk-dynamodb`を使用する`EventStoreForDynamoDB` |
+| `sqlite` | 同梱のSQLiteを持つ`rusqlite`を使用する`EventStoreForSqlite`、`initialize_sqlite_store`、`SqliteOptions` |
 | `migration` | `migrate_v3_dynamodb`。`dynamodb`も有効になる |
+| `sqlite-migration` | `migrate_v3_sqlite`。`sqlite`も有効になり、AWS・Bigtableのcrateは入らない |
 
-デフォルトfeatureは空です。`sqlite`・`sqlite-system`・`bigtable`は削除しました。公開APIはcrate直下からexportされ、`next` namespaceや旧APIの別名はありません。
+デフォルトfeatureは空です。`sqlite-system`・`bigtable`は削除しました。公開APIはcrate直下からexportされ、`next` namespaceや旧APIの別名はありません。
 
 ## Memoryの使用例
 
@@ -118,6 +120,71 @@ cargo +1.99.0 run -p example-user-account
 
 Dockerが必要です。キー・設定項目・transaction・保持の詳細は[DynamoDB schema](docs/DATABASE_SCHEMA.ja.md)を参照してください。
 
+## SQLiteの使用例
+
+`features = ["sqlite"]`を指定します。保存先は、使うホストのローカルファイルシステムに置く1つのSQLiteデータベースファイルで、WALと`synchronous=FULL`で動かします。SQLite 3.51.3以上が必要で、同梱のSQLiteはこれを満たします。初期化と「開く」は、別々の明示的な操作です。
+
+- `initialize_sqlite_store(path, &options)`は、新しいファイル、またはアプリケーション用の表が1つもない既存のファイルを、1回だけ初期化します。5つの表と設定の行を、1つのトランザクションで作ります。
+- `EventStoreForSqlite::open(path, options)`（非serde payloadには`open_with_serializers`）は、初期化済みのファイルを開き、表の配置と設定を`options`と照合します。表は作らず、食い違いも修復しません。ファイルが存在しない、またはSQLiteが開けない場合は保存先エラー（`EventStoreError::Storage`）です。ファイルが未初期化、表が欠けている・異なる、設定が食い違う場合は設定エラー（`EventStoreError::Configuration`）です。
+
+`SqliteOptions`は3つのフィールドを持ちます。`retention`の既定は`RetentionSettings::current_only()`です。`keep_latest(n)`は新しい順に`n`件の履歴snapshotを保持し、`open`に渡す値はファイルの初期化に使った値と一致が必要です。`RetentionMode::Ttl`と`keep_latest(0)`は設定エラーです。`change_feed`は`false`のままにしてください。この保存先は変更フィードを提供せず、`true`は設定エラーです。`lock_wait`は、別の接続の書込ロックを待つ時間で、既定は5秒です。時間切れは楽観ロックではなく保存先エラーになります。
+
+```toml
+[dependencies]
+event-store-adapter-rs = { version = "5", features = ["sqlite"] }
+chrono = "0.4"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+```rust
+use chrono::Utc;
+use event_store_adapter_rs::{
+  initialize_sqlite_store, AggregateId, EventEnvelope, EventStore, EventStoreError,
+  EventStoreForSqlite, RetentionSettings, SnapshotEnvelope, SqliteOptions,
+};
+use serde_json::{json, Value};
+
+#[derive(Debug, Clone)]
+struct AccountId(String);
+
+impl AggregateId for AccountId {
+  fn type_name(&self) -> String { "Account".into() }
+  fn value(&self) -> String { self.0.clone() }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), EventStoreError> {
+  let path = "accounts.sqlite3";
+  let options = SqliteOptions {
+    retention: RetentionSettings::keep_latest(2),
+    ..SqliteOptions::default()
+  };
+  // Run once for a new file; the file is no longer uninitialized afterwards.
+  initialize_sqlite_store(path, &options)?;
+  let store: EventStoreForSqlite<AccountId, Value, Value> =
+    EventStoreForSqlite::open(path, options)?;
+  let id = AccountId("1".into());
+
+  store.persist_event(
+    EventEnvelope::new(id.clone(), 1, Utc::now(), json!({"created": "Alice"}))
+      .with_manifest("account-created/v1"),
+  ).await?;
+  store.persist_event_and_snapshot(
+    EventEnvelope::new(id.clone(), 2, Utc::now(), json!({"renamed": "Bob"})),
+    SnapshotEnvelope::new(json!({"name": "Bob"}), 2).with_manifest("account/v1"),
+  ).await?;
+  let events = store.get_events_by_id_since_seq_nr(&id, 1).await?;
+  assert_eq!(events.len(), 2);
+  let latest = store.get_latest_snapshot_by_id(&id).await?.unwrap();
+  assert_eq!(latest.head_seq_nr(), 2);
+  assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
+  Ok(())
+}
+```
+
+storeのインスタンスとそのcloneは、1つの接続を共有します。表・接続の設定・手作業での初期化・transaction・保持の詳細は[SQLite schema](docs/SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。v3のSQLiteファイルからデータを移す場合は、[移行](#移行)を参照してください。
+
 ## Serializer・保持・エラー
 
 既定のconstructorはJSONを使い、イベントと集約payloadに`Serialize + DeserializeOwned`を要求します。別のバイト形式には`EventStoreForMemory::with_serializers`または`EventStoreForDynamoDB::open_with_serializers`へ`Arc<dyn EventSerializer<P>>`と`Arc<dyn SnapshotSerializer<A>>`を渡します。serializerが受け取るのはpayloadだけです。payloadの要件は`Send + Sync + 'static`であり、この入口ではserde・Clone・Debugを要求しません。非serde payloadの実例は[Memory](lib/tests/memory_test.rs)・[DynamoDB](lib/tests/dynamodb_persist_event_test.rs)のintegration試験にあります。
@@ -128,7 +195,7 @@ Dockerが必要です。キー・設定項目・transaction・保持の詳細は
 
 ## 移行
 
-通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数または薄いCLIを使用します。[v5移行ガイド](docs/MIGRATION_GUIDE_v5.ja.md)の手順に従い、旧書込を停止して空の新表を用意してください。独自`KeyResolver`配置・SQLite・Bigtableはこの移行の対象外です。
+通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数または薄いCLIを使用します。v3の既定SQLite配置には、`migrate_v3_sqlite`関数（feature `sqlite-migration`）、または同じCLIの`--old-sqlite`・`--sqlite`を使用します。旧SQLiteファイルは変更せずに読み取り、`initialize_sqlite_store`で初期化した新ファイルへ書き込みます。[v5移行ガイド](docs/MIGRATION_GUIDE_v5.ja.md)の手順に従い、旧書込を停止して空の新表（SQLiteでは初期化済みで空のファイル）を用意してください。独自`KeyResolver`配置・Bigtableはこの移行の対象外です。
 
 3系を継続する利用者向けの[v3移行ガイド](docs/MIGRATION_GUIDE_v3.ja.md)は歴史資料として残しています。
 

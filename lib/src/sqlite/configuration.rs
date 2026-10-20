@@ -59,7 +59,7 @@ pub fn initialize_sqlite_store(path: impl AsRef<Path>, options: &SqliteOptions) 
 }
 
 /// 配置と config を、クライアントの設定と照合する。一致すれば store_id を返す（SQ-2・SQ-19・SQ-20）。
-fn verify_configuration(connection: &Connection, keep: Option<i64>) -> Result<String, EventStoreError> {
+pub(crate) fn verify_configuration(connection: &Connection, keep: Option<i64>) -> Result<String, EventStoreError> {
   let operation = StorageOperation::ReadConfiguration;
   verify_layout(connection)?;
   let mismatch = || configuration(ConfigurationReason::SqliteConfigurationMismatch);

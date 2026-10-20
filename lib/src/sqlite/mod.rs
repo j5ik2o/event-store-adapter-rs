@@ -5,11 +5,11 @@
 //! [`EventStoreForSqlite::open`] は、初期化済みのストアを開くだけで、欠けた定義を補わない。
 //! 最初の版は、変更フィードと期限切れ方式を提供しない。
 mod backend;
-mod configuration;
-mod connection;
+pub(crate) mod configuration;
+pub(crate) mod connection;
 #[cfg(test)]
 mod connection_test;
-mod layout;
+pub(crate) mod layout;
 
 use std::path::Path;
 use std::sync::{Arc, Mutex};

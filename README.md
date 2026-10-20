@@ -8,11 +8,11 @@
 [![](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-rs)](https://github.com/XAMPPRocky/tokei)
 
 
-This library provides Memory and DynamoDB event stores for CQRS/Event Sourcing.
+This library provides Memory, DynamoDB, and SQLite event stores for CQRS/Event Sourcing.
 
 This crate follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision.
 
-> 5.0.0 is the first release of the new API. SQLite and Bigtable users should stay on the 3.x line. Stored v3 DynamoDB data is supported only through the explicit migration function or CLI.
+> 5.0.0 is the first release of the new API. Bigtable users should stay on the 3.x line. Stored v3 DynamoDB and SQLite data is supported only through the explicit migration functions or CLI.
 
 [日本語](./README.ja.md)
 
@@ -22,9 +22,11 @@ This crate follows [common contract v5](https://github.com/j5ik2o/event-store-ad
 |:--------|:-------------|
 | (none) | `EventStoreForMemory` and `MemoryStorage`, always available |
 | `dynamodb` | `EventStoreForDynamoDB`, using `aws-sdk-dynamodb` |
+| `sqlite` | `EventStoreForSqlite`, `initialize_sqlite_store`, and `SqliteOptions`, using `rusqlite` with a bundled SQLite |
 | `migration` | `migrate_v3_dynamodb`; also enables `dynamodb` |
+| `sqlite-migration` | `migrate_v3_sqlite`; also enables `sqlite`, and brings in no AWS or Bigtable crates |
 
-Default features are empty. The `sqlite`, `sqlite-system`, and `bigtable` features have been removed. The public API is exported from the crate root; there is no `next` namespace or old API alias.
+Default features are empty. The `sqlite-system` and `bigtable` features have been removed. The public API is exported from the crate root; there is no `next` namespace or old API alias.
 
 ## Memory example
 
@@ -118,6 +120,71 @@ cargo +1.99.0 run -p example-user-account
 
 Docker is required for this example. See [the DynamoDB schema](docs/DATABASE_SCHEMA.md) for keys, configuration records, transactions, and retention.
 
+## SQLite example
+
+Enable `features = ["sqlite"]`. The storage is one SQLite database file on the local file system of the host that uses it, run with WAL and `synchronous=FULL`; SQLite 3.51.3 or later is required, and the bundled build satisfies it. Initialization and opening are separate, explicit steps:
+
+- `initialize_sqlite_store(path, &options)` initializes a new file, or an existing file that has no application tables, once. It creates the five tables and the configuration row in one transaction.
+- `EventStoreForSqlite::open(path, options)` (or `open_with_serializers` for non-serde payloads) opens an initialized file and checks its layout and configuration against `options`. It never creates tables and never repairs a mismatch. A missing file, or one that SQLite cannot open, is a storage error (`EventStoreError::Storage`); an uninitialized file, a missing or different table, or a configuration mismatch is a configuration error (`EventStoreError::Configuration`).
+
+`SqliteOptions` has three fields. `retention` defaults to `RetentionSettings::current_only()`; `keep_latest(n)` keeps the newest `n` history snapshots, and the value used by `open` must equal the one used to initialize the file. `RetentionMode::Ttl` and `keep_latest(0)` are configuration errors. `change_feed` must stay `false`: this storage does not provide a change feed, and `true` is a configuration error. `lock_wait` is how long a connection waits for another connection's write lock, 5 seconds by default; running out of time is a storage error, not an optimistic-lock error.
+
+```toml
+[dependencies]
+event-store-adapter-rs = { version = "5", features = ["sqlite"] }
+chrono = "0.4"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+```
+
+```rust
+use chrono::Utc;
+use event_store_adapter_rs::{
+  initialize_sqlite_store, AggregateId, EventEnvelope, EventStore, EventStoreError,
+  EventStoreForSqlite, RetentionSettings, SnapshotEnvelope, SqliteOptions,
+};
+use serde_json::{json, Value};
+
+#[derive(Debug, Clone)]
+struct AccountId(String);
+
+impl AggregateId for AccountId {
+  fn type_name(&self) -> String { "Account".into() }
+  fn value(&self) -> String { self.0.clone() }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), EventStoreError> {
+  let path = "accounts.sqlite3";
+  let options = SqliteOptions {
+    retention: RetentionSettings::keep_latest(2),
+    ..SqliteOptions::default()
+  };
+  // Run once for a new file; the file is no longer uninitialized afterwards.
+  initialize_sqlite_store(path, &options)?;
+  let store: EventStoreForSqlite<AccountId, Value, Value> =
+    EventStoreForSqlite::open(path, options)?;
+  let id = AccountId("1".into());
+
+  store.persist_event(
+    EventEnvelope::new(id.clone(), 1, Utc::now(), json!({"created": "Alice"}))
+      .with_manifest("account-created/v1"),
+  ).await?;
+  store.persist_event_and_snapshot(
+    EventEnvelope::new(id.clone(), 2, Utc::now(), json!({"renamed": "Bob"})),
+    SnapshotEnvelope::new(json!({"name": "Bob"}), 2).with_manifest("account/v1"),
+  ).await?;
+  let events = store.get_events_by_id_since_seq_nr(&id, 1).await?;
+  assert_eq!(events.len(), 2);
+  let latest = store.get_latest_snapshot_by_id(&id).await?.unwrap();
+  assert_eq!(latest.head_seq_nr(), 2);
+  assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
+  Ok(())
+}
+```
+
+A store instance and its clones share one connection. See [the SQLite schema](docs/SQLITE_DATABASE_SCHEMA.md) for the tables, the connection settings, how to initialize a file by hand, transactions, and retention. To move data from a v3 SQLite file, see [Migration](#migration).
+
 ## Serialization, retention, and errors
 
 The default constructors use JSON and require `Serialize + DeserializeOwned` on event and aggregate payloads. Use `EventStoreForMemory::with_serializers` or `EventStoreForDynamoDB::open_with_serializers` with `Arc<dyn EventSerializer<P>>` and `Arc<dyn SnapshotSerializer<A>>` for another byte format. These serializers receive only the payload. Payloads require `Send + Sync + 'static`; serde, Clone, and Debug are not required for these constructors. See the [Memory](lib/tests/memory_test.rs) and [DynamoDB](lib/tests/dynamodb_persist_event_test.rs) integration tests for non-serde payloads.
@@ -128,7 +195,7 @@ The default constructors use JSON and require `Serialize + DeserializeOwned` on 
 
 ## Migration
 
-The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE_v5.md). Stop old writes and provision empty new tables before migration. Custom `KeyResolver` layouts, SQLite, and Bigtable are outside this migration's scope.
+The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE_v5.md). For v3's default SQLite layout, use the `migrate_v3_sqlite` function (feature `sqlite-migration`) or the same CLI with `--old-sqlite` and `--sqlite`; it reads the old SQLite file without changing it and writes a new file that you initialized with `initialize_sqlite_store`. Stop old writes and provision empty new tables (for SQLite, an initialized, empty file) before migration. Custom `KeyResolver` layouts and Bigtable are outside this migration's scope.
 
 Historical [v3 migration guidance](docs/MIGRATION_GUIDE_v3.md) remains available for users staying on 3.x.
 
