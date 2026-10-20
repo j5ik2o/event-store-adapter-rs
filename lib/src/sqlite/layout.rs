@@ -147,7 +147,7 @@ fn aid_collations_are_binary(connection: &Connection, table: &str) -> Result<boo
 ///
 /// DDL の文字列ではなく、`pragma_table_list` と `pragma_table_info` などの意味で比べる。
 /// 欠損や不一致は設定エラーにする。欠けた定義を補わない。
-pub(super) fn verify_layout(connection: &Connection) -> Result<(), EventStoreError> {
+pub(crate) fn verify_layout(connection: &Connection) -> Result<(), EventStoreError> {
   let operation = StorageOperation::ReadConfiguration;
   let mismatch = || configuration(ConfigurationReason::SqliteLayoutMismatch);
   for (table, expected_columns) in EXPECTED_TABLES {

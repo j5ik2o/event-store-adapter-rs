@@ -5,13 +5,14 @@ edition = "2021"
 publish = false
 
 [dependencies]
-event-store-adapter-rs = { path = "../lib", features = ["migration"] }
+event-store-adapter-rs = { path = "../lib", features = ["migration", "sqlite-migration"] }
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 [dev-dependencies]
+rusqlite = { workspace = true, features = ["bundled"] }
 event-store-adapter-test-utils-rs = { path = "../test-utils" }
 event-store-adapter-conformance-rs = { path = "../conformance-runner", features = ["dynamodb"] }
 testcontainers = { workspace = true }

@@ -22,6 +22,13 @@ async fn should_reject_overlapping_tables_before_any_request() {
 }
 
 #[test]
+fn should_display_the_operation_without_naming_a_backend() {
+  // 型を DynamoDB と SQLite で共有するので、表示は保存先の名前を含まない。
+  let error = MigrationError::new(&MigrationReport::default(), "PutItem", std::io::Error::other("cause"));
+  assert_eq!(error.to_string(), "migration failed during PutItem");
+}
+
+#[test]
 fn should_keep_confirmed_counts_in_storage_errors_and_json_reports() {
   let report = MigrationReport {
     events: 2,

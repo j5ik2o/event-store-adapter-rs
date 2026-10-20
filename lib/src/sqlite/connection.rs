@@ -11,7 +11,7 @@ const MINIMUM_VERSION: (u32, u32, u32) = (3, 51, 3);
 /// ファイルを開くときに、存在しないファイルを作るかどうかを表す。
 ///
 /// 作成の権限を持つのは、明示的な初期化だけである（SQ-D6）。
-pub(super) enum OpenMode {
+pub(crate) enum OpenMode {
   Create,
   Existing,
 }
@@ -61,7 +61,7 @@ fn query_integer(connection: &Connection, sql: &str, operation: StorageOperation
 ///
 /// 待ち時間が 32bit のミリ秒に収まらなければ、ファイルを開く前に設定エラーにする。
 /// 接続の設定は、設定した後で読み直し、要求と異なれば設定エラーにする。
-pub(super) fn open_connection(
+pub(crate) fn open_connection(
   path: &Path,
   lock_wait: Duration,
   mode: OpenMode,

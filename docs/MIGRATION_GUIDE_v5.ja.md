@@ -9,14 +9,15 @@
 - `expected_version`引数とsnapshotの`version`を除去します。最初のイベントは1、以降は連続した番号で`SEQ_NR_MAX`までです。対になったイベントとsnapshotの番号は一致させます。
 - Memoryは`EventStoreForMemory::new(MemoryStorage::new(retention)?)`で生成します。storageのcloneでstore間の保存状態を共有し、独立したstorageで隔離します。
 - DynamoDBは事前作成した3表・履歴GSIと、SDK retry sleeperを設定したClientで、非同期の`EventStoreForDynamoDB::open(client, tables, options).await`を呼びます。
+- SQLiteはfeature `sqlite`を有効にし、新しいファイルに`initialize_sqlite_store(path, &options)`を1回呼んでから、同期の`EventStoreForSqlite::open(path, options)`を呼びます。`open`は何も作りません。この保存先は変更フィードを提供しません。[README](../README.ja.md)と[SQLite schema](SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。
 - `SnapshotRead::snapshot()`が不在なら作成イベントから再生します。snapshotとheadの番号は別の意味です。snapshot後のイベントを読み、観測headまで再生できたことを確認します。[コンパイルしたrepository例](../examples/user-account/src/user_account_repository.rs)がこの場合を扱います。
 - 非serde payloadには`with_serializers`／`open_with_serializers`へイベント・snapshot serializerを渡します。4操作は[README](../README.ja.md)、保持の実配置は[schema](DATABASE_SCHEMA.ja.md)を参照してください。
 
-`sqlite`・`sqlite-system`・`bigtable`のfeature、本体、利用例は削除しました。これらの保存先は3系を継続してください。このmigrationはそのデータを支援しません。
+`sqlite-system`・`bigtable`のfeature、本体、利用例は削除しました。これらの保存先は3系を継続してください。このmigrationはそのデータを支援しません。feature `sqlite`は、独自の配置を持つ5系の新しいSQLite保存先です。v3のSQLite保存先が書いたデータは、下記の[SQLiteの移行](#v3-sqliteデータの移行)で移します。
 
 ## 保存データの対象
 
-対象は**Rust v3の既定DynamoDB配置**だけです。旧journal・snapshotは`pkey`／`skey`キーを使用します。独自`KeyResolver`配置・v2データ・他の保存先は対象外です。通常の5系storeは旧表を読みません。
+対象は**Rust v3の既定DynamoDB配置**だけです。旧journal・snapshotは`pkey`／`skey`キーを使用します。独自`KeyResolver`配置・v2データ・他の保存先は対象外です。v3の既定SQLiteファイルには、下記の[SQLiteの移行](#v3-sqliteデータの移行)があります。通常の5系storeは旧表を読みません。
 
 migrationは旧キーからIDを再構成し、番号の連続性とsnapshotの関係を検査します。旧hasherとpayloadの復元・再直列化は使用せず、payloadバイトをそのまま転写します。移行後のstoreには互換性のあるserializerを指定してください。
 
@@ -96,4 +97,75 @@ cargo run -p event-store-adapter-migration-rs -- \
 
 ```sh
 cargo test -p event-store-adapter-migration-rs --test cli_test
+```
+
+## v3 SQLiteデータの移行
+
+v3のSQLite保存先は、`journal`表と`snapshot`表を持つ1つのデータベースファイルを書きました。5系のSQLite保存先は別の配置（[schema](SQLITE_DATABASE_SCHEMA.ja.md)）を使うため、データは**新しいファイル**へ写します。旧ファイルは読み取り専用で開き、変更しません。通常の5系storeは旧ファイルを読みません。
+
+### 保存データの対象（SQLite）
+
+対象は**Rust v3の既定SQLite配置**だけです。v3.0.6が作る、`pkey`／`skey`を主キーとする`journal`表と`snapshot`表で、キーを既定の`KeyResolver`（`pkey = {型名}-{shard}`、`skey = {型名}-{値}-{seq_nr}`）で組み立てたものです。独自`KeyResolver`配置・v2データ・他の保存先は対象外で、既定の配置に従わない行は全件検査で拒否します。
+
+migrationは、DynamoDBの移行と同じ規則で、型名と値を`pkey`と`skey`だけから再構成します。アプリケーションの`Display`文字列が入っている旧`aid`列からは読みません。hyphenを含む旧型名には、[前述](#保存データの対象)のJSON対応表が必要です。対応表を使うのはhyphenありの旧型名だけで、対応先の衝突・対応後に残るhyphen・1024バイトを超える`aid`は拒否します。
+
+写すものは次のとおりです。
+
+- **イベント。** payloadバイトは復元も再直列化もせずに写します。発生時刻はナノ秒の値のまま、manifestは保存されている値のまま写し、空のmanifestは空のままです。集約ごとに、番号は1から欠番・重複なしで続く必要があり、headは最大番号のイベントから作ります。
+- **現在のsnapshot。** 旧`skey`の末尾が`-0`の行を、空のmanifestで`snapshot_current`へ写します。位置は集約の最大イベント番号以下で、対応するイベントが存在する必要があります。旧`version`と`last_updated_at`は捨てます。
+- **snapshotの履歴。** 旧の履歴行（`skey`の末尾が1以上の番号の行）は、**新ファイルの**履歴件数に合わせて写します。[SQLite schema](SQLITE_DATABASE_SCHEMA.ja.md#保持)の保持の規則（新しい`n`件を残し、保持していなかった履歴は補わない）に従います。新ファイルが新しい`n`件を保持するなら、集約ごとに番号の新しい`n`件の履歴snapshotを`snapshot_history`へ写します。currentのsnapshotだけを保持するなら、履歴は写しません。currentのsnapshotを履歴に足すことはなく、旧ファイルに履歴がない集約に履歴を作ることもありません。どちらの場合も旧の履歴行はすべて検査するので、写さない履歴行でも不正があれば移行を拒否します。
+
+### 運用手順（SQLite）
+
+1. 検査前に**旧ファイルへの全書込を停止**し、移行中も停止を維持します。関数とCLIはこの運用前提を強制しません。
+2. `initialize_sqlite_store`、または[schema](SQLITE_DATABASE_SCHEMA.ja.md#初期化)の手作業の手順で新ファイルを作り、履歴件数（`keep_latest(n)`か`current_only()`）を選びます。新ファイルは初期化済みで**空**である必要があります。`journal`・`head`・`snapshot_current`・`snapshot_history`のどれかに行があれば移行を拒否し、migrationは表も設定も作りません。新ファイルは旧ファイルとは別のファイルでなければなりません。2つのパスは正規化（シンボリックリンクと`.`／`..`の解決）してから比べ、同じファイルへのハードリンクは検出しません。
+3. 旧パス・新パス・型対応表を指定し、下記の関数またはCLIを実行します。
+4. JSON報告と終了statusを確認します。新ファイルを同じoptionsで公開5系APIから開き、移行後データを読み戻してから、アプリケーションの書込先を切り替えます。
+5. 検査拒否や書込の失敗があっても、**新ファイルには何も残りません**。書込全体が1つのトランザクションで、旧ファイルも変わりません。原因を解消し、同じ新ファイルへ再実行できます。移行に成功した後の再実行は、新ファイルに行があるため拒否されます。
+
+全件検査は、新ファイルへ何かを書く前に、旧2表の全行を読みます。欠番と重複、既定の配置に従わないキー、孤立snapshotと集約の最大イベント番号を超えるsnapshot、対応表のない・衝突する・長すぎるID、型の誤った列を拒否します。その後、同じ読み取りトランザクションの中で旧ファイルを再度読み、新ファイルへ1つの`BEGIN IMMEDIATE`トランザクションで書きます。報告の件数は、このトランザクションのコミット後に設定します。
+
+拒否の理由は`table`に対象を示します。旧ファイルの行は`old.journal`か`old.snapshot`、すでに行がある新ファイルの表は`new.journal`・`new.head`・`new.snapshot_current`・`new.snapshot_history`、旧パスと新パスが同じファイルなら空文字列です。報告の`aggregates`はheadの行数、`events`はjournalの行数、`snapshots`は写したcurrentと履歴のsnapshotの行数です。
+
+### Library関数（SQLite）
+
+`features = ["sqlite-migration"]`を指定すると`sqlite`も有効になりますが、DynamoDBとBigtableは有効になりません。関数は同期です。
+
+```rust
+use std::collections::HashMap;
+use event_store_adapter_rs::migrate_v3_sqlite;
+
+let mapping = HashMap::from([("user-account".into(), "UserAccount".into())]);
+let report = migrate_v3_sqlite("old.sqlite3", "new.sqlite3", &mapping)?;
+assert!(report.reasons.is_empty(), "{:?}", report.reasons);
+```
+
+`Ok(MigrationReport)`でも`reasons`に拒否理由があるため、呼出し側で確認します。拒否では件数が0のままです。旧ファイルを読めない・新ファイルが未初期化といった保存先の失敗は、sourceと報告を持つ`MigrationError`になります。何もコミットされないため、件数は0です。
+
+### 薄いCLI（SQLite）
+
+このcheckoutから実行します。
+
+```sh
+cargo run -p event-store-adapter-migration-rs -- --help
+cargo run -p event-store-adapter-migration-rs -- \
+  --old-sqlite old.sqlite3 --sqlite new.sqlite3 \
+  --type-mapping type-mapping.json
+```
+
+| Flag | 要件 |
+|:-----|:-----|
+| `--old-sqlite` | 必須。旧v3ファイルのパス |
+| `--sqlite` | 必須。初期化済みで空の新ファイルのパス |
+| `--type-mapping` | 任意。JSONファイル。DynamoDBの移行と共通 |
+| `--help`／`-h` | 利用方法と運用前提を表示 |
+
+SQLiteのflagとDynamoDBのflag（`--old-journal`・`--old-snapshot`・`--journal`・`--snapshot`・`--head`・`--history-index`・`--endpoint-url`・`--region`）は混ぜられません。混ぜると、移行前に不正引数として失敗します。DynamoDBの呼び出し方は変わりません。
+
+CLIは`aggregates`・`events`・`snapshots`・`reasons`を持つ`MigrationReport` JSONを出力します。検査拒否と保存先の失敗は非0終了となり、保存先の失敗では報告とエラーも出力します。ファイル作成・書込停止のflagはありません。
+
+[SQLiteのCLI integration試験](../migration-cli/tests/sqlite_cli_test.rs)は、ローカルのファイルに対して実バイナリを起動し、公開APIによる読み戻しと旧ファイルのバイト列の不変を確認します。Dockerは不要です。
+
+```sh
+cargo test -p event-store-adapter-migration-rs --test sqlite_cli_test
 ```

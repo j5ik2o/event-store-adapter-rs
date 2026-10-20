@@ -1,23 +1,40 @@
-//! v3既定DynamoDB配置だけを対象とする移行。旧書込の停止と新表の作成は運用者が行う。
+//! v3既定配置だけを対象とする移行（DynamoDBは機能`migration`、SQLiteは機能`sqlite-migration`）。
+//! 旧書込の停止と新しい保存先の用意は運用者が行う。
 //!
-//! 全件検査の成功後に旧両表を再Scanする。検査拒否では設定以外を送信せず、旧表は変更しない。
+//! DynamoDBは全件検査の成功後に旧両表を再Scanする。検査拒否では設定以外を送信せず、旧表は変更しない。
 //! 書込中の失敗では部分移行が残るため、新3表を作り直してから再実行する。
+//! SQLiteは旧ファイルを読み取り専用で2回読み、新ファイルへは1つのトランザクションで書く。
+//! 拒否・失敗では新ファイルに何も残らないので、同じ新ファイルで再実行できる。
 
+#[cfg(feature = "migration")]
 mod inspect;
+#[cfg(feature = "migration")]
 mod legacy;
+mod legacy_key;
+#[cfg(feature = "migration")]
 mod scan;
-#[cfg(test)]
+#[cfg(feature = "sqlite-migration")]
+mod sqlite;
+#[cfg(all(test, feature = "migration"))]
 mod test_support;
+#[cfg(feature = "migration")]
 mod write;
 
+#[cfg(feature = "migration")]
 use std::collections::HashMap;
 
+#[cfg(feature = "migration")]
 use aws_sdk_dynamodb::Client;
 use serde::{Deserialize, Serialize};
 
+#[cfg(feature = "migration")]
 use crate::dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
 
+#[cfg(feature = "sqlite-migration")]
+pub use self::sqlite::migrate_v3_sqlite;
+
 /// 移行元の既定配置の2表を指定する。
+#[cfg(feature = "migration")]
 #[derive(Debug, Clone)]
 pub struct LegacyDynamoDbTables {
   pub journal_table_name: String,
@@ -45,7 +62,7 @@ pub struct MigrationReport {
 
 /// 保存先の失敗と、その時点までに確認できた移行結果を保持する。
 #[derive(Debug, thiserror::Error)]
-#[error("DynamoDB migration failed during {operation}")]
+#[error("migration failed during {operation}")]
 pub struct MigrationError {
   pub report: MigrationReport,
   pub operation: String,
@@ -72,6 +89,7 @@ impl MigrationError {
 /// 呼出し前に旧2表への書込を停止し、新3表と履歴GSIを作成する。
 /// 型名にhyphenを含む場合だけ`type_mapping`で置換する。旧Hasherとserializerは使用しない。
 /// 検査拒否・条件競合は`reasons`で返し、通信等の失敗は部分件数を持つ`MigrationError`で返す。
+#[cfg(feature = "migration")]
 pub async fn migrate_v3_dynamodb(
   client: &Client,
   legacy_tables: &LegacyDynamoDbTables,
@@ -94,7 +112,7 @@ pub async fn migrate_v3_dynamodb(
     return Ok(report);
   }
   // 設定生成・照合は公開openに委譲し、ストアの書込/読取は呼ばない。
-  EventStoreForDynamoDB::<legacy::Id, (), ()>::open(client.clone(), tables.clone(), DynamoDbOptions::default())
+  EventStoreForDynamoDB::<legacy_key::Id, (), ()>::open(client.clone(), tables.clone(), DynamoDbOptions::default())
     .await
     .map_err(|error| MigrationError::new(&report, "open", error))?;
   let aggregates = inspect::inspect(client, legacy_tables, type_mapping, &mut report).await?;
@@ -104,6 +122,7 @@ pub async fn migrate_v3_dynamodb(
   Ok(report)
 }
 
+#[cfg(feature = "migration")]
 fn distinct_tables(legacy: &LegacyDynamoDbTables, tables: &DynamoDbTables) -> bool {
   let names = [
     &legacy.journal_table_name,
@@ -118,6 +137,6 @@ fn distinct_tables(legacy: &LegacyDynamoDbTables, tables: &DynamoDbTables) -> bo
     .all(|(index, name)| !names[..index].contains(name))
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "migration"))]
 #[path = "mod_test.rs"]
 mod tests;

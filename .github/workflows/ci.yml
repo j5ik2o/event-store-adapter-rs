@@ -93,6 +93,9 @@ jobs:
           - name: sqlite
             flags: --no-default-features --features sqlite
             mode: test
+          - name: sqlite-migration
+            flags: --no-default-features --features sqlite-migration
+            mode: test
           - name: bigtable
             flags: --no-default-features --features bigtable
             mode: build
@@ -123,6 +126,13 @@ jobs:
             echo "SQLite crates leaked into the featureless dependency graph"
             exit 1
           fi
+      - name: cloud SDKs must be absent with only the SQLite migration
+        if: matrix.name == 'sqlite-migration'
+        run: |
+          if cargo tree -p event-store-adapter-rs -e normal --no-default-features --features sqlite-migration | grep -E "aws-|tonic|prost|googleapis"; then
+            echo "cloud SDK crates leaked into the sqlite-migration dependency graph"
+            exit 1
+          fi
       - name: no hand-written unsafe impl
         if: matrix.name == 'no-features'
         run: |
@@ -147,6 +157,8 @@ jobs:
             flags: --no-default-features --features dynamodb
           - name: sqlite
             flags: --no-default-features --features sqlite
+          - name: sqlite-migration
+            flags: --no-default-features --features sqlite-migration
           - name: bigtable
             flags: --no-default-features --features bigtable
           - name: all-features

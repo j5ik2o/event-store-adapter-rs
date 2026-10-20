@@ -26,6 +26,7 @@ default = []
 test-hooks = []
 dynamodb = ["dep:aws-sdk-dynamodb", "dep:uuid"]
 migration = ["dynamodb"]
+sqlite-migration = ["sqlite"]
 sqlite = ["dep:rusqlite", "dep:uuid"]
 bigtable = ["dep:tonic", "dep:googleapis-tonic-google-bigtable-v2", "dep:googleapis-tonic-google-bigtable-admin-v2", "dep:uuid"]
 
