@@ -47,12 +47,16 @@ pub async fn connect(port: u16) -> Result<Channel> {
   Ok(endpoint.connect().await?)
 }
 
+/// 待ち合わせの 1 回の試行（接続と `ListTables`）の上限。応答しないコンテナで 1 回の試行が終わらなくなるのを防ぐ。
+const ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+
 /// 管理 API の `ListTables` が成功するまで待つ（250 ミリ秒ごと、上限 120 秒）。
+/// 1 回の試行（接続と `ListTables`）は 5 秒で打ち切り、時間切れはその試行の失敗として扱う。
 /// 上限を超えたときは、最後の誤りを含めて `Err` を返す。
 pub(crate) async fn wait_until_list_tables_succeeds(port: u16) -> Result<()> {
   let started_at = Instant::now();
   loop {
-    let attempt = async {
+    let attempt = tokio::time::timeout(ATTEMPT_TIMEOUT, async {
       let channel = connect(port).await?;
       BigtableTableAdminClient::new(channel)
         .list_tables(ListTablesRequest {
@@ -61,8 +65,14 @@ pub(crate) async fn wait_until_list_tables_succeeds(port: u16) -> Result<()> {
         })
         .await?;
       anyhow::Ok(())
-    }
-    .await;
+    })
+    .await
+    .unwrap_or_else(|_| {
+      Err(anyhow::anyhow!(
+        "ListTables attempt did not finish within {} seconds",
+        ATTEMPT_TIMEOUT.as_secs()
+      ))
+    });
     match attempt {
       Ok(()) => return Ok(()),
       Err(error) => {

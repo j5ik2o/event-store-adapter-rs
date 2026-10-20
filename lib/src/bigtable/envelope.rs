@@ -24,6 +24,7 @@ const EVENT_FIXED_BYTES: usize = 1 + 2 + 8 + 8 + 4 + 4;
 const SNAPSHOT_FIXED_BYTES: usize = 1 + 8 + 4 + 4;
 
 /// イベント封筒の項目。
+#[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EventEnvelopeFields {
   pub aid: String,
@@ -34,6 +35,7 @@ pub struct EventEnvelopeFields {
 }
 
 /// スナップショット封筒の項目。
+#[doc(hidden)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SnapshotEnvelopeFields {
   pub seq_nr: u64,
@@ -66,6 +68,7 @@ fn length_u16(length: usize) -> u16 {
   u16::try_from(length).unwrap_or(u16::MAX)
 }
 
+#[doc(hidden)]
 pub fn encode_event(fields: &EventEnvelopeFields) -> Vec<u8> {
   let mut bytes = Vec::with_capacity(event_envelope_len(fields));
   bytes.push(FORMAT_VERSION);
@@ -80,6 +83,7 @@ pub fn encode_event(fields: &EventEnvelopeFields) -> Vec<u8> {
   bytes
 }
 
+#[doc(hidden)]
 pub fn encode_snapshot(fields: &SnapshotEnvelopeFields) -> Vec<u8> {
   let mut bytes = Vec::with_capacity(snapshot_envelope_len(fields));
   bytes.push(FORMAT_VERSION);
@@ -161,6 +165,7 @@ impl<'a> Reader<'a> {
 }
 
 /// イベント封筒を復元する。seq_nr が共通契約の範囲（1〜2^53−1）にないときも保存先エラーにする。
+#[doc(hidden)]
 pub fn decode_event(bytes: &[u8], operation: StorageOperation) -> Result<EventEnvelopeFields, EventStoreError> {
   let mut reader = Reader::new(bytes, operation);
   reader.version()?;
@@ -186,6 +191,7 @@ pub fn decode_event(bytes: &[u8], operation: StorageOperation) -> Result<EventEn
 }
 
 /// スナップショット封筒を復元する。seq_nr が共通契約の範囲（1〜2^53−1）にないときも保存先エラーにする。
+#[doc(hidden)]
 pub fn decode_snapshot(bytes: &[u8], operation: StorageOperation) -> Result<SnapshotEnvelopeFields, EventStoreError> {
   let mut reader = Reader::new(bytes, operation);
   reader.version()?;

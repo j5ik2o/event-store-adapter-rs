@@ -24,6 +24,7 @@ pub use configuration::initialize_bigtable_store;
 #[cfg(feature = "test-hooks")]
 pub use configuration::{overwrite_bigtable_configuration_for_test, BigtableConfigurationRecord};
 #[cfg(feature = "test-hooks")]
+#[doc(hidden)]
 pub use envelope::{
   decode_event as decode_bigtable_event_envelope_for_test,
   decode_snapshot as decode_bigtable_snapshot_envelope_for_test,

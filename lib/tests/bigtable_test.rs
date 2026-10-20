@@ -130,6 +130,81 @@ async fn should_bigtable_configuration_in_only_one_table_be_invalid_and_never_be
 }
 
 // ---------------------------------------------------------------------------
+// journal と head に同じテーブルを指定した設定（2 章）
+// ---------------------------------------------------------------------------
+
+/// journal と head の両方の列ファミリを全て持つ 1 つのテーブルを作り、その ID を返す。
+/// 同じテーブルを両方に指定しても、列ファミリの照合では弾かれない状態にする。
+async fn create_table_with_all_families(base: &Fixture, label: &str) -> String {
+  let table_id = format!("{}-{label}", base.tables.journal_table_id);
+  let families: Vec<FamilySpec> = ["event", "history", "head", "snapshot", "config"]
+    .into_iter()
+    .map(FamilySpec::current)
+    .collect();
+  let channel = bigtable::connect(base.port).await.unwrap();
+  bigtable::create_table(&channel, PROJECT, INSTANCE, &table_id, &families)
+    .await
+    .unwrap();
+  table_id
+}
+
+fn env_over(base: &Fixture, journal_table_id: &str, head_table_id: &str) -> Env {
+  Env {
+    port: base.port,
+    tables: BigtableTables {
+      project_id: PROJECT.to_string(),
+      instance_id: INSTANCE.to_string(),
+      journal_table_id: journal_table_id.to_string(),
+      head_table_id: head_table_id.to_string(),
+    },
+  }
+}
+
+#[tokio::test]
+async fn should_bigtable_initialization_with_the_same_table_for_journal_and_head_be_a_configuration_error_and_write_nothing(
+) {
+  let base = Fixture::new().await;
+  let shared = create_table_with_all_families(&base, "shared-init").await;
+  let env = env_over(&base, &shared, &shared);
+
+  let initialized = env.initialize(&BigtableOptions::default()).await;
+
+  assert_eq!(
+    reason_of(&initialized),
+    Some(&ConfigurationReason::BigtableDuplicateTableIds),
+    "{initialized:?}"
+  );
+  assert_eq!(both_configurations(&env).await, (None, None), "設定行を 1 つも作らない");
+}
+
+#[tokio::test]
+async fn should_bigtable_open_with_the_same_table_for_journal_and_head_be_a_configuration_error_and_write_nothing() {
+  let base = Fixture::new().await;
+  let shared = create_table_with_all_families(&base, "shared-open").await;
+  // 共有するテーブルを journal に、別のテーブルを head にして初期化し、共有するテーブルに設定行がある状態を作る。
+  // 同じテーブルを両方に指定する検査がなければ、この状態の生成は成功してしまう。
+  env_over(&base, &shared, &base.tables.head_table_id)
+    .initialize(&BigtableOptions::default())
+    .await
+    .unwrap();
+  let env = env_over(&base, &shared, &shared);
+  let before = both_configurations(&env).await;
+  assert!(
+    before.0.is_some(),
+    "試験の前提: 共有するテーブルに設定行がある: {before:?}"
+  );
+
+  let opened = env.open(BigtableOptions::default()).await.map(|_| ());
+
+  assert_eq!(
+    reason_of(&opened),
+    Some(&ConfigurationReason::BigtableDuplicateTableIds),
+    "{opened:?}"
+  );
+  assert_eq!(both_configurations(&env).await, before, "設定行を変えない");
+}
+
+// ---------------------------------------------------------------------------
 // 封筒の上限の設定（BT-16）
 // ---------------------------------------------------------------------------
 
@@ -842,6 +917,22 @@ async fn should_bigtable_head_row_whose_current_snapshot_is_ahead_of_the_head_be
       ("head", "last_event", expected_envelope_of(&id, 1)),
       ("head", "has_snapshot", b"0".to_vec()),
       ("snapshot", "current", expected_snapshot_envelope_of(2)),
+    ],
+    2,
+  )
+  .await;
+}
+
+#[tokio::test]
+async fn should_bigtable_head_row_without_the_snapshot_flag_whose_current_snapshot_is_at_the_head_be_a_storage_error() {
+  let id = Id::new("Order", "7");
+
+  assert_corrupted_head_is_a_storage_error(
+    &[
+      ("head", "seq_nr", head_seq_nr_text(1)),
+      ("head", "last_event", expected_envelope_of(&id, 1)),
+      ("head", "has_snapshot", b"0".to_vec()),
+      ("snapshot", "current", expected_snapshot_envelope_of(1)),
     ],
     2,
   )

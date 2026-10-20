@@ -141,6 +141,8 @@ pub enum ConfigurationReason {
   BigtableConfigurationMismatch,
   /// 初期化の対象に、既に設定行がある（BT-D1）。
   BigtableAlreadyInitialized,
+  /// journal と head に同じテーブルの ID が指定されている（2 章）。
+  BigtableDuplicateTableIds,
 }
 
 impl fmt::Display for ConfigurationReason {
@@ -210,6 +212,9 @@ impl fmt::Display for ConfigurationReason {
       }
       ConfigurationReason::BigtableAlreadyInitialized => {
         formatter.write_str("the bigtable tables already hold a configuration row")
+      }
+      ConfigurationReason::BigtableDuplicateTableIds => {
+        formatter.write_str("the bigtable journal and head table ids must be distinct")
       }
     }
   }

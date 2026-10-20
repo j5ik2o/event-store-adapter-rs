@@ -34,9 +34,16 @@ fn failure(operation: StorageOperation) -> EventStoreError {
 
 /// 残りの回数が 1 以上なら 1 つ減らして真を返す（その回数だけ障害を差し込む）。
 fn take_one(remaining: &AtomicUsize) -> bool {
-  remaining
-    .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |value| value.checked_sub(1))
-    .is_ok()
+  let mut current = remaining.load(Ordering::SeqCst);
+  loop {
+    let Some(next) = current.checked_sub(1) else {
+      return false;
+    };
+    match remaining.compare_exchange(current, next, Ordering::SeqCst, Ordering::SeqCst) {
+      Ok(_) => return true,
+      Err(actual) => current = actual,
+    }
+  }
 }
 
 /// 障害を差し込み、各フックの呼び出しを数える。読み取りや書き出しのフックの中では、別の書き手を動かせる。
@@ -520,8 +527,15 @@ async fn should_bigtable_update_lost_to_a_concurrent_writer_be_an_optimistic_loc
     .await;
 
   assert!(
-    matches!(&result, Err(EventStoreError::OptimisticLock { seq_nr: 2, .. })),
-    "契約違反や保存先エラーにしない: {result:?}"
+    matches!(
+      &result,
+      Err(EventStoreError::OptimisticLock {
+        seq_nr: 2,
+        head_seq_nr: None,
+        ..
+      })
+    ),
+    "条件付き更新の不成立は、古いと分かっている head の seq_nr を含めない楽観ロックにする: {result:?}"
   );
   assert_eq!(
     store.get_events_by_id_since_seq_nr(&id, 1).await.unwrap(),

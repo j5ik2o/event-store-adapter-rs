@@ -66,6 +66,17 @@ pub(super) fn validate_options(options: &BigtableOptions) -> Result<Option<u64>,
   Ok(options.retention.keep_snapshot_count().map(|count| count as u64))
 }
 
+/// journal と head に別のテーブルが指定されていることを検査する（2 章）。通信の前に行う。
+///
+/// プロファイルは journal と head の 2 つのテーブルと、両方の設定行を前提にする。同じ ID を渡すと 1 つのテーブルが
+/// 両方の役を兼ねてしまうため、設定エラーにする。
+fn validate_tables(tables: &BigtableTables) -> Result<(), EventStoreError> {
+  if tables.journal_table_id == tables.head_table_id {
+    return Err(configuration(ConfigurationReason::BigtableDuplicateTableIds));
+  }
+  Ok(())
+}
+
 // ---------------------------------------------------------------------------
 // 設定行の JSON
 // ---------------------------------------------------------------------------
@@ -292,13 +303,15 @@ async fn read_configuration(
 
 /// 初期化済みのストアを開き、列ファミリと両テーブルの設定行をクライアントの設定と照合する。
 ///
-/// テーブルも設定行も作らず、欠けた定義も補わない（BT-D1）。設定値の誤りは通信の前に設定エラーにする。
+/// テーブルも設定行も作らず、欠けた定義も補わない（BT-D1）。設定値の誤りと journal・head の同じテーブルの指定は、
+/// 通信の前に設定エラーにする。
 pub(super) async fn open_checked(
   connection: &BigtableConnection,
   tables: &BigtableTables,
   options: &BigtableOptions,
 ) -> Result<OpenedStore, EventStoreError> {
   validate_options(options)?;
+  validate_tables(tables)?;
   verify_column_families(
     connection.admin.clone(),
     table_path(tables, &tables.journal_table_id),
@@ -356,6 +369,7 @@ async fn create_configuration_row(target: &TableTarget, json: &[u8]) -> Result<(
 /// 用意済みの journal・head のテーブルに、同じ store_id の設定行を作って、ストアとして初期化する（BT-D1）。
 ///
 /// テーブルと列ファミリは作らない。両テーブルのどちらかに設定行が既にあれば、何も書かず設定エラーにする。
+/// journal と head に同じテーブルが指定されている場合も、何も読み書きせず設定エラーにする。
 /// 通常のストアの生成（[`EventStoreForBigtable::open`](super::EventStoreForBigtable::open)）は初期化しない。
 pub async fn initialize_bigtable_store(
   connection: &BigtableConnection,
@@ -363,6 +377,7 @@ pub async fn initialize_bigtable_store(
   options: &BigtableOptions,
 ) -> Result<(), EventStoreError> {
   let keep_snapshot_count = validate_options(options)?;
+  validate_tables(tables)?;
   let (journal, head) = targets(connection, tables, options);
   let operation = StorageOperation::CreateConfiguration;
   for target in [&journal, &head] {

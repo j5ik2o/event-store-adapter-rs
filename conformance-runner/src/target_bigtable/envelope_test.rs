@@ -100,6 +100,59 @@ fn should_run_encode_snapshot_cases() {
 }
 
 #[test]
+fn should_run_fail_an_encode_case_whose_expected_bytes_cannot_be_restored() {
+  // 符号化の結果は期待値と一致するが、seq_nr 0 の封筒は復元できない（seq_nr は 1 以上）。
+  let case = json!({
+    "operation": ENCODE_SNAPSHOT,
+    "input": {"seq_nr": 0, "manifest": "", "payload_hex": ""},
+    "expect": {"value": "0100000000000000000000000000000000"}
+  });
+
+  let outcome = run(&case);
+
+  assert!(
+    failure_detail(&outcome).contains("復元できない"),
+    "符号化の一致だけでは成功にしない: {outcome:?}"
+  );
+}
+
+#[test]
+fn should_run_fail_an_encode_case_whose_restored_fields_differ_from_the_input() {
+  // aid の長さの欄は 65535 で止まるので、符号化の結果は期待値と一致するが、復元すると aid と payload が入力と食い違う。
+  let aid = format!(
+    "{}{}{}{}{}",
+    "a".repeat(65535),
+    "\0".repeat(7) + "\u{1}",
+    "\0".repeat(8),
+    "\0".repeat(4),
+    "\0\0\0\u{18}"
+  );
+  let fields = EventEnvelopeFields {
+    aid: aid.clone(),
+    seq_nr: 1,
+    occurred_at_ns: 0,
+    manifest: String::new(),
+    payload: vec![],
+  };
+  let expected_hex = to_hex(&encode_bigtable_event_envelope_for_test(&fields));
+  let case = encode_event_case(
+    json!({"aid": aid, "seq_nr": 1, "occurred_at_ns": "0", "manifest": "", "payload_hex": ""}),
+    &expected_hex,
+  );
+  let restored =
+    decode_bigtable_event_envelope_for_test(&from_hex(&expected_hex).unwrap(), StorageOperation::LoadEvents)
+      .expect("試験の前提: 期待値のバイト列は復元できる");
+  assert_ne!(restored, fields, "試験の前提: 復元した項目が入力と食い違う");
+
+  let outcome = run(&case);
+
+  assert!(
+    failure_detail(&outcome).contains("一致しない"),
+    "符号化の一致だけでは成功にしない: {outcome:?}"
+  );
+}
+
+#[test]
 fn should_run_fail_an_encode_case_whose_input_is_malformed() {
   let mut bad_time = event_empty_input();
   bad_time["occurred_at_ns"] = json!("9223372036854775808");

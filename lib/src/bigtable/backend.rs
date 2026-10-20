@@ -160,15 +160,20 @@ impl BigtableShared {
   /// aid の行キーの接頭辞 `P(aid)`。試験では、ハッシュを差し替えて衝突させられる。
   pub(super) fn prefix(&self, aid: &AidString) -> Result<Vec<u8>, EventStoreError> {
     #[cfg(feature = "test-hooks")]
-    let overridden = self.hooks.as_ref().and_then(|hooks| hooks.aggregate_hash(aid));
+    let hash = self
+      .hooks
+      .as_ref()
+      .and_then(|hooks| hooks.aggregate_hash(aid))
+      .unwrap_or_else(|| fnv1a64(aid.as_str().as_bytes()));
     #[cfg(not(feature = "test-hooks"))]
-    let overridden: Option<u64> = None;
-    aggregate_prefix(overridden.unwrap_or_else(|| fnv1a64(aid.as_str().as_bytes())), aid)
+    let hash = fnv1a64(aid.as_str().as_bytes());
+    aggregate_prefix(hash, aid)
   }
 
   /// head の行を強整合で読み、検証する。行がなければ `None`（BT-7 の手順 1）。
   ///
-  /// 必要なセルが欠けた行は新規集約とみなさず、保存先エラーにする。
+  /// 必要なセルが欠けた行は新規集約とみなさず、保存先エラーにする。`has_snapshot` の印と現在のスナップショットの
+  /// seq_nr が食い違う行（印が 1 なのに head と一致しない、印が 0 なのに head 以上）も保存先エラーにする。
   pub(super) async fn read_head(
     &self,
     prefix: &[u8],
@@ -204,8 +209,11 @@ impl BigtableShared {
       })
       .transpose()?;
     match &current_snapshot {
-      // 現在のスナップショットは、head が伴うなら head と同じ seq_nr で、伴わなくても head 以下である（R-8）。
-      Some(current) if current.fields.seq_nr > seq_nr || (has_snapshot && current.fields.seq_nr != seq_nr) => {
+      // head が伴う（`has_snapshot = 1`）なら現在のスナップショットは head と同じ seq_nr で、伴わない（`has_snapshot = 0`）
+      // なら head より小さい（プロファイル 4 章）。印が 0 で head と等しい行は、この規則と矛盾する。
+      Some(current)
+        if (has_snapshot && current.fields.seq_nr != seq_nr) || (!has_snapshot && current.fields.seq_nr >= seq_nr) =>
+      {
         return Err(invalid_data(
           operation,
           "the current snapshot does not match the head seq_nr",
@@ -306,7 +314,9 @@ impl BigtableShared {
 
   /// head の行を条件付きで更新する。成功が追記の確定点である（H-1）。
   ///
-  /// 条件が成り立たなければ楽観ロックにする。応答を受け取れなかったときは、結果を決めつけず保存先エラーにし、再送しない。
+  /// 条件が成り立たなければ楽観ロックにする。不成立は別の書き手が head を進めた後なので、取得した h は古いと分かっている。
+  /// そのため楽観ロックには head の seq_nr を含めず、head を読み直しもしない（E-2）。応答を受け取れなかったときは、
+  /// 結果を決めつけず保存先エラーにし、再送しない。
   async fn commit_head(&self, aid: &AidString, seq_nr: SeqNr, update: HeadUpdate<'_>) -> Result<(), EventStoreError> {
     let operation = StorageOperation::Append;
     let has_snapshot = update.snapshot.is_some();
@@ -366,7 +376,7 @@ impl BigtableShared {
     Err(EventStoreError::OptimisticLock {
       aid: aid.as_str().to_owned(),
       seq_nr,
-      head_seq_nr: update.previous,
+      head_seq_nr: None,
     })
   }
 }
