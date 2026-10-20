@@ -24,7 +24,8 @@ mod storage_backend;
 pub use aggregate_id::{AggregateId, AidString};
 #[cfg(feature = "bigtable")]
 pub use bigtable::{
-  initialize_bigtable_store, BigtableConnection, BigtableOptions, BigtableTables, EventStoreForBigtable,
+  initialize_bigtable_store, initialize_bigtable_store_with_token_source, BigtableConnection, BigtableOptions,
+  BigtableTables, BigtableTokenSource, EventStoreForBigtable,
 };
 #[cfg(feature = "dynamodb")]
 pub use dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};

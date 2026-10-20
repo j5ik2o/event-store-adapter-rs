@@ -5,6 +5,7 @@
 
 use std::collections::HashSet;
 use std::fmt;
+use std::sync::Arc;
 
 use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::bigtable_table_admin_client::BigtableTableAdminClient;
 use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::{gc_rule, table, GetTableRequest};
@@ -14,6 +15,7 @@ use serde_json::{json, Value};
 use tonic::transport::Channel;
 use uuid::Uuid;
 
+use super::auth::{Authorizer, BigtableTokenSource};
 use super::keys::CONFIG_ROW_KEY;
 #[cfg(feature = "test-hooks")]
 use super::rows::replace_cell;
@@ -22,6 +24,8 @@ use super::rows::{
   FAMILY_SNAPSHOT,
 };
 use super::{BigtableConnection, BigtableOptions, BigtableTables};
+#[cfg(feature = "test-hooks")]
+use super::{BigtableRequestKind, BigtableTestHooks};
 use crate::error::{ConfigurationReason, EventStoreError, StorageOperation};
 use crate::retention::RetentionMode;
 
@@ -222,15 +226,23 @@ fn table_path(tables: &BigtableTables, table_id: &str) -> String {
 
 /// 列ファミリが全て揃い、データの列ファミリの GC が「最大 1 版」だけであることを確かめる。
 /// 設定の列ファミリは存在だけを見る。年齢による GC は許さない（BT-2）。
-async fn verify_column_families(admin: Channel, table_name: String, families: &[&str]) -> Result<(), EventStoreError> {
+/// トークンの取得元があれば、管理 API の `GetTable` にも `authorization` を付ける。
+async fn verify_column_families(
+  admin: Channel,
+  table_name: String,
+  families: &[&str],
+  authorizer: &Authorizer,
+) -> Result<(), EventStoreError> {
   let operation = StorageOperation::ReadConfiguration;
   let mismatch = || configuration(ConfigurationReason::BigtableColumnFamilyMismatch);
-  let response = BigtableTableAdminClient::new(admin)
-    .get_table(GetTableRequest {
-      name: table_name,
-      view: table::View::SchemaView as i32,
-    })
-    .await;
+  let request = GetTableRequest {
+    name: table_name,
+    view: table::View::SchemaView as i32,
+  };
+  let request = authorizer.authorize(request, operation).await?;
+  #[cfg(feature = "test-hooks")]
+  authorizer.observe(BigtableRequestKind::GetTable, &request);
+  let response = BigtableTableAdminClient::new(admin).get_table(request).await;
   let table = match response {
     Ok(response) => response.into_inner(),
     Err(status) if status.code() == tonic::Code::NotFound => return Err(mismatch()),
@@ -271,17 +283,20 @@ fn targets(
   connection: &BigtableConnection,
   tables: &BigtableTables,
   options: &BigtableOptions,
+  authorizer: &Authorizer,
 ) -> (TableTarget, TableTarget) {
   (
     TableTarget::new(
       connection.data.clone(),
       table_path(tables, &tables.journal_table_id),
       &options.app_profile_id,
+      authorizer.clone(),
     ),
     TableTarget::new(
       connection.data.clone(),
       table_path(tables, &tables.head_table_id),
       &options.app_profile_id,
+      authorizer.clone(),
     ),
   )
 }
@@ -309,6 +324,7 @@ pub(super) async fn open_checked(
   connection: &BigtableConnection,
   tables: &BigtableTables,
   options: &BigtableOptions,
+  authorizer: &Authorizer,
 ) -> Result<OpenedStore, EventStoreError> {
   validate_options(options)?;
   validate_tables(tables)?;
@@ -316,15 +332,17 @@ pub(super) async fn open_checked(
     connection.admin.clone(),
     table_path(tables, &tables.journal_table_id),
     &JOURNAL_FAMILIES,
+    authorizer,
   )
   .await?;
   verify_column_families(
     connection.admin.clone(),
     table_path(tables, &tables.head_table_id),
     &HEAD_FAMILIES,
+    authorizer,
   )
   .await?;
-  let (journal, head) = targets(connection, tables, options);
+  let (journal, head) = targets(connection, tables, options, authorizer);
   let operation = StorageOperation::ReadConfiguration;
   let journal_configuration = read_configuration(&journal, operation)
     .await?
@@ -376,9 +394,53 @@ pub async fn initialize_bigtable_store(
   tables: &BigtableTables,
   options: &BigtableOptions,
 ) -> Result<(), EventStoreError> {
+  initialize(connection, tables, options, &Authorizer::default()).await
+}
+
+/// [`initialize_bigtable_store`] と同じ初期化を、トークンの取得元を渡して行う。本番の Cloud Bigtable 向けである。
+///
+/// 初期化の読み取りと書き込みのすべての要求の直前に、[`BigtableTokenSource`] を呼び、
+/// `authorization: Bearer <トークン>` を付ける。取得元が失敗したとき、またはメタデータの値にできないトークンを返したときは、
+/// その要求を送らず、`EventStoreError::Storage`（操作は `CreateConfiguration`）にする。取得元の呼び出しはやり直さない。
+///
+/// 本番では、`connection` に TLS の `Channel` を渡す。TLS の機能は、利用者が tonic の TLS の機能を自分の依存で有効にして作る。
+pub async fn initialize_bigtable_store_with_token_source(
+  connection: &BigtableConnection,
+  tables: &BigtableTables,
+  options: &BigtableOptions,
+  token_source: Arc<dyn BigtableTokenSource>,
+) -> Result<(), EventStoreError> {
+  initialize(connection, tables, options, &Authorizer::new(token_source)).await
+}
+
+/// 初期化を、取得元（なしでもよい）と要求を送る直前のフックを渡して行う（試験用）。
+///
+/// 取得元がなければ、[`initialize_bigtable_store`] と同じ要求を、メタデータなしで送る。
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub async fn initialize_bigtable_store_with_hooks(
+  connection: &BigtableConnection,
+  tables: &BigtableTables,
+  options: &BigtableOptions,
+  token_source: Option<Arc<dyn BigtableTokenSource>>,
+  hooks: Arc<dyn BigtableTestHooks>,
+) -> Result<(), EventStoreError> {
+  let authorizer = token_source
+    .map(Authorizer::new)
+    .unwrap_or_default()
+    .with_hooks(Some(hooks));
+  initialize(connection, tables, options, &authorizer).await
+}
+
+async fn initialize(
+  connection: &BigtableConnection,
+  tables: &BigtableTables,
+  options: &BigtableOptions,
+  authorizer: &Authorizer,
+) -> Result<(), EventStoreError> {
   let keep_snapshot_count = validate_options(options)?;
   validate_tables(tables)?;
-  let (journal, head) = targets(connection, tables, options);
+  let (journal, head) = targets(connection, tables, options, authorizer);
   let operation = StorageOperation::CreateConfiguration;
   for target in [&journal, &head] {
     if read_configuration(target, operation).await?.is_some() {
@@ -420,7 +482,7 @@ pub async fn overwrite_bigtable_configuration_for_test(
   journal: &BigtableConfigurationRecord,
   head: &BigtableConfigurationRecord,
 ) -> Result<(), EventStoreError> {
-  let (journal_target, head_target) = targets(connection, tables, options);
+  let (journal_target, head_target) = targets(connection, tables, options, &Authorizer::default());
   let operation = StorageOperation::CreateConfiguration;
   for (target, record) in [(&journal_target, journal), (&head_target, head)] {
     let json = configuration_json(&RecordedConfiguration {
