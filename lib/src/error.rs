@@ -16,6 +16,8 @@ pub enum ContractRule {
   W9,
   /// D-7（判断の番号であり、必須の規則番号ではない。設計 10 章 Q-3）。
   ItemSizeLimit,
+  /// BT-16: メタデータを含む直列化後の 1 封筒が、ストア単位の上限を超える（Bigtable）。
+  EnvelopeSizeLimit,
 }
 
 impl fmt::Display for ContractRule {
@@ -29,6 +31,7 @@ impl fmt::Display for ContractRule {
       ContractRule::W8Gap => "W-8",
       ContractRule::W9 => "W-9",
       ContractRule::ItemSizeLimit => "D-7",
+      ContractRule::EnvelopeSizeLimit => "BT-16",
     };
     formatter.write_str(text)
   }
@@ -123,6 +126,23 @@ pub enum ConfigurationReason {
   UnsupportedSqliteLayoutVersion,
   /// 記録した config の store_id・保持件数・保持方式・変更フィードの有無が、期待と一致しない（SQ-2・SQ-19）。
   SqliteConfigurationMismatch,
+  /// Bigtable の保存先は期限切れ方式（`RetentionMode::Ttl`）を提供しない（BT-13）。
+  BigtableTtlUnsupported,
+  /// Bigtable の保存先は最初の版で変更フィードを提供しない。フィードを求める設定は、この理由になる（BT-D8・BT-17）。
+  BigtableChangeFeedUnsupported,
+  /// 封筒の上限が、最小の封筒も収まらない値か、最大（8388608 バイト）を超える（BT-16）。
+  BigtableEnvelopeLimitOutOfRange,
+  /// 列ファミリが欠けているか、データの列ファミリの GC が「最大 1 版」だけでない（BT-2）。
+  BigtableColumnFamilyMismatch,
+  /// 設定行が欠けているか、JSON として読めない・重複したキーがある・必須フィールドが欠けている・型や形が違う（2 章）。
+  BigtableConfigurationInvalid,
+  /// 読み取れた設定が、両テーブルの間、またはクライアントの設定（保持件数・封筒の上限）と食い違う。
+  /// 配置の版が 1 でない、保持方式が `delete` でない、store_id が小文字の UUID でない場合もこの理由になる（2 章）。
+  BigtableConfigurationMismatch,
+  /// 初期化の対象に、既に設定行がある（BT-D1）。
+  BigtableAlreadyInitialized,
+  /// journal と head に同じテーブルの ID が指定されている（2 章）。
+  BigtableDuplicateTableIds,
 }
 
 impl fmt::Display for ConfigurationReason {
@@ -171,6 +191,30 @@ impl fmt::Display for ConfigurationReason {
       }
       ConfigurationReason::SqliteConfigurationMismatch => {
         formatter.write_str("the sqlite configuration does not match the client settings")
+      }
+      ConfigurationReason::BigtableTtlUnsupported => {
+        formatter.write_str("the bigtable backend does not support retention mode ttl")
+      }
+      ConfigurationReason::BigtableChangeFeedUnsupported => {
+        formatter.write_str("the bigtable backend does not support the change feed")
+      }
+      ConfigurationReason::BigtableEnvelopeLimitOutOfRange => {
+        formatter.write_str("envelope_limit_bytes must be between 17 and 8388608")
+      }
+      ConfigurationReason::BigtableColumnFamilyMismatch => {
+        formatter.write_str("the bigtable column families do not match the profile")
+      }
+      ConfigurationReason::BigtableConfigurationInvalid => {
+        formatter.write_str("the bigtable configuration row is missing or malformed")
+      }
+      ConfigurationReason::BigtableConfigurationMismatch => {
+        formatter.write_str("the bigtable configuration does not match between the tables or the client settings")
+      }
+      ConfigurationReason::BigtableAlreadyInitialized => {
+        formatter.write_str("the bigtable tables already hold a configuration row")
+      }
+      ConfigurationReason::BigtableDuplicateTableIds => {
+        formatter.write_str("the bigtable journal and head table ids must be distinct")
       }
     }
   }

@@ -10,7 +10,7 @@ use event_store_adapter_conformance_rs::report::{
   CaseOutcome, CaseReport, NotApplicableReason, ObservedValues, RepresentationGap, UnverifiedReason,
 };
 use event_store_adapter_conformance_rs::runner::{run, run_case, CaseExecutor, PreparedCase, Target};
-use event_store_adapter_conformance_rs::{target_dynamodb, target_memory, target_sqlite};
+use event_store_adapter_conformance_rs::{target_bigtable, target_dynamodb, target_memory, target_sqlite};
 use serde_json::{json, Value};
 
 fn classification_executor(_: &Case, _: PreparedCase) -> CaseOutcome {
@@ -806,7 +806,7 @@ fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory()
 }
 
 #[test]
-fn should_run_marks_only_memory_only_and_sqlite_only_cases_as_not_targeted_on_dynamodb() {
+fn should_run_marks_only_memory_only_sqlite_only_and_bigtable_cases_as_not_targeted_on_dynamodb() {
   let data = real_data();
 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
@@ -817,8 +817,31 @@ fn should_run_marks_only_memory_only_and_sqlite_only_cases_as_not_targeted_on_dy
     .map(|report| report.id.as_str())
     .collect();
   not_targeted.sort_unstable();
-  // SQLite を提供するので、SQLite だけが対象の場面 8 件も「提供しない」でなく「今回の保存先でない」になる。
+  // SQLite・Bigtable を提供するので、SQLite だけが対象の場面 8 件、Bigtable の場面 12 件と封筒の値の表 10 件も
+  // 「提供しない」でなく「今回の保存先でない」になる。
   let mut expected = vec![
+    "bigtable-cas-response-lost",
+    "bigtable-change-feed-unsupported",
+    "bigtable-envelope-event-bytes",
+    "bigtable-envelope-event-empty",
+    "bigtable-envelope-event-length-mismatch",
+    "bigtable-envelope-event-occurred-at-max",
+    "bigtable-envelope-event-occurred-at-min",
+    "bigtable-envelope-event-trailing-bytes",
+    "bigtable-envelope-event-unknown-version",
+    "bigtable-envelope-event-utf8",
+    "bigtable-envelope-limit-above-maximum",
+    "bigtable-envelope-limit-below-minimum",
+    "bigtable-envelope-over-limit",
+    "bigtable-envelope-snapshot-empty",
+    "bigtable-envelope-snapshot-utf8",
+    "bigtable-new-tail-write-failure",
+    "bigtable-previous-event-write-failure",
+    "bigtable-seeded-configuration-match",
+    "bigtable-seeded-envelope-limit-mismatch",
+    "bigtable-seeded-keep-count-mismatch",
+    "bigtable-seeded-table-envelope-limit-mismatch",
+    "bigtable-ttl-unsupported",
     "memory-change-feed-unsupported",
     "memory-payload-read-mutation",
     "memory-payload-written-mutation",
@@ -846,8 +869,8 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
   // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーに加え、
-  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 36 は、
-  // この言語が提供しない保存先（Spanner・Bigtable）の場面と、Bigtable の封筒の値の表。
+  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 14 は、
+  // この言語が提供しない保存先（Spanner）の場面で、22 は Bigtable の場面 12 件と封筒の値の表 10 件（今回の保存先でない）。
   assert_eq!(counts(&reports), (64, 0, 105, 0));
 }
 
@@ -858,7 +881,8 @@ fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 65 のうち 7 は、
-  // メモリだけが対象の場面、8 は SQLite だけが対象の場面、36 は、この言語が提供しない保存先の場面と値の表。
+  // メモリだけが対象の場面、8 は SQLite だけが対象の場面、14 は、この言語が提供しない保存先（Spanner）の場面、
+  // 22 は Bigtable の場面と封筒の値の表。
   assert_eq!(counts(&reports), (9, 0, 65, 95));
 }
 
@@ -870,8 +894,78 @@ fn should_run_classifies_the_sqlite_leg_without_running_a_store() {
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 57 は、SQLite が対象で
   // 保存先の実行に回る場面 45 と値の表 12 で、SQLite だけの場面の `store`・`seed` の要素を未知の要素にしない。
-  // 対象外 103 のうち 36 は、この言語が提供しない保存先（Spanner・Bigtable）の場面と値の表。
+  // 対象外 103 のうち 14 は、この言語が提供しない保存先（Spanner）の場面、22 は Bigtable の場面と封筒の値の表。
   assert_eq!(counts(&reports), (9, 0, 103, 57));
+}
+
+#[test]
+fn should_run_classifies_the_bigtable_leg_without_running_a_store() {
+  let data = real_data();
+
+  let reports = run(&data, &target_bigtable::TARGET, classification_executor);
+
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 72 は、Bigtable が対象で
+  // 保存先の実行に回る場面と値の表。対象外 88 のうち、この言語が提供しない保存先（Spanner）の場面 14 件は「提供しない」、
+  // ほかの保存先だけが対象の場面と配置の 60 件は「今回の保存先でない」。
+  assert_eq!(counts(&reports), (9, 0, 88, 72));
+  let not_provided: Vec<&str> = reports
+    .iter()
+    .filter(|report| is_backend_not_provided(&report.outcome))
+    .map(|report| report.id.as_str())
+    .collect();
+  assert_eq!(not_provided.len(), 14, "{not_provided:?}");
+  assert!(
+    not_provided.iter().all(|id| id.starts_with("spanner-")),
+    "提供しないのは Spanner の場面だけ: {not_provided:?}"
+  );
+}
+
+#[test]
+fn should_run_hands_every_bigtable_case_to_the_executor_on_the_bigtable_leg_instead_of_marking_it_not_provided() {
+  let data = real_data();
+  let cases = bigtable_only_cases(&data);
+  assert_eq!(cases.len(), 22, "Bigtable だけの場面 12 件と、封筒の値の表 10 件");
+
+  for case in cases {
+    let outcome = run_case(case, &target_bigtable::TARGET, &data.coverage, classification_executor);
+
+    assert!(
+      is_not_executed(&outcome),
+      "提供しない・今回の保存先でないと分類せず、保存先実行関数へ委譲する: {}: {outcome:?}",
+      case.id
+    );
+  }
+}
+
+#[test]
+fn should_run_case_accepts_the_bigtable_store_setting_and_seed_item_but_still_fails_other_backends_elements() {
+  let mut known = scenario_body(&["bigtable"]);
+  known["store"] = json!({"retention_count": null, "retention_mode": "delete", "envelope_limit_bytes": 1024});
+  known["seed"] = json!({"configuration": {"journal": {}, "head": {}}});
+  let mut unknown = scenario_body(&["bigtable"]);
+  unknown["store"] = json!({"retention_count": null, "retention_mode": "delete", "lock_wait_milliseconds": 100});
+
+  let accepted = run_case(
+    &scenario(&["T-1"], known),
+    &target_bigtable::TARGET,
+    &no_exclusions(),
+    classification_executor,
+  );
+  let rejected = run_case(
+    &scenario(&["T-1"], unknown),
+    &target_bigtable::TARGET,
+    &no_exclusions(),
+    classification_executor,
+  );
+
+  assert!(
+    is_not_executed(&accepted),
+    "Bigtable の要素は知らない要素にしない: {accepted:?}"
+  );
+  assert!(
+    matches!(&rejected, CaseOutcome::Failed { detail, .. } if detail.contains("store.lock_wait_milliseconds")),
+    "SQLite だけの要素は Bigtable の leg でも知らない要素になる: {rejected:?}"
+  );
 }
 
 #[test]
@@ -1160,7 +1254,7 @@ fn case_of_real_data<'a>(data: &'a DataSet, id: &str) -> &'a Case {
 
 /// 実データのうち、この言語が提供しない保存先のケースを返す。
 ///
-/// 場面は `backends` にメモリも DynamoDB も SQLite もないもの、値の表は Bigtable の封筒の操作。
+/// 場面は `backends` にメモリも DynamoDB も SQLite も Bigtable もないもの。値の表と配置のケースにはない。
 fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
   data
     .cases
@@ -1170,8 +1264,20 @@ fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
         !backends.is_empty()
           && backends
             .iter()
-            .all(|name| !matches!(name.as_str(), Some("memory" | "dynamodb" | "sqlite")))
+            .all(|name| !matches!(name.as_str(), Some("memory" | "dynamodb" | "sqlite" | "bigtable")))
       }),
+      CaseKind::ValueTable | CaseKind::Layout => false,
+    })
+    .collect()
+}
+
+/// 実データのうち、Bigtable が対象のケース（Bigtable だけの場面 12 件と封筒の値の表 10 件）を返す。
+fn bigtable_only_cases(data: &DataSet) -> Vec<&Case> {
+  data
+    .cases
+    .iter()
+    .filter(|case| match case.kind {
+      CaseKind::Scenario => case.body["backends"] == json!(["bigtable"]),
       CaseKind::ValueTable => case.body["operation"]
         .as_str()
         .is_some_and(|operation| BIGTABLE_ENVELOPE_OPERATIONS.contains(&operation)),
@@ -1181,14 +1287,10 @@ fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
 }
 
 #[test]
-fn should_run_marks_the_36_cases_of_backends_not_provided_as_not_provided_on_every_backend() {
+fn should_run_marks_the_14_cases_of_backends_not_provided_as_not_provided_on_every_backend() {
   let data = real_data();
   let cases = cases_of_backends_not_provided(&data);
-  assert_eq!(
-    cases.len(),
-    36,
-    "Spanner・Bigtable の場面 26 件と、Bigtable の封筒の値の表 10 件"
-  );
+  assert_eq!(cases.len(), 14, "Spanner の場面 14 件");
 
   for (target, _) in TARGETS {
     for case in &cases {
@@ -1311,7 +1413,7 @@ fn should_run_case_keeps_a_scene_listing_a_provided_backend_not_targeted_instead
 }
 
 #[test]
-fn should_run_case_marks_the_bigtable_envelope_value_table_as_not_provided_without_calling_the_executor() {
+fn should_run_case_marks_the_bigtable_envelope_value_table_as_not_targeted_without_calling_the_executor() {
   let data = real_data();
   let case = case_of_real_data(&data, "bigtable-envelope-event-empty");
   assert!(matches!(case.kind, CaseKind::ValueTable));
@@ -1319,10 +1421,14 @@ fn should_run_case_marks_the_bigtable_envelope_value_table_as_not_provided_witho
 
   for (target, _) in TARGETS {
     let outcome = run_case(case, target, &data.coverage, |_, _| {
-      panic!("提供しない保存先の値の表を保存先実行関数へ委譲しない")
+      panic!("今回の保存先でない値の表を保存先実行関数へ委譲しない")
     });
 
-    assert!(is_backend_not_provided(&outcome), "{}: {outcome:?}", target.name);
+    assert!(
+      is_not_applicable_of_kind(&outcome, "backend-not-targeted"),
+      "Bigtable を提供するので、提供しないのではなく今回の保存先でない: {}: {outcome:?}",
+      target.name
+    );
   }
 }
 

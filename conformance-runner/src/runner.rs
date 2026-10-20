@@ -40,7 +40,7 @@ pub struct PreparedCase {
 pub type CaseExecutor = fn(&Case, PreparedCase) -> CaseOutcome;
 
 /// この言語が提供する保存先。
-pub const PROVIDED_BACKENDS: [&str; 3] = ["memory", "dynamodb", "sqlite"];
+pub const PROVIDED_BACKENDS: [&str; 4] = ["memory", "dynamodb", "sqlite", "bigtable"];
 
 /// 特定の保存先に属する値の表の操作と、その保存先。
 const VALUE_OPERATION_BACKENDS: [(&str, &str); 3] = [

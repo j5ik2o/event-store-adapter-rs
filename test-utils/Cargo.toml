@@ -10,3 +10,7 @@ ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
 testcontainers = { workspace = true }
 once_cell = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
+# Bigtable のエミュレーターの接続とテーブル作成（管理 API）に使う。ライブラリ本体の機能 `bigtable` が使う版と同じにする。
+tonic = { version = "0.14.6", default-features = false, features = ["channel"] }
+googleapis-tonic-google-bigtable-admin-v2 = "0.45.0"
+prost-types = "0.14.4"

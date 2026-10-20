@@ -72,3 +72,39 @@ fn should_remove_collection_when_operation_is_cancelled() {
   }
   assert!(next.finish().is_empty());
 }
+
+fn journal_notification() {
+  tracing::warn!(
+    target: "event_store_adapter::journal",
+    category = "journal-write-failure",
+    "test journal notification"
+  );
+}
+
+#[test]
+fn should_collect_journal_write_failure_warn_notifications_together_with_retention_failures() {
+  let operation = OperationNotifications::begin("case", 1).unwrap();
+  {
+    let span = operation.span();
+    let _entered = span.enter();
+    journal_notification();
+    journal_notification();
+    notification();
+  }
+  assert_eq!(operation.finish(), vec!["journal-write-failure", "retention-failure"]);
+}
+
+#[test]
+fn should_not_collect_a_notification_whose_target_level_and_category_do_not_form_a_known_pair() {
+  let operation = OperationNotifications::begin("case", 1).unwrap();
+  {
+    let span = operation.span();
+    let _entered = span.enter();
+    tracing::info!(target: "event_store_adapter::journal", category = "journal-write-failure", "wrong level");
+    tracing::warn!(target: "other", category = "journal-write-failure", "wrong target");
+    tracing::warn!(target: "event_store_adapter::journal", category = "retention-failure", "wrong pair");
+    tracing::warn!(target: "event_store_adapter::retention", category = "journal-write-failure", "wrong pair");
+    tracing::warn!(target: "event_store_adapter::journal", category = "other", "wrong category");
+  }
+  assert!(operation.finish().is_empty());
+}

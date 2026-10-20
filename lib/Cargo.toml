@@ -27,6 +27,7 @@ test-hooks = []
 dynamodb = ["dep:aws-sdk-dynamodb", "dep:uuid"]
 migration = ["dynamodb"]
 sqlite = ["dep:rusqlite", "dep:uuid"]
+bigtable = ["dep:tonic", "dep:googleapis-tonic-google-bigtable-v2", "dep:googleapis-tonic-google-bigtable-admin-v2", "dep:uuid"]
 
 [dependencies]
 thiserror = { workspace = true }
@@ -34,6 +35,10 @@ async-trait = { workspace = true }
 aws-sdk-dynamodb = { workspace = true, optional = true }
 uuid = { version = "1", features = ["v4"], optional = true }
 rusqlite = { workspace = true, optional = true, features = ["bundled"] }
+# Bigtable のデータ API と管理 API の gRPC。機能 `bigtable` を付けないビルドには入らない。
+tonic = { workspace = true, optional = true, features = ["channel", "codegen"] }
+googleapis-tonic-google-bigtable-v2 = { workspace = true, optional = true }
+googleapis-tonic-google-bigtable-admin-v2 = { workspace = true, optional = true }
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

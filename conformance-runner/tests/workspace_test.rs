@@ -225,3 +225,109 @@ fn should_sqlite_tests_require_the_opt_in_sqlite_feature() {
     .expect("sqlite_test がある");
   assert_eq!(target["required-features"], json!(["sqlite"]));
 }
+
+fn library_package(metadata: &Value) -> Value {
+  metadata["packages"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|package| package["name"] == "event-store-adapter-rs")
+    .expect("ライブラリが workspace にある")
+    .clone()
+}
+
+/// 機能 `bigtable` だけが有効にする gRPC の crate。版は検査しない（`Cargo.lock` はコミットされず、
+/// 互換な新しい版が出るたびに CI が解決し直すので、解決結果の版を固定する試験は何も変えずに失敗する）。
+const BIGTABLE_GRPC_CRATES: [&str; 3] = [
+  "tonic",
+  "googleapis-tonic-google-bigtable-v2",
+  "googleapis-tonic-google-bigtable-admin-v2",
+];
+
+#[test]
+fn should_library_keep_the_bigtable_grpc_dependencies_optional_behind_the_bigtable_feature() {
+  let library = library_package(&workspace_metadata());
+
+  let defaults = library["features"]["default"].as_array().unwrap();
+  assert!(
+    !defaults.iter().any(|feature| feature == "bigtable"),
+    "Bigtable は既定の機能に入れない: {defaults:?}"
+  );
+  let bigtable = library["features"]["bigtable"]
+    .as_array()
+    .expect("ライブラリに機能 bigtable がある");
+  for name in BIGTABLE_GRPC_CRATES {
+    assert!(
+      bigtable.contains(&json!(format!("dep:{name}"))),
+      "機能 bigtable が {name} を有効にする: {bigtable:?}"
+    );
+    let dependency = library["dependencies"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|dependency| dependency["name"] == name && dependency["kind"].is_null())
+      .unwrap_or_else(|| panic!("{name} は通常の依存として宣言される"));
+    assert_eq!(
+      dependency["optional"], true,
+      "機能 bigtable を付けないビルドに {name} を入れない"
+    );
+  }
+}
+
+#[test]
+fn should_library_declare_no_unconditional_grpc_dependency_and_keep_test_support_out_of_normal_dependencies() {
+  let library = library_package(&workspace_metadata());
+
+  for dependency in library["dependencies"].as_array().unwrap() {
+    let name = dependency["name"].as_str().unwrap();
+    let is_normal = dependency["kind"].is_null();
+    if is_normal && (name.starts_with("tonic") || name.starts_with("prost") || name.starts_with("googleapis")) {
+      assert_eq!(
+        dependency["optional"], true,
+        "機能なしのビルドに入る gRPC の通常の依存がある: {name}"
+      );
+    }
+    if name == "event-store-adapter-test-utils-rs" {
+      assert_eq!(dependency["kind"], "dev", "試験の補助の依存が通常の依存へ漏れていない");
+    }
+  }
+}
+
+#[test]
+fn should_library_not_enable_test_hooks_through_the_bigtable_feature() {
+  let library = library_package(&workspace_metadata());
+
+  let bigtable = library["features"]["bigtable"]
+    .as_array()
+    .expect("ライブラリに機能 bigtable がある");
+
+  assert!(
+    !bigtable.contains(&json!("test-hooks")),
+    "フックや設定の上書きは機能 test-hooks の外で公開しない: {bigtable:?}"
+  );
+}
+
+#[test]
+fn should_bigtable_tests_require_the_opt_in_bigtable_feature() {
+  let package = runner_package(&workspace_metadata());
+
+  assert_eq!(package["features"]["default"], json!([]));
+  let bigtable = package["features"]["bigtable"]
+    .as_array()
+    .expect("実行器に機能 bigtable がある");
+  assert!(
+    bigtable.contains(&json!("event-store-adapter-rs/bigtable")),
+    "実行器の機能 bigtable がライブラリの機能 bigtable を有効にする: {bigtable:?}"
+  );
+  assert!(
+    !requested_features(&package, "event-store-adapter-rs").contains(&"bigtable".to_string()),
+    "ライブラリの機能 bigtable を常には有効にしない"
+  );
+  let target = package["targets"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|target| target["name"] == "bigtable_test")
+    .expect("bigtable_test がある");
+  assert_eq!(target["required-features"], json!(["bigtable"]));
+}

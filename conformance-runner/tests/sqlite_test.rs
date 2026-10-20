@@ -184,7 +184,7 @@ fn should_run_sqlite_report_the_sq_rules_as_passed_without_failures() {
 }
 
 #[test]
-fn should_run_sqlite_keep_spanner_and_bigtable_cases_as_not_provided() {
+fn should_run_sqlite_keep_spanner_cases_as_not_provided() {
   let data = real_data();
   let reports = run_sqlite(&data);
 
@@ -193,17 +193,39 @@ fn should_run_sqlite_keep_spanner_and_bigtable_cases_as_not_provided() {
     .filter(|report| kind_of_not_applicable(&report.outcome).as_deref() == Some("backend-not-provided"))
     .collect();
 
-  // Spanner の場面 14・Bigtable の場面 12・Bigtable の封筒の値の表 10。
+  // Spanner の場面 14。Bigtable は提供する保存先なので、含めない。
   assert_eq!(
     not_provided.len(),
-    36,
+    14,
     "{:?}",
     not_provided.iter().map(|r| &r.id).collect::<Vec<_>>()
   );
   for report in not_provided {
     assert!(
-      report.id.starts_with("spanner-") || report.id.starts_with("bigtable-"),
-      "Spanner・Bigtable 以外が提供しない扱いになっている: {}",
+      report.id.starts_with("spanner-"),
+      "Spanner 以外が提供しない扱いになっている: {}",
+      report.id
+    );
+  }
+}
+
+#[test]
+fn should_run_sqlite_mark_bigtable_cases_as_not_targeted_instead_of_not_provided() {
+  let data = real_data();
+  let reports = run_sqlite(&data);
+
+  let bigtable_only: Vec<&CaseReport> = reports
+    .iter()
+    .filter(|report| report.id.starts_with("bigtable-"))
+    .collect();
+
+  // Bigtable の場面 12・Bigtable の封筒の値の表 10。
+  assert_eq!(bigtable_only.len(), 22);
+  for report in bigtable_only {
+    assert_eq!(
+      kind_of_not_applicable(&report.outcome).as_deref(),
+      Some("backend-not-targeted"),
+      "{}",
       report.id
     );
   }
