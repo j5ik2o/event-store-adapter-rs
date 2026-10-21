@@ -18,6 +18,9 @@ use googleapis_tonic_google_bigtable_v2::google::bigtable::v2::{
 };
 use tonic::transport::Channel;
 
+use super::auth::Authorizer;
+#[cfg(feature = "test-hooks")]
+use super::BigtableRequestKind;
 use crate::error::{EventStoreError, StorageOperation};
 
 /// 受信するメッセージの大きさの上限。封筒の上限の最大（8MiB）を持つ行を、head の行（イベントとスナップショット）として読める大きさ。
@@ -328,11 +331,13 @@ impl RowCollector {
 // ---------------------------------------------------------------------------
 
 /// データ API の対象の 1 テーブル。全ての要求に app profile を付ける（BT-1）。
+/// トークンの取得元があれば、全ての要求の直前に取得元を呼び、`authorization` も付ける。
 #[derive(Clone)]
 pub(super) struct TableTarget {
   client: BigtableClient<Channel>,
   table_name: String,
   app_profile_id: String,
+  authorizer: Authorizer,
 }
 
 impl std::fmt::Debug for TableTarget {
@@ -353,11 +358,12 @@ fn storage(operation: StorageOperation, status: tonic::Status) -> EventStoreErro
 }
 
 impl TableTarget {
-  pub(super) fn new(data: Channel, table_name: String, app_profile_id: &str) -> Self {
+  pub(super) fn new(data: Channel, table_name: String, app_profile_id: &str, authorizer: Authorizer) -> Self {
     Self {
       client: BigtableClient::new(data).max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE),
       table_name,
       app_profile_id: app_profile_id.to_string(),
+      authorizer,
     }
   }
 
@@ -378,6 +384,9 @@ impl TableTarget {
       filter: Some(filter),
       ..Default::default()
     };
+    let request = self.authorizer.authorize(request, operation).await?;
+    #[cfg(feature = "test-hooks")]
+    self.authorizer.observe(BigtableRequestKind::ReadRows, &request);
     let mut stream = self
       .client
       .clone()
@@ -416,6 +425,9 @@ impl TableTarget {
         filter: Some(filter.clone()),
         ..Default::default()
       };
+      let request = self.authorizer.authorize(request, operation).await?;
+      #[cfg(feature = "test-hooks")]
+      self.authorizer.observe(BigtableRequestKind::ReadRows, &request);
       let mut stream = self
         .client
         .clone()
@@ -447,18 +459,24 @@ impl TableTarget {
     false_mutations: Vec<Mutation>,
     operation: StorageOperation,
   ) -> Result<bool, EventStoreError> {
+    let request = CheckAndMutateRowRequest {
+      table_name: self.table_name.clone(),
+      app_profile_id: self.app_profile_id.clone(),
+      row_key,
+      predicate_filter: Some(predicate),
+      true_mutations,
+      false_mutations,
+      ..Default::default()
+    };
+    let request = self.authorizer.authorize(request, operation).await?;
+    #[cfg(feature = "test-hooks")]
+    self
+      .authorizer
+      .observe(BigtableRequestKind::CheckAndMutateRow, &request);
     let response = self
       .client
       .clone()
-      .check_and_mutate_row(CheckAndMutateRowRequest {
-        table_name: self.table_name.clone(),
-        app_profile_id: self.app_profile_id.clone(),
-        row_key,
-        predicate_filter: Some(predicate),
-        true_mutations,
-        false_mutations,
-        ..Default::default()
-      })
+      .check_and_mutate_row(request)
       .await
       .map_err(|status| storage(operation, status))?;
     Ok(response.into_inner().predicate_matched)
@@ -472,16 +490,19 @@ impl TableTarget {
     mutations: Vec<Mutation>,
     operation: StorageOperation,
   ) -> Result<(), EventStoreError> {
+    let request = MutateRowRequest {
+      table_name: self.table_name.clone(),
+      app_profile_id: self.app_profile_id.clone(),
+      row_key,
+      mutations,
+      ..Default::default()
+    };
+    let request = self.authorizer.authorize(request, operation).await?;
+    self.authorizer.observe(BigtableRequestKind::MutateRow, &request);
     self
       .client
       .clone()
-      .mutate_row(MutateRowRequest {
-        table_name: self.table_name.clone(),
-        app_profile_id: self.app_profile_id.clone(),
-        row_key,
-        mutations,
-        ..Default::default()
-      })
+      .mutate_row(request)
       .await
       .map_err(|status| storage(operation, status))?;
     Ok(())

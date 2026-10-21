@@ -7,8 +7,24 @@
 //! ストアを使う前に、journal・head の 2 テーブルを列ファミリ付きで用意し（`config`・`event`・`history` と
 //! `config`・`head`・`snapshot`）、[`initialize_bigtable_store`] で同じ store_id の設定行を作る。
 //! [`EventStoreForBigtable::open`] は、列ファミリと設定行を照合するだけで、テーブルも設定行も作らない。
-//! 最初の版は、変更フィードと期限切れ方式を提供しない。認証と、稼働中の操作を同じクラスタへ固定する app profile
-//! （BT-1）は、利用者が `Channel` と [`BigtableOptions::app_profile_id`] で用意する。
+//! 最初の版は、変更フィードと期限切れ方式を提供しない。
+//!
+//! # 接続と認証
+//!
+//! ストアの生成と初期化の仕方は 2 つある。
+//!
+//! - エミュレーター: 平文の `Channel` を [`BigtableConnection`] に入れ、[`EventStoreForBigtable::open`]・
+//!   [`EventStoreForBigtable::open_with_serializers`]・[`initialize_bigtable_store`] を使う。トークンの取得元は要らず、
+//!   認証のメタデータは付けない。
+//! - 本番の Cloud Bigtable: TLS の `Channel`（利用者が tonic の TLS の機能を自分の依存で有効にして作る）と、
+//!   トークンの取得元 [`BigtableTokenSource`] を、[`EventStoreForBigtable::open_with_token_source`]・
+//!   [`EventStoreForBigtable::open_with_serializers_and_token_source`]・[`initialize_bigtable_store_with_token_source`]
+//!   に渡す。ストアは、データ API と管理 API のすべての要求の直前に取得元を呼び、`authorization: Bearer <トークン>` を付ける。
+//!   トークンの保持と更新は取得元の責任で、ライブラリは Google の認証のライブラリに依存しない。
+//!
+//! 稼働中の操作を同じクラスタへ固定する app profile（BT-1）は、どちらの場合も [`BigtableOptions::app_profile_id`]
+//! で用意する。
+mod auth;
 mod backend;
 mod configuration;
 mod envelope;
@@ -19,10 +35,14 @@ mod rows;
 use std::sync::Arc;
 
 use async_trait::async_trait;
+use auth::Authorizer;
+pub use auth::BigtableTokenSource;
 use backend::{BigtableBackend, BigtableShared};
-pub use configuration::initialize_bigtable_store;
+pub use configuration::{initialize_bigtable_store, initialize_bigtable_store_with_token_source};
 #[cfg(feature = "test-hooks")]
-pub use configuration::{overwrite_bigtable_configuration_for_test, BigtableConfigurationRecord};
+pub use configuration::{
+  initialize_bigtable_store_with_hooks, overwrite_bigtable_configuration_for_test, BigtableConfigurationRecord,
+};
 #[cfg(feature = "test-hooks")]
 #[doc(hidden)]
 pub use envelope::{
@@ -44,6 +64,17 @@ use crate::{
   seq_nr::SeqNr,
   serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer},
 };
+
+/// 送る要求の種類。管理 API の `GetTable` と、データ API の 3 つの RPC に分ける。
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BigtableRequestKind {
+  GetTable,
+  ReadRows,
+  CheckAndMutateRow,
+  MutateRow,
+}
 
 /// 障害を差し込む試験のためのフック。メモリの `MemoryTestHooks` と同じ流儀で、機能 `test-hooks` の中だけにある。
 ///
@@ -80,12 +111,20 @@ pub trait BigtableTestHooks: std::fmt::Debug + Send + Sync {
   fn aggregate_hash(&self, _aid: &crate::aggregate_id::AidString) -> Option<u64> {
     None
   }
+  /// 要求を送る直前に呼ぶ。`kind` は要求の種類、`authorization` は要求に付けた `authorization` の値（付けていなければ `None`）。
+  /// トークンの取得元が失敗した要求と、メタデータの値にできないトークンの要求は送らないので、呼ばない。
+  fn before_request(&self, _kind: BigtableRequestKind, _authorization: Option<&str>) {}
 }
 
 /// データ API と管理 API の接続。
 ///
 /// データ API は読み書きに、管理 API は生成時の列ファミリの照合（`GetTable`）だけに使う。
-/// エミュレーターでは、同じ `Channel` を両方に入れられる。認証は、`Channel` を作る側が用意する。
+///
+/// エミュレーターでは、平文の同じ `Channel` を両方に入れられ、トークンの取得元は要らない。
+/// 本番では、TLS の `Channel`（利用者が tonic の TLS の機能を自分の依存で有効にして作る）を入れ、
+/// 認証は [`BigtableTokenSource`] を [`EventStoreForBigtable::open_with_token_source`]・
+/// [`EventStoreForBigtable::open_with_serializers_and_token_source`]・[`initialize_bigtable_store_with_token_source`]
+/// に渡して行う。この構造体は認証の情報を持たない。
 #[derive(Debug, Clone)]
 pub struct BigtableConnection {
   pub data: Channel,
@@ -167,6 +206,36 @@ impl<AID, A, P> EventStoreForBigtable<AID, A, P> {
       &options,
       event_serializer,
       snapshot_serializer,
+      None,
+      #[cfg(feature = "test-hooks")]
+      None,
+    )
+    .await
+  }
+
+  /// [`open_with_serializers`](Self::open_with_serializers) と同じストアを、トークンの取得元を渡して開く。本番の Cloud Bigtable 向けである。
+  ///
+  /// 生成のときの列ファミリの照合（管理 API の `GetTable`）と設定行の読み取りに加えて、開いた後の追記・読み取り・保持の
+  /// すべての要求の直前に、[`BigtableTokenSource`] を呼び、`authorization: Bearer <トークン>` を付ける。
+  /// 取得元が失敗したとき、またはメタデータの値にできないトークンを返したときは、その要求を送らず、その操作の
+  /// `EventStoreError::Storage` にする。取得元の呼び出しはやり直さない。
+  ///
+  /// 本番では、`connection` に TLS の `Channel` を渡す。TLS の機能は、利用者が tonic の TLS の機能を自分の依存で有効にして作る。
+  pub async fn open_with_serializers_and_token_source(
+    connection: BigtableConnection,
+    tables: BigtableTables,
+    options: BigtableOptions,
+    event_serializer: Arc<dyn EventSerializer<P>>,
+    snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+    token_source: Arc<dyn BigtableTokenSource>,
+  ) -> Result<Self, EventStoreError> {
+    Self::build(
+      &connection,
+      &tables,
+      &options,
+      event_serializer,
+      snapshot_serializer,
+      Some(token_source),
       #[cfg(feature = "test-hooks")]
       None,
     )
@@ -190,6 +259,31 @@ impl<AID, A, P> EventStoreForBigtable<AID, A, P> {
       &options,
       event_serializer,
       snapshot_serializer,
+      None,
+      Some(hooks),
+    )
+    .await
+  }
+
+  /// 初期化済みのストアを、トークンの取得元と、障害を差し込むフックの両方を付けて開く。
+  #[cfg(feature = "test-hooks")]
+  #[doc(hidden)]
+  pub async fn open_with_hooks_and_token_source(
+    connection: BigtableConnection,
+    tables: BigtableTables,
+    options: BigtableOptions,
+    event_serializer: Arc<dyn EventSerializer<P>>,
+    snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+    token_source: Arc<dyn BigtableTokenSource>,
+    hooks: Arc<dyn BigtableTestHooks>,
+  ) -> Result<Self, EventStoreError> {
+    Self::build(
+      &connection,
+      &tables,
+      &options,
+      event_serializer,
+      snapshot_serializer,
+      Some(token_source),
       Some(hooks),
     )
     .await
@@ -201,9 +295,13 @@ impl<AID, A, P> EventStoreForBigtable<AID, A, P> {
     options: &BigtableOptions,
     event_serializer: Arc<dyn EventSerializer<P>>,
     snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+    token_source: Option<Arc<dyn BigtableTokenSource>>,
     #[cfg(feature = "test-hooks")] hooks: Option<Arc<dyn BigtableTestHooks>>,
   ) -> Result<Self, EventStoreError> {
-    let opened = configuration::open_checked(connection, tables, options).await?;
+    let authorizer = token_source.map(Authorizer::new).unwrap_or_default();
+    #[cfg(feature = "test-hooks")]
+    let authorizer = authorizer.with_hooks(hooks.clone());
+    let opened = configuration::open_checked(connection, tables, options, &authorizer).await?;
     let shared = Arc::new(BigtableShared {
       journal: opened.journal,
       head: opened.head,
@@ -249,6 +347,26 @@ where
       options,
       Arc::new(JsonEventSerializer::new()),
       Arc::new(JsonSnapshotSerializer::new()),
+    )
+    .await
+  }
+
+  /// 初期化済みのストアを、既定の JSON 直列化とトークンの取得元で開く。本番の Cloud Bigtable 向けである。
+  ///
+  /// 取得元の扱いは、[`open_with_serializers_and_token_source`](Self::open_with_serializers_and_token_source) と同じである。
+  pub async fn open_with_token_source(
+    connection: BigtableConnection,
+    tables: BigtableTables,
+    options: BigtableOptions,
+    token_source: Arc<dyn BigtableTokenSource>,
+  ) -> Result<Self, EventStoreError> {
+    Self::open_with_serializers_and_token_source(
+      connection,
+      tables,
+      options,
+      Arc::new(JsonEventSerializer::new()),
+      Arc::new(JsonSnapshotSerializer::new()),
+      token_source,
     )
     .await
   }
