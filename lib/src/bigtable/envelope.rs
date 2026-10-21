@@ -44,7 +44,7 @@ pub struct SnapshotEnvelopeFields {
 }
 
 /// 直列化した後のイベント封筒のバイト数。封筒の上限（BT-16）の検査に使う。
-pub(super) fn event_envelope_len(fields: &EventEnvelopeFields) -> usize {
+pub(crate) fn event_envelope_len(fields: &EventEnvelopeFields) -> usize {
   EVENT_FIXED_BYTES
     .saturating_add(fields.aid.len())
     .saturating_add(fields.manifest.len())
@@ -52,7 +52,7 @@ pub(super) fn event_envelope_len(fields: &EventEnvelopeFields) -> usize {
 }
 
 /// 直列化した後のスナップショット封筒のバイト数。
-pub(super) fn snapshot_envelope_len(fields: &SnapshotEnvelopeFields) -> usize {
+pub(crate) fn snapshot_envelope_len(fields: &SnapshotEnvelopeFields) -> usize {
   SNAPSHOT_FIXED_BYTES
     .saturating_add(fields.manifest.len())
     .saturating_add(fields.payload.len())

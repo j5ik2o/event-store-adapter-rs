@@ -99,6 +99,9 @@ jobs:
           - name: bigtable
             flags: --no-default-features --features bigtable
             mode: build
+          - name: bigtable-migration
+            flags: --no-default-features --features bigtable-migration
+            mode: build
           - name: all-features
             flags: --all-features
             mode: build
@@ -133,6 +136,13 @@ jobs:
             echo "cloud SDK crates leaked into the sqlite-migration dependency graph"
             exit 1
           fi
+      - name: AWS, SQLite and Google auth crates must be absent with only the Bigtable migration
+        if: matrix.name == 'bigtable-migration'
+        run: |
+          if cargo tree -p event-store-adapter-rs -e normal --no-default-features --features bigtable-migration | grep -E "aws-|rusqlite|libsqlite3|gcp_auth|google-cloud-auth|yup-oauth2"; then
+            echo "AWS, SQLite or Google auth crates leaked into the bigtable-migration dependency graph"
+            exit 1
+          fi
       - name: no hand-written unsafe impl
         if: matrix.name == 'no-features'
         run: |
@@ -161,6 +171,8 @@ jobs:
             flags: --no-default-features --features sqlite-migration
           - name: bigtable
             flags: --no-default-features --features bigtable
+          - name: bigtable-migration
+            flags: --no-default-features --features bigtable-migration
           - name: all-features
             flags: --all-features
     name: clippy (${{ matrix.name }})

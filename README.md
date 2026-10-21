@@ -8,11 +8,11 @@
 [![](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-rs)](https://github.com/XAMPPRocky/tokei)
 
 
-This library provides Memory, DynamoDB, and SQLite event stores for CQRS/Event Sourcing.
+This library provides Memory, DynamoDB, SQLite, and Bigtable event stores for CQRS/Event Sourcing.
 
 This crate follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision.
 
-> 5.0.0 is the first release of the new API. Bigtable users should stay on the 3.x line. Stored v3 DynamoDB and SQLite data is supported only through the explicit migration functions or CLI.
+> 5.0.0 is the first release of the new API. Stored v3 DynamoDB, SQLite, and Bigtable data is supported only through the explicit migration functions or CLI.
 
 [日本語](./README.ja.md)
 
@@ -23,10 +23,12 @@ This crate follows [common contract v5](https://github.com/j5ik2o/event-store-ad
 | (none) | `EventStoreForMemory` and `MemoryStorage`, always available |
 | `dynamodb` | `EventStoreForDynamoDB`, using `aws-sdk-dynamodb` |
 | `sqlite` | `EventStoreForSqlite`, `initialize_sqlite_store`, and `SqliteOptions`, using `rusqlite` with a bundled SQLite |
+| `bigtable` | `EventStoreForBigtable`, `initialize_bigtable_store`, `BigtableOptions`, `BigtableConnection`, `BigtableTables`, and `BigtableTokenSource`, using `tonic` and the generated Bigtable gRPC clients |
 | `migration` | `migrate_v3_dynamodb`; also enables `dynamodb` |
 | `sqlite-migration` | `migrate_v3_sqlite`; also enables `sqlite`, and brings in no AWS or Bigtable crates |
+| `bigtable-migration` | `migrate_v3_bigtable` and `LegacyBigtableTables`; also enables `bigtable`, and brings in no AWS or SQLite crates |
 
-Default features are empty. The `sqlite-system` and `bigtable` features have been removed. The public API is exported from the crate root; there is no `next` namespace or old API alias.
+Default features are empty. The `sqlite-system` feature has been removed. The public API is exported from the crate root; there is no `next` namespace or old API alias.
 
 ## Memory example
 
@@ -185,6 +187,90 @@ async fn main() -> Result<(), EventStoreError> {
 
 A store instance and its clones share one connection. See [the SQLite schema](docs/SQLITE_DATABASE_SCHEMA.md) for the tables, the connection settings, how to initialize a file by hand, transactions, and retention. To move data from a v3 SQLite file, see [Migration](#migration).
 
+## Bigtable example
+
+Enable `features = ["bigtable"]`. The store talks to Cloud Bigtable (or the Bigtable emulator) over gRPC through two tables, `journal` and `head`. Table creation is outside the library, and so is the app profile. Prepare these before the first `initialize_bigtable_store`:
+
+- Create the two tables with their column families: `event`, `history`, and `config` in the journal table, and `head`, `snapshot`, and `config` in the head table. Give the four data families (`event`, `history`, `head`, `snapshot`) a garbage-collection rule of "keep at most one version" and no age rule; `open` rejects any other rule. The `config` family only has to exist.
+- Create an app profile that pins every operation to a single cluster with single-row transactions allowed, and pass its ID as `BigtableOptions::app_profile_id`. The library does not check the app profile.
+
+Initialization and opening are separate, explicit steps:
+
+- `initialize_bigtable_store(&connection, &tables, &options)` writes the same `store_id` and settings into a configuration row of each table, once. It never creates tables or column families, and it fails with a configuration error (`ConfigurationReason::BigtableAlreadyInitialized`) when either table already has a configuration row.
+- `EventStoreForBigtable::open(connection, tables, options)` (or `open_with_serializers` for non-serde payloads) checks the column families and both configuration rows against `options`. It never creates anything and never repairs a mismatch. A missing column family, a missing or malformed configuration row, or a setting that differs from the stored one is a configuration error (`EventStoreError::Configuration`).
+
+`BigtableOptions` has four fields. `retention` defaults to `RetentionSettings::current_only()`; `keep_latest(n)` keeps the newest `n` history snapshots, and the value used by `open` must equal the one used to initialize the store. `RetentionMode::Ttl` and `keep_latest(0)` are configuration errors. `change_feed` must stay `false`: this storage does not provide a change feed, and `true` is a configuration error. `envelope_limit_bytes` caps one serialized envelope including its metadata, 1,048,576 bytes by default; it must be between 17 and 8,388,608 and is recorded in both tables, so every client has to use the same value. `app_profile_id` is sent with every data request; an empty string uses the instance's default app profile.
+
+The connection is a `BigtableConnection` with one `tonic::transport::Channel` for the data API and one for the admin API. The admin API is used only to check the column families when the store is opened. The emulator needs a plaintext channel and no credentials:
+
+```toml
+[dependencies]
+event-store-adapter-rs = { version = "5", features = ["bigtable"] }
+chrono = "0.4"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.14", default-features = false, features = ["channel"] }
+```
+
+```rust
+use chrono::Utc;
+use event_store_adapter_rs::{
+  initialize_bigtable_store, AggregateId, BigtableConnection, BigtableOptions, BigtableTables,
+  EventEnvelope, EventStore, EventStoreForBigtable, RetentionSettings, SnapshotEnvelope,
+};
+use serde_json::{json, Value};
+use tonic::transport::Endpoint;
+
+#[derive(Debug, Clone)]
+struct AccountId(String);
+
+impl AggregateId for AccountId {
+  fn type_name(&self) -> String { "Account".into() }
+  fn value(&self) -> String { self.0.clone() }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+  // The emulator listens without TLS. The tables and column families already exist.
+  let channel = Endpoint::from_static("http://localhost:8086").connect().await?;
+  let connection = BigtableConnection { data: channel.clone(), admin: channel };
+  let tables = BigtableTables {
+    project_id: "my-project".into(),
+    instance_id: "my-instance".into(),
+    journal_table_id: "journal".into(),
+    head_table_id: "head".into(),
+  };
+  let options = BigtableOptions {
+    retention: RetentionSettings::keep_latest(2),
+    ..BigtableOptions::default()
+  };
+  // Run once for new tables; they are no longer uninitialized afterwards.
+  initialize_bigtable_store(&connection, &tables, &options).await?;
+  let store: EventStoreForBigtable<AccountId, Value, Value> =
+    EventStoreForBigtable::open(connection, tables, options).await?;
+  let id = AccountId("1".into());
+
+  store.persist_event(
+    EventEnvelope::new(id.clone(), 1, Utc::now(), json!({"created": "Alice"}))
+      .with_manifest("account-created/v1"),
+  ).await?;
+  store.persist_event_and_snapshot(
+    EventEnvelope::new(id.clone(), 2, Utc::now(), json!({"renamed": "Bob"})),
+    SnapshotEnvelope::new(json!({"name": "Bob"}), 2).with_manifest("account/v1"),
+  ).await?;
+  let events = store.get_events_by_id_since_seq_nr(&id, 1).await?;
+  assert_eq!(events.len(), 2);
+  let latest = store.get_latest_snapshot_by_id(&id).await?.unwrap();
+  assert_eq!(latest.head_seq_nr(), 2);
+  assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
+  Ok(())
+}
+```
+
+Production Cloud Bigtable needs a TLS channel and an access token on every request. The library does not depend on a TLS stack or on Google's authentication libraries. Enable the TLS features of `tonic` in your own dependencies (for example `tls-ring` with `tls-native-roots`), build the two `Channel`s yourself (`https://bigtable.googleapis.com` for data and `https://bigtableadmin.googleapis.com` for admin), and implement `BigtableTokenSource`, whose `access_token` returns a fresh token. Pass the source to `EventStoreForBigtable::open_with_token_source` (or `open_with_serializers_and_token_source`) and `initialize_bigtable_store_with_token_source`. The store calls the source right before every data and admin request and sends `authorization: Bearer <token>`; holding and refreshing the token is the source's job, and a failing source turns that operation into a storage error without sending the request.
+
+A store instance and its clones share the connection. This release does not provide a change feed. See [the Bigtable schema](docs/BIGTABLE_DATABASE_SCHEMA.md) for the keys, configuration rows, initialization (including recovery from an interrupted initialization), writes and reads, and retention. To move data from a v3 Bigtable, see [Migration](#migration).
+
 ## Serialization, retention, and errors
 
 The default constructors use JSON and require `Serialize + DeserializeOwned` on event and aggregate payloads. Use `EventStoreForMemory::with_serializers` or `EventStoreForDynamoDB::open_with_serializers` with `Arc<dyn EventSerializer<P>>` and `Arc<dyn SnapshotSerializer<A>>` for another byte format. These serializers receive only the payload. Payloads require `Send + Sync + 'static`; serde, Clone, and Debug are not required for these constructors. See the [Memory](lib/tests/memory_test.rs) and [DynamoDB](lib/tests/dynamodb_persist_event_test.rs) integration tests for non-serde payloads.
@@ -195,7 +281,7 @@ The default constructors use JSON and require `Serialize + DeserializeOwned` on 
 
 ## Migration
 
-The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE_v5.md). For v3's default SQLite layout, use the `migrate_v3_sqlite` function (feature `sqlite-migration`) or the same CLI with `--old-sqlite` and `--sqlite`; it reads the old SQLite file without changing it and writes a new file that you initialized with `initialize_sqlite_store`. Stop old writes and provision empty new tables (for SQLite, an initialized, empty file) before migration. Custom `KeyResolver` layouts and Bigtable are outside this migration's scope.
+The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE_v5.md). For v3's default SQLite layout, use the `migrate_v3_sqlite` function (feature `sqlite-migration`) or the same CLI with `--old-sqlite` and `--sqlite`; it reads the old SQLite file without changing it and writes a new file that you initialized with `initialize_sqlite_store`. For v3.0.6's default Bigtable layout (the journal and snapshot tables), use the `migrate_v3_bigtable` function (feature `bigtable-migration`) or the same CLI with `--old-bigtable-*` and `--bigtable-*`; it only reads the two old tables and writes two new tables that you created with their column families and initialized with `initialize_bigtable_store`. Stop old writes and provision empty new tables (for SQLite, an initialized, empty file; for Bigtable, initialized, empty tables) before migration. Custom `KeyResolver` layouts are outside this migration's scope.
 
 Historical [v3 migration guidance](docs/MIGRATION_GUIDE_v3.md) remains available for users staying on 3.x.
 

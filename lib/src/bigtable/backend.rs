@@ -27,7 +27,7 @@ use crate::serializer::{EventSerializer, SnapshotSerializer};
 use crate::storage_backend::{AppendReceipt, AppendRequest, StorageBackend};
 
 /// ストアのインスタンスとそのクローンが共有する状態を表す。
-pub(super) struct BigtableShared {
+pub(crate) struct BigtableShared {
   pub journal: TableTarget,
   pub head: TableTarget,
   pub keep_snapshot_count: Option<usize>,
@@ -72,7 +72,7 @@ pub(super) fn invalid_data(operation: StorageOperation, message: &'static str) -
 }
 
 /// head の `head:seq_nr` に保存する、20 桁のゼロ詰めの ASCII 数字。
-fn format_head_seq_nr(seq_nr: SeqNr) -> Vec<u8> {
+pub(crate) fn format_head_seq_nr(seq_nr: SeqNr) -> Vec<u8> {
   format!("{seq_nr:020}").into_bytes()
 }
 
@@ -85,7 +85,7 @@ fn parse_head_seq_nr(bytes: &[u8]) -> Option<SeqNr> {
   (1..=SEQ_NR_MAX).contains(&seq_nr).then_some(seq_nr)
 }
 
-fn flag_of(has_snapshot: bool) -> &'static [u8] {
+pub(crate) fn flag_of(has_snapshot: bool) -> &'static [u8] {
   if has_snapshot {
     FLAG_SET
   } else {
@@ -158,7 +158,7 @@ pub(super) fn retention_failure(
 
 impl BigtableShared {
   /// aid の行キーの接頭辞 `P(aid)`。試験では、ハッシュを差し替えて衝突させられる。
-  pub(super) fn prefix(&self, aid: &AidString) -> Result<Vec<u8>, EventStoreError> {
+  pub(crate) fn prefix(&self, aid: &AidString) -> Result<Vec<u8>, EventStoreError> {
     #[cfg(feature = "test-hooks")]
     let hash = self
       .hooks
@@ -240,7 +240,7 @@ impl BigtableShared {
   ///
   /// 既存の行は上書きせず、イベントとフラグを照合する。履歴を伴う行が active なら履歴の封筒も照合し、欠損・不一致を
   /// 保存先エラーにする。`retired` の行や、履歴を持たない行の履歴は作り直さない。
-  pub(super) async fn write_journal_row(
+  pub(crate) async fn write_journal_row(
     &self,
     prefix: &[u8],
     seq_nr: SeqNr,

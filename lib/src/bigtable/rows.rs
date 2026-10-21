@@ -32,18 +32,18 @@ const MAX_DECODING_MESSAGE_SIZE: usize = 256 * 1024 * 1024;
 
 pub(super) const FAMILY_EVENT: &str = "event";
 pub(super) const FAMILY_HISTORY: &str = "history";
-pub(super) const FAMILY_HEAD: &str = "head";
-pub(super) const FAMILY_SNAPSHOT: &str = "snapshot";
+pub(crate) const FAMILY_HEAD: &str = "head";
+pub(crate) const FAMILY_SNAPSHOT: &str = "snapshot";
 pub(super) const FAMILY_CONFIG: &str = "config";
 
 pub(super) const EVENT_ENVELOPE: &str = "envelope";
 pub(super) const EVENT_HAS_SNAPSHOT: &str = "has_snapshot";
 pub(super) const HISTORY_STATE: &str = "state";
 pub(super) const HISTORY_ENVELOPE: &str = "envelope";
-pub(super) const HEAD_SEQ_NR: &str = "seq_nr";
-pub(super) const HEAD_LAST_EVENT: &str = "last_event";
-pub(super) const HEAD_HAS_SNAPSHOT: &str = "has_snapshot";
-pub(super) const SNAPSHOT_CURRENT: &str = "current";
+pub(crate) const HEAD_SEQ_NR: &str = "seq_nr";
+pub(crate) const HEAD_LAST_EVENT: &str = "last_event";
+pub(crate) const HEAD_HAS_SNAPSHOT: &str = "has_snapshot";
+pub(crate) const SNAPSHOT_CURRENT: &str = "current";
 pub(super) const CONFIG_METADATA: &str = "metadata";
 
 pub(super) const STATE_ACTIVE: &[u8] = b"active";
@@ -73,7 +73,7 @@ pub(super) fn column(family: &str, qualifier: &str) -> RowFilter {
 }
 
 /// 列ごとに最新の 1 セルだけを通す（BT-2・BT-6）。
-pub(super) fn latest_cell() -> RowFilter {
+pub(crate) fn latest_cell() -> RowFilter {
   filter_of(Filter::CellsPerColumnLimitFilter(1))
 }
 
@@ -97,7 +97,7 @@ pub(super) fn latest_cell_equals(family: &str, qualifier: &str, expected: &[u8])
 }
 
 /// 列にセルがあるときだけ、セルを通すフィルター（条件付き更新の条件）。
-pub(super) fn latest_cell_exists(family: &str, qualifier: &str) -> RowFilter {
+pub(crate) fn latest_cell_exists(family: &str, qualifier: &str) -> RowFilter {
   chain(vec![column(family, qualifier), latest_cell()])
 }
 
@@ -112,7 +112,7 @@ fn mutation_of(mutation: MutationKind) -> Mutation {
 }
 
 /// セルを書く。セル時刻は常に 0µs にする（BT-6）。
-pub(super) fn set_cell(family: &str, qualifier: &str, value: &[u8]) -> Mutation {
+pub(crate) fn set_cell(family: &str, qualifier: &str, value: &[u8]) -> Mutation {
   mutation_of(MutationKind::SetCell(SetCell {
     family_name: family.to_string(),
     column_qualifier: qualifier.as_bytes().to_vec(),
@@ -141,7 +141,7 @@ pub(super) fn replace_cell(family: &str, qualifier: &str, value: &[u8]) -> [Muta
 
 /// 完成した行のセル 1 つ。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct AssembledCell {
+pub(crate) struct AssembledCell {
   pub family: String,
   pub qualifier: Vec<u8>,
   pub timestamp_micros: i64,
@@ -150,14 +150,14 @@ pub(super) struct AssembledCell {
 
 /// 完成した行。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) struct AssembledRow {
+pub(crate) struct AssembledRow {
   pub row_key: Vec<u8>,
   pub cells: Vec<AssembledCell>,
 }
 
 impl AssembledRow {
   /// 列の最初のセルの値を返す。読み取りは最新 1 セルに限るので、列のセルは高々 1 つである。
-  pub(super) fn value(&self, family: &str, qualifier: &str) -> Option<&[u8]> {
+  pub(crate) fn value(&self, family: &str, qualifier: &str) -> Option<&[u8]> {
     self
       .cells
       .iter()
@@ -178,7 +178,7 @@ fn invalid(operation: StorageOperation, message: &'static str) -> EventStoreErro
 /// エミュレーターは、同じ行の 2 つ目以降のチャンクにも行キーを付ける。行キーが現在の行と同じなら、新しい行を
 /// 始めず、同じ行の続きとして扱う。
 #[derive(Debug)]
-pub(super) struct RowCollector {
+pub(crate) struct RowCollector {
   operation: StorageOperation,
   rows: Vec<AssembledRow>,
   current: Option<AssembledRow>,
@@ -190,7 +190,7 @@ pub(super) struct RowCollector {
 }
 
 impl RowCollector {
-  pub(super) fn new() -> Self {
+  pub(crate) fn new() -> Self {
     Self {
       operation: StorageOperation::LoadEvents,
       rows: Vec::new(),
@@ -204,13 +204,13 @@ impl RowCollector {
   }
 
   /// 誤りに付ける保存先の操作を設定する。
-  pub(super) fn with_operation(mut self, operation: StorageOperation) -> Self {
+  pub(crate) fn with_operation(mut self, operation: StorageOperation) -> Self {
     self.operation = operation;
     self
   }
 
   /// 応答 1 つ分のチャンクを順に取り込む。
-  pub(super) fn feed(&mut self, response: ReadRowsResponse) -> Result<(), EventStoreError> {
+  pub(crate) fn feed(&mut self, response: ReadRowsResponse) -> Result<(), EventStoreError> {
     for chunk in response.chunks {
       if matches!(chunk.row_status, Some(RowStatus::ResetRow(true))) {
         // サーバーが途中の行を取り消した。後で同じ行が読み直される。
@@ -318,7 +318,7 @@ impl RowCollector {
   }
 
   /// 流れが正常に終わったときに呼ぶ。未完成の行が残っていれば、結果に入れず保存先エラーにする。
-  pub(super) fn finish(self) -> Result<Vec<AssembledRow>, EventStoreError> {
+  pub(crate) fn finish(self) -> Result<Vec<AssembledRow>, EventStoreError> {
     if self.current.is_some() || self.pending.is_some() {
       return Err(invalid(self.operation, "the read finished in the middle of a row"));
     }
@@ -333,11 +333,11 @@ impl RowCollector {
 /// データ API の対象の 1 テーブル。全ての要求に app profile を付ける（BT-1）。
 /// トークンの取得元があれば、全ての要求の直前に取得元を呼び、`authorization` も付ける。
 #[derive(Clone)]
-pub(super) struct TableTarget {
-  client: BigtableClient<Channel>,
-  table_name: String,
-  app_profile_id: String,
-  authorizer: Authorizer,
+pub(crate) struct TableTarget {
+  pub(crate) client: BigtableClient<Channel>,
+  pub(crate) table_name: String,
+  pub(crate) app_profile_id: String,
+  pub(crate) authorizer: Authorizer,
 }
 
 impl std::fmt::Debug for TableTarget {
@@ -358,7 +358,7 @@ fn storage(operation: StorageOperation, status: tonic::Status) -> EventStoreErro
 }
 
 impl TableTarget {
-  pub(super) fn new(data: Channel, table_name: String, app_profile_id: &str, authorizer: Authorizer) -> Self {
+  pub(crate) fn new(data: Channel, table_name: String, app_profile_id: &str, authorizer: Authorizer) -> Self {
     Self {
       client: BigtableClient::new(data).max_decoding_message_size(MAX_DECODING_MESSAGE_SIZE),
       table_name,
@@ -368,7 +368,7 @@ impl TableTarget {
   }
 
   /// 1 行を読む。行がない、または `filter` を通ったセルが 1 つもなければ `None`。
-  pub(super) async fn read_row(
+  pub(crate) async fn read_row(
     &self,
     row_key: Vec<u8>,
     filter: RowFilter,
@@ -451,7 +451,7 @@ impl TableTarget {
   }
 
   /// 条件付き更新（CheckAndMutateRow）を 1 回だけ送る。条件を満たしたかを返す。再送しない。
-  pub(super) async fn check_and_mutate(
+  pub(crate) async fn check_and_mutate(
     &self,
     row_key: Vec<u8>,
     predicate: RowFilter,

@@ -9,7 +9,7 @@ use crate::error::{ContractRule, EventStoreError};
 use crate::seq_nr::SeqNr;
 
 /// 設定行のキー。データ行のキーは最小でも 11 バイトなので、この 1 バイトと完全一致しない。
-pub(super) const CONFIG_ROW_KEY: &[u8] = &[0x00];
+pub(crate) const CONFIG_ROW_KEY: &[u8] = &[0x00];
 
 /// FNV-1a 64（hash.md の K-1）。
 pub(super) fn fnv1a64(input: &[u8]) -> u64 {

@@ -24,13 +24,19 @@
 //!
 //! 稼働中の操作を同じクラスタへ固定する app profile（BT-1）は、どちらの場合も [`BigtableOptions::app_profile_id`]
 //! で用意する。
-mod auth;
-mod backend;
-mod configuration;
-mod envelope;
-mod keys;
+//!
+//! # v3 からの移行
+//!
+//! v3.0.6 の Bigtable（journal と snapshot の 2 テーブル、既定の配置だけ）のデータは、機能 `bigtable-migration` の
+//! `migrate_v3_bigtable` で、この保存先の 2 テーブルへ移す。移行は、この保存先と同じ行キー・封筒・行の組み立てを使い、
+//! 新しい 2 テーブルを上の手順で用意して初期化しておくことを前提にする。
+pub(crate) mod auth;
+pub(crate) mod backend;
+pub(crate) mod configuration;
+pub(crate) mod envelope;
+pub(crate) mod keys;
 mod retention;
-mod rows;
+pub(crate) mod rows;
 
 use std::sync::Arc;
 
