@@ -4,8 +4,11 @@
 //! - 試験ごとに新しい journal・head のテーブルの組（プロファイル 2 章の配置）を作る。設定行は作らない。
 //! - 行の生の内容は、ライブラリを通さず、データ API で直接読み書きする。期待値の符号化（行キー・封筒）も
 //!   ライブラリとは独立に、プロファイルの規則から組み立てる。
+//! - tracing の通知の収集は、プロセス全体で 1 つ（`capture`）。
 
 #![allow(dead_code)]
+
+pub mod capture;
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{channel, Sender};

@@ -6,6 +6,7 @@ mod bigtable_support;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
+use bigtable_support::capture::captured_events;
 use bigtable_support::{
   cells_in, event, event_with_payload, expected_envelope_of, expected_snapshot_envelope_of, journal_key, only_value,
   options_keeping, row_prefix, run_on_another_runtime, snapshot, Env, Fixture, Id, Store, TableKind, RECORDED_STORE_ID,
@@ -18,10 +19,6 @@ use event_store_adapter_rs::{
   StorageOperation,
 };
 use serde_json::json;
-use tracing::field::{Field, Visit};
-use tracing::{Event, Subscriber};
-use tracing_subscriber::layer::{Context, SubscriberExt};
-use tracing_subscriber::Layer;
 
 type Action = Box<dyn FnOnce() + Send>;
 
@@ -177,6 +174,8 @@ async fn open_with_hooks(env: &Env, options: BigtableOptions, hooks: Arc<Hooks>)
 
 /// 初期化した新しいテーブルを、フック付きのストアとして開く。
 async fn setup(options: BigtableOptions) -> (Fixture, Arc<Hooks>, Store) {
+  // 知らせを出しうる追記より前に、tracing の収集器を付け終える（付けるのはプロセスで 1 度だけ）。
+  captured_events();
   let fixture = Fixture::initialized(&options).await;
   let hooks = Arc::new(Hooks::default());
   let store = open_with_hooks(&fixture, options, hooks.clone()).await;
@@ -196,64 +195,6 @@ fn as_another_writer<Fut: std::future::Future<Output = ()> + 'static>(
       work(writer).await;
     })
   })
-}
-
-// ---------------------------------------------------------------------------
-// tracing の通知の収集
-// ---------------------------------------------------------------------------
-
-/// 収集した tracing の事象 1 件（target と、フィールド `category` の値）。
-type CapturedEvent = (String, Option<String>);
-
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<CapturedEvent>>>);
-
-impl Captured {
-  fn categories_of(&self, target: &str) -> Vec<String> {
-    self
-      .0
-      .lock()
-      .unwrap()
-      .iter()
-      .filter(|(event_target, _)| event_target == target)
-      .filter_map(|(_, category)| category.clone())
-      .collect()
-  }
-}
-
-#[derive(Default)]
-struct CategoryVisitor(Option<String>);
-
-impl Visit for CategoryVisitor {
-  fn record_str(&mut self, field: &Field, value: &str) {
-    if field.name() == "category" {
-      self.0 = Some(value.to_string());
-    }
-  }
-
-  fn record_debug(&mut self, _: &Field, _: &dyn std::fmt::Debug) {}
-}
-
-struct CaptureLayer(Captured);
-
-impl<S: Subscriber> Layer<S> for CaptureLayer {
-  fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
-    let mut visitor = CategoryVisitor::default();
-    event.record(&mut visitor);
-    let captured = &self.0;
-    captured
-      .0
-      .lock()
-      .unwrap()
-      .push((event.metadata().target().to_string(), visitor.0));
-  }
-}
-
-/// 現在のスレッドの間だけ有効な収集を始める。試験は `current_thread` の実行基盤（`#[tokio::test]` の既定）で使う。
-fn capture_events() -> (Captured, tracing::subscriber::DefaultGuard) {
-  let captured = Captured::default();
-  let subscriber = tracing_subscriber::registry().with(CaptureLayer(captured.clone()));
-  (captured, tracing::subscriber::set_default(subscriber))
 }
 
 // ---------------------------------------------------------------------------
@@ -550,9 +491,9 @@ async fn should_bigtable_update_lost_to_a_concurrent_writer_be_an_optimistic_loc
 
 #[tokio::test]
 async fn should_bigtable_new_tail_write_failure_keep_the_append_successful_and_report_journal_write_failure() {
-  let (captured, _guard) = capture_events();
+  let captured = captured_events();
   let (fixture, hooks, store) = setup(BigtableOptions::default()).await;
-  let id = Id::order();
+  let id = Id::new("Order", "tail-write-failure");
   store.persist_event(event(&id, 1)).await.unwrap();
   Hooks::arm(&hooks.tail_failures);
 
@@ -560,7 +501,7 @@ async fn should_bigtable_new_tail_write_failure_keep_the_append_successful_and_r
 
   assert!(appended.is_ok(), "確定した追記を失敗として返さない: {appended:?}");
   assert_eq!(
-    captured.categories_of("event_store_adapter::journal"),
+    captured.categories_of("event_store_adapter::journal", &id.aid()),
     vec!["journal-write-failure".to_string()],
     "失敗は別の経路で知らせる"
   );
@@ -814,9 +755,9 @@ async fn should_bigtable_late_writer_not_resurrect_a_retired_history() {
 
 #[tokio::test]
 async fn should_bigtable_retention_delete_failure_keep_the_append_successful_and_retry_on_the_next_snapshot() {
-  let (captured, _guard) = capture_events();
+  let captured = captured_events();
   let (fixture, hooks, store) = setup(options_keeping(1)).await;
-  let id = Id::order();
+  let id = Id::new("Order", "retention-delete-failure");
   store
     .persist_event_and_snapshot(event(&id, 1), snapshot(1))
     .await
@@ -827,7 +768,7 @@ async fn should_bigtable_retention_delete_failure_keep_the_append_successful_and
 
   assert!(appended.is_ok(), "追記を失敗として返さない: {appended:?}");
   assert_eq!(
-    captured.categories_of("event_store_adapter::retention"),
+    captured.categories_of("event_store_adapter::retention", &id.aid()),
     vec!["retention-failure".to_string()],
     "保持の失敗を知らせる"
   );

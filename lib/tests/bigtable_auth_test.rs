@@ -11,6 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use bigtable_support::capture::{captured_events, Captured};
 use bigtable_support::{
   event, journal_key, only_value, options_keeping, row_prefix, snapshot, Fixture, Id, Store, TableKind,
 };
@@ -19,10 +20,6 @@ use event_store_adapter_rs::{
   initialize_bigtable_store_with_token_source, AidString, BigtableOptions, BigtableTokenSource, EventStore,
   EventStoreError, JsonEventSerializer, JsonSnapshotSerializer, SeqNr, StorageOperation,
 };
-use tracing::field::{Field, Visit};
-use tracing::{Event, Subscriber};
-use tracing_subscriber::layer::{Context, SubscriberExt};
-use tracing_subscriber::Layer;
 use BigtableRequestKind::{CheckAndMutateRow, GetTable, ReadRows};
 
 // ---------------------------------------------------------------------------
@@ -342,60 +339,6 @@ async fn run_scenario(token_source: Option<Arc<dyn BigtableTokenSource>>) -> Sce
 // ---------------------------------------------------------------------------
 // tracing の通知の収集
 // ---------------------------------------------------------------------------
-
-/// 収集した tracing の事象 1 件（target と、フィールド `category` の値）。
-type CapturedEvent = (String, Option<String>);
-
-#[derive(Clone, Default)]
-struct Captured(Arc<Mutex<Vec<CapturedEvent>>>);
-
-impl Captured {
-  fn categories_of(&self, target: &str) -> Vec<String> {
-    self
-      .0
-      .lock()
-      .unwrap()
-      .iter()
-      .filter(|(event_target, _)| event_target == target)
-      .filter_map(|(_, category)| category.clone())
-      .collect()
-  }
-}
-
-#[derive(Default)]
-struct CategoryVisitor(Option<String>);
-
-impl Visit for CategoryVisitor {
-  fn record_str(&mut self, field: &Field, value: &str) {
-    if field.name() == "category" {
-      self.0 = Some(value.to_string());
-    }
-  }
-
-  fn record_debug(&mut self, _: &Field, _: &dyn std::fmt::Debug) {}
-}
-
-struct CaptureLayer(Captured);
-
-impl<S: Subscriber> Layer<S> for CaptureLayer {
-  fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
-    let mut visitor = CategoryVisitor::default();
-    event.record(&mut visitor);
-    let captured = &self.0;
-    captured
-      .0
-      .lock()
-      .unwrap()
-      .push((event.metadata().target().to_string(), visitor.0));
-  }
-}
-
-/// 現在のスレッドの間だけ有効な収集を始める。試験は `current_thread` の実行基盤（`#[tokio::test]` の既定）で使う。
-fn capture_events() -> (Captured, tracing::subscriber::DefaultGuard) {
-  let captured = Captured::default();
-  let subscriber = tracing_subscriber::registry().with(CaptureLayer(captured.clone()));
-  (captured, tracing::subscriber::set_default(subscriber))
-}
 
 const JOURNAL_TARGET: &str = "event_store_adapter::journal";
 const RETENTION_TARGET: &str = "event_store_adapter::retention";
@@ -782,9 +725,8 @@ struct AppendAfterCommit {
   options: BigtableOptions,
   id: Id,
   recorder: Arc<Recorder>,
-  captured: Captured,
+  captured: &'static Captured,
   result: Result<(), EventStoreError>,
-  _guard: tracing::subscriber::DefaultGuard,
 }
 
 /// 保持件数 1 でイベント 1・スナップショット 1 を追記した後、イベント 2・スナップショット 2 の追記の
@@ -792,8 +734,10 @@ struct AppendAfterCommit {
 ///
 /// この追記は次の順に要求を送る: head の読み取り（1）、直前の行の書き出し（2）とその照合の読み取り（3）、
 /// head の条件付き更新（4、確定）、末尾の行の書き出し（5）、保持の走査（6）、保持の削除（7）。
+///
+/// 知らせを試験ごとに分けるため、集約の値を `failing_call` ごとに変える。
 async fn append_second_snapshot_failing_call(failing_call: usize) -> AppendAfterCommit {
-  let (captured, guard) = capture_events();
+  let captured = captured_events();
   let options = options_keeping(1);
   let fixture = Fixture::initialized(&options).await;
   let tokens = Tokens::issuing();
@@ -801,7 +745,7 @@ async fn append_second_snapshot_failing_call(failing_call: usize) -> AppendAfter
   let store = open_store(&fixture, &options, &tokens, &recorder)
     .await
     .expect("開ける");
-  let id = Id::order();
+  let id = Id::new("Order", &format!("token-failure-at-call-{failing_call}"));
   store
     .persist_event_and_snapshot(event(&id, 1), snapshot(1))
     .await
@@ -818,7 +762,6 @@ async fn append_second_snapshot_failing_call(failing_call: usize) -> AppendAfter
     recorder,
     captured,
     result,
-    _guard: guard,
   }
 }
 
@@ -832,12 +775,15 @@ async fn should_bigtable_append_succeed_and_report_when_the_token_source_fails_a
     appended.result
   );
   assert_eq!(
-    appended.captured.categories_of(JOURNAL_TARGET),
+    appended.captured.categories_of(JOURNAL_TARGET, &appended.id.aid()),
     vec!["journal-write-failure".to_string()],
     "末尾の行の書き出しの失敗は、別の経路で知らせる"
   );
   assert!(
-    appended.captured.categories_of(RETENTION_TARGET).is_empty(),
+    appended
+      .captured
+      .categories_of(RETENTION_TARGET, &appended.id.aid())
+      .is_empty(),
     "保持の処理は成功しているので、保持の失敗は知らせない"
   );
   assert_eq!(
@@ -890,12 +836,15 @@ async fn should_bigtable_append_succeed_and_report_when_the_token_source_fails_a
     appended.result
   );
   assert_eq!(
-    appended.captured.categories_of(RETENTION_TARGET),
+    appended.captured.categories_of(RETENTION_TARGET, &appended.id.aid()),
     vec!["retention-failure".to_string()],
     "保持の走査の失敗は、別の経路で知らせる"
   );
   assert!(
-    appended.captured.categories_of(JOURNAL_TARGET).is_empty(),
+    appended
+      .captured
+      .categories_of(JOURNAL_TARGET, &appended.id.aid())
+      .is_empty(),
     "末尾の行は書けているので、journal の書き出しの失敗は知らせない"
   );
   assert_eq!(
@@ -944,12 +893,15 @@ async fn should_bigtable_append_succeed_and_report_when_the_token_source_fails_a
     appended.result
   );
   assert_eq!(
-    appended.captured.categories_of(RETENTION_TARGET),
+    appended.captured.categories_of(RETENTION_TARGET, &appended.id.aid()),
     vec!["retention-failure".to_string()],
     "保持の削除の失敗は、別の経路で知らせる"
   );
   assert!(
-    appended.captured.categories_of(JOURNAL_TARGET).is_empty(),
+    appended
+      .captured
+      .categories_of(JOURNAL_TARGET, &appended.id.aid())
+      .is_empty(),
     "末尾の行は書けているので、journal の書き出しの失敗は知らせない"
   );
   assert_eq!(
