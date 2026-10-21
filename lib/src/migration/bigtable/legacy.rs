@@ -166,11 +166,11 @@ pub(super) fn event(row: &AssembledRow, mapping: &HashMap<String, String>) -> Re
   if number > SEQ_NR_MAX {
     return Err(with_pkey("T-9: seq_nrが2^53-1を超えています".into()));
   }
-  let payload = cell(row, EVENT_FAMILY, "payload").map_err(&with_pkey)?;
-  let aggregate_id = cell(row, EVENT_FAMILY, "aggregate_id").map_err(&with_pkey)?;
-  let seq_nr = cell(row, EVENT_FAMILY, "seq_nr").map_err(&with_pkey)?;
-  let occurred_at = cell(row, EVENT_FAMILY, "occurred_at").map_err(&with_pkey)?;
-  let manifest = cell(row, EVENT_FAMILY, "manifest").map_err(&with_pkey)?;
+  let payload = cell(row, EVENT_FAMILY, "payload").map_err(with_pkey)?;
+  let aggregate_id = cell(row, EVENT_FAMILY, "aggregate_id").map_err(with_pkey)?;
+  let seq_nr = cell(row, EVENT_FAMILY, "seq_nr").map_err(with_pkey)?;
+  let occurred_at = cell(row, EVENT_FAMILY, "occurred_at").map_err(with_pkey)?;
+  let manifest = cell(row, EVENT_FAMILY, "manifest").map_err(with_pkey)?;
   if aggregate_id != value.as_bytes() {
     return Err(with_pkey("aggregate_idのセルが行キーの値と一致しません".into()));
   }
