@@ -5,13 +5,14 @@
 //! （要求を送る直前に、その要求の種類と、付けた `authorization` の値を受け取る）で確かめる。取得元が失敗した要求や、
 //! 使えないトークンの要求は送られないので、フックの記録にも現れない。
 
+mod bigtable_capture;
 mod bigtable_support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
-use bigtable_support::capture::{captured_events, Captured};
+use bigtable_capture::{captured_events, Captured};
 use bigtable_support::{
   event, journal_key, only_value, options_keeping, row_prefix, snapshot, Fixture, Id, Store, TableKind,
 };

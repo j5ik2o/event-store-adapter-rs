@@ -5,6 +5,9 @@
 //! 記録は共有する。試験は、自分の集約の `aid` と target で絞り込んで確かめる。
 //!
 //! 記録するのは、target が `event_store_adapter::` で始まる事象だけ（通信層などの大量の事象を溜め込まないため）。
+//!
+//! `bigtable_support` とは別のモジュールにしてある。`bigtable_support` はほかのクレートの試験も `#[path]` で共有するので、
+//! そこに置くと、それらのクレートにも `tracing-subscriber` が要るようになる。
 
 use std::sync::{Arc, Mutex, OnceLock};
 

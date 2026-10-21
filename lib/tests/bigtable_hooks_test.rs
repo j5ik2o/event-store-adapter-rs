@@ -1,12 +1,13 @@
 #![cfg(all(feature = "bigtable", feature = "test-hooks"))]
 //! Bigtable の保存先の結合試験のうち、障害の差し込みや、読み取りの途中に別の書き手を動かす試験（エミュレーター）。
 
+mod bigtable_capture;
 mod bigtable_support;
 
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
-use bigtable_support::capture::captured_events;
+use bigtable_capture::captured_events;
 use bigtable_support::{
   cells_in, event, event_with_payload, expected_envelope_of, expected_snapshot_envelope_of, journal_key, only_value,
   options_keeping, row_prefix, run_on_another_runtime, snapshot, Env, Fixture, Id, Store, TableKind, RECORDED_STORE_ID,
