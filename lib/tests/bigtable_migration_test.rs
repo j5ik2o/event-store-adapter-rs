@@ -22,6 +22,9 @@ use event_store_adapter_rs::{
   EventStore, EventStoreError, LegacyBigtableTables, MigrationError, MigrationReport, SnapshotEnvelope,
 };
 use event_store_adapter_test_utils_rs::bigtable::{self, FamilySpec, GarbageCollection};
+use googleapis_tonic_google_bigtable_v2::google::bigtable::v2::bigtable_client::BigtableClient;
+use googleapis_tonic_google_bigtable_v2::google::bigtable::v2::mutation::{DeleteFromRow, Mutation as MutationKind};
+use googleapis_tonic_google_bigtable_v2::google::bigtable::v2::{MutateRowRequest, Mutation};
 use support::*;
 
 /// 旧の 2 テーブルを `legacy` として、`scene.options` で移行する。
@@ -1374,4 +1377,119 @@ async fn should_not_overwrite_a_head_created_by_another_writer_after_the_inspect
   assert!(head_row(&scene, "Bb-a").await.is_empty());
   assert_eq!(after.new_journal.len(), 2, "journal は設定行と `Aa-a` の行 1 だけ");
   assert_eq!(after.new_head.len(), 2, "head は設定行と別の書き手の head だけ");
+}
+
+// ---------------------------------------------------------------------------
+// 検査の後に旧 journal の中ほどの行がなくなった場合
+// ---------------------------------------------------------------------------
+
+/// 旧 journal の再読の要求を送る直前に、旧 journal の 1 行を消すトークンの取得元。
+///
+/// 書き込みの前に取得元が呼ばれる 9 回の読み取り（`should_ask_the_token_source_before_every_request_and_keep_the_write_order_when_it_fails`
+/// の説明を参照）のうち、9 回目が旧 journal の再読である。検査はその前に終わっているので、検査の後に行がなくなった場合に当たる。
+/// 呼び出しの回数がずれると、検査が欠番を拒否して `Ok` になるか、消す前に再読が終わって成功するので、どちらも試験が失敗する。
+#[derive(Debug)]
+struct LegacyRowRemovingTokens {
+  port: u16,
+  legacy_journal_path: String,
+  row_key: Vec<u8>,
+  calls: AtomicUsize,
+  removed: AtomicBool,
+}
+
+/// 書き込みの前の読み取りのうち、旧 journal の再読の要求が何回目の取得元の呼び出しか。
+const LEGACY_JOURNAL_REREAD_CALL: usize = 9;
+
+#[async_trait]
+impl BigtableTokenSource for LegacyRowRemovingTokens {
+  async fn access_token(&self) -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
+    let call = self.calls.fetch_add(1, Ordering::SeqCst) + 1;
+    if call == LEGACY_JOURNAL_REREAD_CALL {
+      let channel = bigtable::connect(self.port).await.expect("エミュレーターへ接続できる");
+      BigtableClient::new(channel)
+        .mutate_row(MutateRowRequest {
+          table_name: self.legacy_journal_path.clone(),
+          row_key: self.row_key.clone(),
+          mutations: vec![Mutation {
+            mutation: Some(MutationKind::DeleteFromRow(DeleteFromRow {})),
+          }],
+          ..Default::default()
+        })
+        .await
+        .expect("旧 journal の行を消せる");
+      self.removed.store(true, Ordering::SeqCst);
+    }
+    Ok("token".to_string())
+  }
+}
+
+/// 検査の後、旧 journal の再読の前に、集約 A の中ほどの行（イベント 3。最大は 4）がなくなる。
+/// 欠番より後の行 4 と A の head を書かずに、`Err(MigrationError)` で止まる。
+#[tokio::test]
+async fn should_fail_without_writing_past_a_gap_when_a_middle_old_journal_row_disappears_after_the_inspection() {
+  let fixture = success_fixture();
+  let scene = Scene::new(&fixture.events, &fixture.snapshots, options_keeping(2)).await;
+  let before = scene.state().await;
+  let tokens = Arc::new(LegacyRowRemovingTokens {
+    port: scene.env.port,
+    legacy_journal_path: format!(
+      "projects/{}/instances/{}/tables/{}",
+      scene.legacy.project_id, scene.legacy.instance_id, scene.legacy.journal_table_id
+    ),
+    row_key: V3Event::new("Old-Account-3", "Old-Account", "a-b", 3).row_key,
+    calls: AtomicUsize::new(0),
+    removed: AtomicBool::new(false),
+  });
+  let source: Arc<dyn BigtableTokenSource> = tokens.clone();
+
+  let error = migrate_v3_bigtable(
+    &scene.env.connection().await,
+    Some(source),
+    &scene.legacy,
+    &scene.env.tables,
+    &scene.options,
+    &fixture.mapping,
+  )
+  .await
+  .expect_err("検査の後に欠番ができた旧 journal は MigrationError で返る");
+
+  assert!(
+    tokens.removed.load(Ordering::SeqCst),
+    "検査の後に旧 journal の行を消した"
+  );
+  assert_eq!(error.operation, "旧journalの再読", "{error:?}");
+  assert!(
+    error
+      .source
+      .to_string()
+      .contains("検査の後に旧journalの集約 Account-a-b の行が変わりました"),
+    "{error:?}"
+  );
+  // 書けたのは A の行 1 と 2 だけで、2 は保持する履歴（位置 {2, 3} のうちの 2）を持つ。head は 1 つもない。
+  assert_eq!(
+    (error.report.aggregates, error.report.events, error.report.snapshots),
+    (0, 2, 1),
+    "{:?}",
+    error.report
+  );
+  let after = scene.state().await;
+  assert_partial_state(&after, &error.report, "検査の後に行 3 がなくなった");
+  // 旧 journal は試験が 1 行消したので、消した行以外が変わっていないことを確かめる。旧 snapshot は変わらない。
+  let removed_key = V3Event::new("Old-Account-3", "Old-Account", "a-b", 3).row_key;
+  let expected_old_journal: Vec<_> = before
+    .old_journal
+    .iter()
+    .filter(|(key, _)| *key != removed_key)
+    .cloned()
+    .collect();
+  assert_eq!(after.old_journal, expected_old_journal);
+  assert_eq!(after.old_snapshot, before.old_snapshot);
+  // 欠番より後の行 4 と、A の head は書かれない。行 1 と 2 は書かれている。
+  assert!(!journal_row(&scene, "Account-a-b", 1).await.is_empty());
+  assert!(!journal_row(&scene, "Account-a-b", 2).await.is_empty());
+  assert!(journal_row(&scene, "Account-a-b", 3).await.is_empty());
+  assert!(journal_row(&scene, "Account-a-b", 4).await.is_empty());
+  assert!(head_row(&scene, "Account-a-b").await.is_empty());
+  assert_eq!(after.new_journal.len(), 3, "journal は設定行と A の行 1・2 だけ");
+  assert_eq!(after.new_head.len(), 1, "head は設定行だけ");
 }

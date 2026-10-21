@@ -283,13 +283,12 @@ fn summarize(
     let maximum = draft.seq_nrs.last().copied().unwrap_or(0);
     // v3 の履歴の行は、置き換えられる前の像なので、位置は今のスナップショットより小さい。
     for position in &draft.history {
-      if draft.current.is_none_or(|current| *position >= current) {
-        report.reasons.push(aggregate_rejection(
-          table,
-          &aid,
-          "履歴のseq_nrが今のスナップショット以上です".into(),
-        ));
-      }
+      let reason = match draft.current {
+        None => "今のスナップショットがないのに履歴の行があります",
+        Some(current) if *position >= current => "履歴のseq_nrが今のスナップショット以上です",
+        Some(_) => continue,
+      };
+      report.reasons.push(aggregate_rejection(table, &aid, reason.into()));
     }
     let mut snapshot_positions = draft.history.clone();
     snapshot_positions.extend(draft.current);

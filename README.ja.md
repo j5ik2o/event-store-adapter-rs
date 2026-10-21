@@ -191,7 +191,7 @@ storeのインスタンスとそのcloneは、1つの接続を共有します。
 
 `features = ["bigtable"]`を指定します。保存先は、Cloud Bigtable（またはBigtableエミュレーター）にgRPCでつなぐ、`journal`と`head`の2つのテーブルです。テーブルの作成とapp profileの用意はライブラリの範囲外です。最初の`initialize_bigtable_store`の前に、次を用意してください。
 
-- 2つのテーブルを、列ファミリ付きで作ります。journalテーブルには`event`・`history`・`config`、headテーブルには`head`・`snapshot`・`config`です。データの4つの列ファミリ（`event`・`history`・`head`・`snapshot`）には、ガベージコレクションの規則として「最大1版を残す」だけを設定し、年齢による規則は設定しません。これ以外の規則は`open`が拒否します。`config`は存在すれば足ります。
+- 2つのテーブルを、列ファミリ付きで作ります。journalテーブルには`event`・`history`・`config`、headテーブルには`head`・`snapshot`・`config`です。データの4つの列ファミリ（`event`・`history`・`head`・`snapshot`）には、ガベージコレクションの規則として「最大1版を残す」だけを設定し、年齢による規則は設定しません。これ以外の規則は`open`が拒否します。`config`の版数の規則は任意ですが、年齢による規則は設定しません。設定の行はセルの時刻0で書くので、年齢による規則があるとすぐに期限切れになり、以後の`open`と初期化の確認が失敗します。
 - すべての操作を1つのクラスタに固定し、単一行トランザクションを許可するapp profileを作り、そのIDを`BigtableOptions::app_profile_id`に渡します。ライブラリはapp profileを照合しません。
 
 初期化と「開く」は、別々の明示的な操作です。

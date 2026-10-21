@@ -8,6 +8,8 @@
 //! これは v5 の書き込みの順（プロファイル 5 章）と同じで、「h より前のイベントは journal にあり、h は head にある」
 //! という不変条件を、集約ごとの全ての時点で保つ。別の集約の行が間に挟まることはある。
 //!
+//! 検査の後に旧 journal が変わった場合に備え、集約ごとに seq_nr が 1 から欠けずに続くことを、行を書く前に読み直しでも
+//! 確かめる。欠番や重複があれば、その行を書かずに誤りにする。
 //! journal の行は `BigtableShared::write_journal_row` で、head は v5 の追記と同じ形の条件付き更新で作る。
 //! 封筒は `encode_event`・`encode_snapshot` で組み立て、payload は旧のバイト列のまま入れる。
 
@@ -87,27 +89,38 @@ fn snapshot_envelope(position: SeqNr, payload: Vec<u8>) -> Vec<u8> {
   })
 }
 
-/// 旧 journal の行が、検査した集約の行であることを確かめる。
+/// 検査の後に、旧 journal の集約 `aid` の行が変わっていたときの誤り。
+fn changed_after_inspection(report: &MigrationReport, aid: &str) -> MigrationError {
+  invalid(
+    report,
+    "旧journalの再読",
+    format!("検査の後に旧journalの集約 {aid} の行が変わりました"),
+  )
+}
+
+/// 旧 journal の行が、検査した集約の、次に来るべき行であることを確かめる。
+///
+/// `read_through` は、集約ごとに再読で読めた最後の seq_nr（行を読む前は 0）である。検査は seq_nr が 1 から欠けずに続くことを
+/// 確かめているので、再読でも次の行の seq_nr は `read_through + 1` でなければならない。違えば、その行を書く前に誤りにする。
+/// 確かめた行の seq_nr で `read_through` を進める。
 fn verify<'a>(
   event: &LegacyEvent,
   aggregates: &'a Aggregates,
+  read_through: &mut HashMap<AidString, SeqNr>,
   report: &MigrationReport,
 ) -> Result<&'a Summary, MigrationError> {
-  let operation = "旧journalの再読";
   let summary = aggregates.get(&event.aid).ok_or_else(|| {
     invalid(
       report,
-      operation,
+      "旧journalの再読",
       format!("検査の後に旧journalへ集約 {} の行が増えました", event.aid.as_str()),
     )
   })?;
-  if summary.key != event.key || event.fields.seq_nr > summary.maximum {
-    return Err(invalid(
-      report,
-      operation,
-      format!("検査の後に旧journalの集約 {} の行が変わりました", event.aid.as_str()),
-    ));
+  let read = read_through.entry(event.aid.clone()).or_insert(0);
+  if summary.key != event.key || event.fields.seq_nr > summary.maximum || event.fields.seq_nr != *read + 1 {
+    return Err(changed_after_inspection(report, event.aid.as_str()));
   }
+  *read = event.fields.seq_nr;
   Ok(summary)
 }
 
@@ -151,6 +164,9 @@ async fn create_head(
 /// 検査を通った集約を、新しい 2 テーブルへ書く。
 ///
 /// 件数は、成功の応答を受けたものだけを数える。head が既にあれば、理由を報告に入れて止める。
+///
+/// 旧 journal が検査の後に変わっていて、集約の行が 1 から欠けずに最大の seq_nr まで続かないときは、その行を書く前に
+/// `Err(MigrationError)` で止める。
 pub(super) async fn write(
   shared: &BigtableShared,
   legacy_journal: &TableTarget,
@@ -161,6 +177,7 @@ pub(super) async fn write(
 ) -> Result<(), MigrationError> {
   let write_journal = "journalの書込";
   let write_head = "headの書込";
+  let mut read_through: HashMap<AidString, SeqNr> = HashMap::new();
   let mut pages = Pages::new(legacy_journal, READ_OPERATION);
   while let Some(rows) = pages
     .next()
@@ -170,7 +187,7 @@ pub(super) async fn write(
     for row in rows {
       let event =
         legacy::event(&row, mapping).map_err(|rejected| invalid(report, "旧journalの再読", rejected.reason))?;
-      let summary = verify(&event, aggregates, report)?;
+      let summary = verify(&event, aggregates, &mut read_through, report)?;
       let seq_nr = event.fields.seq_nr;
       let prefix = shared
         .prefix(&event.aid)
@@ -214,18 +231,17 @@ pub(super) async fn write(
       }
     }
   }
-  let heads = u64::try_from(aggregates.len()).unwrap_or(u64::MAX);
-  if report.aggregates != heads {
-    return Err(invalid(
-      report,
-      "旧journalの再読",
-      format!(
-        "検査した集約{heads}件のうち、headを作れたのは{}件です",
-        report.aggregates
-      ),
-    ));
+  // 検査したすべての集約で、最大の seq_nr まで読めたことを確かめる。報告の理由を実行ごとに変えないため、
+  // 読めなかった集約が複数あるときは aid の順で最初のものを使う。
+  let unfinished = aggregates
+    .iter()
+    .filter(|(aid, summary)| read_through.get(*aid).copied().unwrap_or(0) != summary.maximum)
+    .map(|(aid, _)| aid.as_str())
+    .min();
+  match unfinished {
+    Some(aid) => Err(changed_after_inspection(report, aid)),
+    None => Ok(()),
   }
-  Ok(())
 }
 
 fn head_exists(shared: &BigtableShared, aid: &AidString) -> MigrationRejection {

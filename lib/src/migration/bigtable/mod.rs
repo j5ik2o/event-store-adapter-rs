@@ -76,6 +76,9 @@ fn table_path(project_id: &str, instance_id: &str, table_id: &str) -> String {
 ///   `reasons` が空でなく件数が 0 でもないときは、下の「書き込みの途中で失敗したとき」の手順でやり直す。
 /// - 設定の食い違い（保持件数や封筒の上限の違い、列ファミリの違い）と、未初期化の新しいテーブルは、何も書かずに
 ///   `Err(MigrationError)` で返す。通信の失敗も `Err(MigrationError)` で返し、`report` にそこまでの件数を入れる。
+/// - 検査の後に旧 journal の行が変わった場合（集約の行が増えた、なくなった、seq_nr が続かなくなった）も、
+///   `Err(MigrationError)` で返す。このときは、それまでに書いた行が新しい 2 テーブルに残り、`report` にその分の件数を入れる。
+///   下の「書き込みの途中で失敗したとき」の手順でやり直す。
 /// - `aggregates` は作った head の数、`events` は書いた journal の行の数、`snapshots` は書いた旧スナップショットの数
 ///   （今のスナップショットと、移した履歴の行）である。
 ///

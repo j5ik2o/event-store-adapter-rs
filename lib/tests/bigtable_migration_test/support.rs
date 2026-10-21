@@ -771,6 +771,13 @@ pub fn rejection_cases() -> Vec<RejectionCase> {
       vec![V3Snapshot::current("Orphan-0", "Orphan", "a", 1)],
     ),
     rejection_case(
+      "今のスナップショットがない集約の履歴",
+      &["今のスナップショットがないのに履歴の行があります"],
+      &positions,
+      events_up_to_three("NoCurrent"),
+      vec![V3Snapshot::history("NoCurrent-0", "NoCurrent", "a", 1)],
+    ),
+    rejection_case(
       "今のスナップショットと同じ位置の履歴",
       &["履歴のseq_nrが今のスナップショット以上です"],
       &positions,

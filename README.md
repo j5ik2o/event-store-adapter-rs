@@ -191,7 +191,7 @@ A store instance and its clones share one connection. See [the SQLite schema](do
 
 Enable `features = ["bigtable"]`. The store talks to Cloud Bigtable (or the Bigtable emulator) over gRPC through two tables, `journal` and `head`. Table creation is outside the library, and so is the app profile. Prepare these before the first `initialize_bigtable_store`:
 
-- Create the two tables with their column families: `event`, `history`, and `config` in the journal table, and `head`, `snapshot`, and `config` in the head table. Give the four data families (`event`, `history`, `head`, `snapshot`) a garbage-collection rule of "keep at most one version" and no age rule; `open` rejects any other rule. The `config` family only has to exist.
+- Create the two tables with their column families: `event`, `history`, and `config` in the journal table, and `head`, `snapshot`, and `config` in the head table. Give the four data families (`event`, `history`, `head`, `snapshot`) a garbage-collection rule of "keep at most one version" and no age rule; `open` rejects any other rule. The `config` family may have any version rule but no age rule: the configuration row is written with cell timestamp 0, so an age rule would expire it at once and every later `open` and initialization check would fail.
 - Create an app profile that pins every operation to a single cluster with single-row transactions allowed, and pass its ID as `BigtableOptions::app_profile_id`. The library does not check the app profile.
 
 Initialization and opening are separate, explicit steps:

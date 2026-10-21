@@ -37,12 +37,12 @@ Create all of the column families before the first `initialize_bigtable_store`:
 |:------|:-------|:------------------------|
 | journal | `event` | keep at most one version, no age rule |
 | journal | `history` | keep at most one version, no age rule |
-| journal | `config` | any (the family only has to exist) |
+| journal | `config` | a version rule is optional, no age rule |
 | head | `head` | keep at most one version, no age rule |
 | head | `snapshot` | keep at most one version, no age rule |
-| head | `config` | any (the family only has to exist) |
+| head | `config` | a version rule is optional, no age rule |
 
-`open` reads each table's schema with `GetTable` and rejects a missing family, or a data family whose rule is not exactly "keep at most one version", with a configuration error (`ConfigurationReason::BigtableColumnFamilyMismatch`). Do not set an age rule on a data family: expired cells would lose data. Correctness never depends on how soon garbage collection runs, because every read asks for only the latest cell of a column, and every write sets the cell timestamp to 0 and deletes the older versions of a column it replaces.
+`open` reads each table's schema with `GetTable` and rejects a missing family, or a data family whose rule is not exactly "keep at most one version", with a configuration error (`ConfigurationReason::BigtableColumnFamilyMismatch`). Do not set an age rule on a data family: expired cells would lose data. Do not set an age rule on a `config` family either: the configuration row is written with cell timestamp 0, so an age rule would expire it at once, and every later `open` and initialization check would fail. Correctness never depends on how soon garbage collection runs, because every read asks for only the latest cell of a column, and every write sets the cell timestamp to 0 and deletes the older versions of a column it replaces.
 
 ## App profile, connection, and authentication
 
