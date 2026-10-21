@@ -1,5 +1,6 @@
-//! Event stores for Memory, DynamoDB, and SQLite using the shared event envelope contract.
-//! Legacy DynamoDB and SQLite data is supported only by the feature-gated migration module.
+//! Event stores for Memory, DynamoDB, SQLite, and Bigtable using the shared event envelope contract.
+//! Legacy v3 DynamoDB, SQLite, and Bigtable data is supported only by the feature-gated migration module
+//! (features `migration`, `sqlite-migration`, and `bigtable-migration`).
 
 pub mod aggregate_id;
 #[cfg(feature = "bigtable")]
@@ -10,7 +11,7 @@ pub mod error;
 pub mod event_envelope;
 pub mod event_store;
 pub mod memory;
-#[cfg(any(feature = "migration", feature = "sqlite-migration"))]
+#[cfg(any(feature = "migration", feature = "sqlite-migration", feature = "bigtable-migration"))]
 pub mod migration;
 pub mod retention;
 pub mod seq_nr;
@@ -35,9 +36,11 @@ pub use event_store::EventStore;
 pub use memory::{EventStoreForMemory, MemoryStorage};
 #[cfg(feature = "sqlite-migration")]
 pub use migration::migrate_v3_sqlite;
+#[cfg(feature = "bigtable-migration")]
+pub use migration::{migrate_v3_bigtable, LegacyBigtableTables};
 #[cfg(feature = "migration")]
 pub use migration::{migrate_v3_dynamodb, LegacyDynamoDbTables};
-#[cfg(any(feature = "migration", feature = "sqlite-migration"))]
+#[cfg(any(feature = "migration", feature = "sqlite-migration", feature = "bigtable-migration"))]
 pub use migration::{MigrationError, MigrationRejection, MigrationReport};
 pub use retention::{select_expired_history, ttl_expires_epoch_seconds, RetentionMode, RetentionSettings};
 pub use seq_nr::{SeqNr, SEQ_NR_MAX};

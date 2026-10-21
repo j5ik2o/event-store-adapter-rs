@@ -10,14 +10,15 @@
 - Memoryは`EventStoreForMemory::new(MemoryStorage::new(retention)?)`で生成します。storageのcloneでstore間の保存状態を共有し、独立したstorageで隔離します。
 - DynamoDBは事前作成した3表・履歴GSIと、SDK retry sleeperを設定したClientで、非同期の`EventStoreForDynamoDB::open(client, tables, options).await`を呼びます。
 - SQLiteはfeature `sqlite`を有効にし、新しいファイルに`initialize_sqlite_store(path, &options)`を1回呼んでから、同期の`EventStoreForSqlite::open(path, options)`を呼びます。`open`は何も作りません。この保存先は変更フィードを提供しません。[README](../README.ja.md)と[SQLite schema](SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。
+- Bigtableはfeature `bigtable`を有効にし、列ファミリ付きで2つのテーブルを作り、`initialize_bigtable_store(&connection, &tables, &options).await`を1回呼んでから、`EventStoreForBigtable::open(connection, tables, options).await`を呼びます。`open`は何も作りません。この保存先は変更フィードを提供しません。本番のCloud BigtableにはTLSのchannelと`BigtableTokenSource`（`open_with_token_source`）が要ります。[README](../README.ja.md)と[Bigtable schema](BIGTABLE_DATABASE_SCHEMA.ja.md)を参照してください。
 - `SnapshotRead::snapshot()`が不在なら作成イベントから再生します。snapshotとheadの番号は別の意味です。snapshot後のイベントを読み、観測headまで再生できたことを確認します。[コンパイルしたrepository例](../examples/user-account/src/user_account_repository.rs)がこの場合を扱います。
 - 非serde payloadには`with_serializers`／`open_with_serializers`へイベント・snapshot serializerを渡します。4操作は[README](../README.ja.md)、保持の実配置は[schema](DATABASE_SCHEMA.ja.md)を参照してください。
 
-`sqlite-system`・`bigtable`のfeature、本体、利用例は削除しました。これらの保存先は3系を継続してください。このmigrationはそのデータを支援しません。feature `sqlite`は、独自の配置を持つ5系の新しいSQLite保存先です。v3のSQLite保存先が書いたデータは、下記の[SQLiteの移行](#v3-sqliteデータの移行)で移します。
+`sqlite-system`のfeature、本体、利用例は削除しました。feature `sqlite`と`bigtable`は、独自の配置を持つ5系の新しい保存先です。v3.0.6では`sqlite`と`sqlite-system`が同じSQLite実装を選ぶため、どちらで書いたファイルも、下記の[SQLiteの移行](#v3-sqliteデータの移行)で移します。v3のBigtable保存先が書いたデータは、下記の[Bigtableの移行](#v3-bigtableデータの移行)で移します。
 
 ## 保存データの対象
 
-対象は**Rust v3の既定DynamoDB配置**だけです。旧journal・snapshotは`pkey`／`skey`キーを使用します。独自`KeyResolver`配置・v2データ・他の保存先は対象外です。v3の既定SQLiteファイルには、下記の[SQLiteの移行](#v3-sqliteデータの移行)があります。通常の5系storeは旧表を読みません。
+対象は**Rust v3の既定DynamoDB配置**だけです。旧journal・snapshotは`pkey`／`skey`キーを使用します。独自`KeyResolver`配置・v2データ・他の保存先は対象外です。v3の既定SQLiteファイルには、下記の[SQLiteの移行](#v3-sqliteデータの移行)があり、v3の既定のBigtableのテーブルには、下記の[Bigtableの移行](#v3-bigtableデータの移行)があります。通常の5系storeは旧表を読みません。
 
 migrationは旧キーからIDを再構成し、番号の連続性とsnapshotの関係を検査します。旧hasherとpayloadの復元・再直列化は使用せず、payloadバイトをそのまま転写します。移行後のstoreには互換性のあるserializerを指定してください。
 
@@ -168,4 +169,123 @@ CLIは`aggregates`・`events`・`snapshots`・`reasons`を持つ`MigrationReport
 
 ```sh
 cargo test -p event-store-adapter-migration-rs --test sqlite_cli_test
+```
+
+## v3 Bigtableデータの移行
+
+v3のBigtable保存先は、journalテーブルとsnapshotテーブルの2つのテーブルを書きました。5系のBigtable保存先は別の配置（[schema](BIGTABLE_DATABASE_SCHEMA.ja.md)）を使い、journalテーブルとheadテーブルを持ち、履歴はjournalの行に置きます。データは**新しい2つのテーブル**へ写します。旧テーブルへ送る要求は`ReadRows`だけで、旧テーブルは変更しません。通常の5系storeは旧テーブルを読みません。
+
+### 保存データの対象（Bigtable）
+
+対象は**Rust v3.0.6の既定Bigtable配置**だけです。行キーを既定の`KeyResolver`で組み立てた、journalテーブルとsnapshotテーブルです。
+
+| 行 | 行キー | セル |
+|:---|:-------|:-----|
+| journal | `{pkey}#{型名}#{値}#{seq_nr（0詰めの20桁）}`。`pkey = {型名}-{shard}` | 列ファミリ`event`: `payload`・`aggregate_id`・`seq_nr`・`occurred_at`（ナノ秒つきのRFC 3339）・`manifest` |
+| snapshot（現在） | `{pkey}#{型名}#{値}` | 列ファミリ`snapshot`: `payload`・`seq_nr`（と、写さない`version`・`last_updated_at`） |
+| snapshot（履歴） | 現在の行キーの後ろに`#{seq_nr（0詰めの20桁）}` | 同じセル。後のsnapshotに置き換えられたsnapshotを、その位置で書いた行 |
+
+独自`KeyResolver`配置・v2データ・他の保存先は対象外で、既定の配置に従わない行は全件検査で拒否します。
+
+migrationは、DynamoDBの移行と同じ規則で、型名と値を行キーだけから再構成します。`aggregate_id`のセルは、キーから取り出した値の照合にだけ使います。hyphenを含む旧型名には、[前述](#保存データの対象)のJSON対応表が必要です。対応表を使うのはhyphenありの旧型名だけで、対応先の衝突・対応後に残るhyphen・1024バイトを超える`aid`は拒否します。値に`#`を含むと、snapshotの行キーを複数の読み方で読める場合があります。migrationは推測しません。旧journalで確かめた集約に、ちょうど1つの読み方が当たるときだけ受け、それ以外は拒否します。
+
+写すものは次のとおりです。
+
+- **イベント。** payloadバイトは復元も再直列化もせずに写します。RFC 3339の発生時刻は、符号付き64ビットのナノ秒の値にします。読めない時刻や範囲に収まらない時刻は拒否します。manifestは保存されている値のまま写し、空のmanifestは空のままです。集約ごとに、番号は1から欠番・重複なしで続く必要があり、headは最大番号のイベントから作ります。すべてのイベント封筒が、新しいstoreの封筒の上限に収まる必要があります。
+- **現在のsnapshot。** 番号の接尾辞がない行を、空のmanifestで、headの`snapshot:current`へ写します。位置は集約の最大イベント番号以下で、対応するイベントが存在する必要があります。旧`version`と`last_updated_at`は捨てます。headの`has_snapshot`は、現在のsnapshotが最大のイベント番号にあるときだけ`1`です。
+- **snapshotの履歴。** v3の履歴の行は、新しいsnapshotに置き換えられたsnapshotを、その位置で書いたものです。v5は、headの現在のsnapshotも履歴件数に数えます（[Bigtable schema](BIGTABLE_DATABASE_SCHEMA.ja.md#保持)）。そのためmigrationは、旧の履歴の位置と現在のsnapshotの位置を合わせた集合から、位置の新しい`n`件を残します。`n`は**新しいテーブルの**履歴件数です。残した`n`件は、それぞれの位置のjournalの行に`active`な履歴として書きます（現在のsnapshotの位置も書き、そのsnapshotは`snapshot:current`にも残ります）。新しいテーブルが現在のsnapshotだけを保持するなら、履歴は写しません。保持していなかった履歴は補いません。`event:has_snapshot`は、履歴を写したかどうかにかかわらず、これらの位置のすべてで`1`です。どちらの場合も旧の履歴の行はすべて検査します。現在のsnapshotの位置以上の履歴の行、または現在のsnapshotがない履歴の行があると、移行を拒否します。
+
+### 運用手順（Bigtable）
+
+1. 検査前に**旧の2つのテーブルへの全書込を停止**し、移行中も停止を維持します。関数とCLIはこの運用前提を強制しません。
+2. 列ファミリ付きで新しい2つのテーブルを作り、そのためのapp profileを作って、希望する履歴件数・封筒の上限・app profileで`initialize_bigtable_store`（[schema](BIGTABLE_DATABASE_SCHEMA.ja.md#初期化)）を呼びます。新しいテーブルは初期化済みで**データの行がない**必要があります。設定の行以外のどの行があっても移行を拒否し、migrationはテーブルも列ファミリも設定の行も作りません。旧と新のテーブルは別のテーブルでなければなりません。パス（プロジェクト・インスタンス・テーブルID）を比べるので、旧テーブルは別のプロジェクトやインスタンスにあってかまいません。
+3. 旧と新のテーブル、初期化に使ったものと**同じ設定**、型対応表を指定し、下記の関数またはCLIを実行します。
+4. JSON報告と終了statusを確認します。新しいテーブルを同じoptionsで公開5系APIから開き、移行後データ（`get_latest_snapshot_by_id`と`get_events_by_id_since_seq_nr`）を読み戻してから、アプリケーションの書込先を切り替えます。読んだ内容を、headの番号や数個の集約のイベントなど、期待する内容と比べます。
+5. 検査拒否があっても、**新しいテーブルには何も書きません**。旧テーブルも変わりません。原因を解消し、同じ新しいテーブルへ再実行できます。設定と保存された設定の食い違いや、初期化されていない新しいテーブルも、何も書かずにエラーを返します。
+6. 書込が途中で失敗した場合（接続の切断、Bigtableからのエラー、既にあるheadなど）は、**部分的な移行が新しいテーブルに残ります**。Bigtableには行をまたぐトランザクションがないため、それまでに書いた行が残るからです。migrationは、止まった所から再開しません。そのテーブルへの再実行は、データの行があるため拒否されます。次の手順でやり直します。
+   1. 旧の2つのテーブルへの書き手を止めたままにします。旧テーブルは消しません。
+   2. **新しい2つのテーブル**を消し、列ファミリ付きで作り直します。
+   3. 同じ設定で`initialize_bigtable_store`をもう一度呼びます。
+   4. 同じ入力で、移行をもう一度実行します。
+
+全件検査は、新しいテーブルへ何かを書く前に、旧の2つのテーブルの全行をページごとに読みます。保持するのは集約ごとの小さな要約だけで、payloadは持ちません。拒否はすべて報告に集めます。欠番と重複、既定の配置に従わない、または一意に読み解けないキー、欠けている、またはキーと食い違うセル、孤立snapshotと集約の最大イベント番号を超えるsnapshot、対応表のない・衝突する・長すぎるID、読めない発生時刻、新しい上限を超える封筒です。検査に通ると、旧journalをキーの順にもう一度読み、通常の追記と同じ順で集約ごとに書きます。最大のイベントより前の行を先に、次にhead、最後に最大のイベントのjournalの行です。headが`h`のとき、イベント`1`から`h - 1`はjournalにあり、イベント`h`はheadにある状態が常に保たれるので、公開APIで読んでも欠番は見えません。payloadは、書くときに旧テーブルから読み直します。
+
+拒否の理由は`table`に、完全なパス`projects/<project>/instances/<instance>/tables/<table>`で対象を示します。旧データの行は旧テーブル、すでにデータの行がある新しいテーブルは新しいテーブル、旧と新のテーブルが重なっているなら空文字列です。報告の`aggregates`は作ったheadの数、`events`は書いたjournalの行数、`snapshots`は書いたsnapshot（現在と履歴）の数です。件数に含めるのは、成功の応答を受けた書込だけです。検査で見つかった拒否では、件数は0のままです。
+
+### Library関数（Bigtable）
+
+`features = ["bigtable-migration"]`を指定すると`bigtable`も有効になりますが、DynamoDBとSQLiteは有効になりません。`BigtableConnection`（`connection`）を持つ非同期の文脈で次のように呼びます。
+
+```rust
+use std::collections::HashMap;
+use event_store_adapter_rs::{
+  migrate_v3_bigtable, BigtableOptions, BigtableTables, LegacyBigtableTables,
+  RetentionSettings,
+};
+
+let legacy = LegacyBigtableTables {
+  project_id: "my-project".into(),
+  instance_id: "my-instance".into(),
+  journal_table_id: "old-journal".into(),
+  snapshot_table_id: "old-snapshot".into(),
+};
+let tables = BigtableTables {
+  project_id: "my-project".into(),
+  instance_id: "my-instance".into(),
+  journal_table_id: "journal".into(),
+  head_table_id: "head".into(),
+};
+// The same settings that were passed to initialize_bigtable_store.
+let options = BigtableOptions {
+  retention: RetentionSettings::keep_latest(2),
+  ..BigtableOptions::default()
+};
+let mapping = HashMap::from([("user-account".into(), "UserAccount".into())]);
+let report = migrate_v3_bigtable(&connection, None, &legacy, &tables, &options, &mapping).await?;
+assert!(report.reasons.is_empty(), "{:?}", report.reasons);
+```
+
+2番目の引数はトークンの取得元です。エミュレーターでは`None`を渡します。本番のCloud Bigtableでは、`Some(Arc<dyn BigtableTokenSource>)`とTLSのchannelを持つ`connection`を渡します。このとき、トークンは旧テーブルへの要求にも新しいテーブルへの要求にも付きます。1つの`connection`が両方のテーブルに使われるため、旧と新のテーブルは同じ2つのchannelでつながる必要があります。`options`のapp profileは、新しいテーブルへの要求にだけ付けます。
+
+`Ok(MigrationReport)`でも`reasons`に拒否理由があるため、呼出し側で確認します。検査で見つかった拒否では件数が0のままです。作ろうとしたheadが既にあった場合も拒否として報告し、それまでに書いた分の件数を持ちます。通信や保存先の失敗は、sourceと途中までの報告を持つ`MigrationError`になります。件数は、成功の応答を受けた書込を反映します。履歴件数や封筒の上限の違い、列ファミリの不一致、初期化されていない新しいテーブルといった設定の食い違いは、何も書く前に`MigrationError`になります。
+
+### 薄いCLI（Bigtable）
+
+このcheckoutから、Bigtableエミュレーターに対して実行します。
+
+```sh
+cargo run -p event-store-adapter-migration-rs -- --help
+cargo run -p event-store-adapter-migration-rs -- \
+  --old-bigtable-project my-project --old-bigtable-instance my-instance \
+  --old-bigtable-journal old-journal --old-bigtable-snapshot old-snapshot \
+  --bigtable-project my-project --bigtable-instance my-instance \
+  --bigtable-journal journal --bigtable-head head \
+  --bigtable-keep-snapshot-count 2 \
+  --bigtable-emulator-host localhost:8086 \
+  --type-mapping type-mapping.json
+```
+
+| Flag | 要件 |
+|:-----|:-----|
+| `--old-bigtable-project`、`--old-bigtable-instance` | 必須。旧テーブルのプロジェクトとインスタンス |
+| `--old-bigtable-journal`、`--old-bigtable-snapshot` | 必須。旧テーブルのID |
+| `--bigtable-project`、`--bigtable-instance` | 必須。新しいテーブルのプロジェクトとインスタンス |
+| `--bigtable-journal`、`--bigtable-head` | 必須。新しいテーブルのID |
+| `--bigtable-keep-snapshot-count` | 任意。履歴件数。省略すると「現在のsnapshotだけ」。新しいテーブルの初期化に使った値と一致が必要 |
+| `--bigtable-envelope-limit-bytes` | 任意。封筒の上限。既定は1048576。新しいテーブルの初期化に使った値と一致が必要 |
+| `--bigtable-app-profile` | 任意。新しいテーブルへの要求に付けるapp profileのID。省略するとインスタンスの既定 |
+| `--bigtable-emulator-host` | 任意。Bigtableエミュレーターの`HOST:PORT`。省略すると本番のCloud Bigtableへ接続 |
+| `--type-mapping` | 任意。JSONファイル。DynamoDB・SQLiteの移行と共通 |
+| `--help`／`-h` | 利用方法と運用前提を表示 |
+
+**エミュレーターか本番か。** `--bigtable-emulator-host`を指定すると、CLIは平文で接続し、認証を付けません。指定しないと、CLIは本番のCloud Bigtable（データは`bigtable.googleapis.com`、adminは`bigtableadmin.googleapis.com`）へ、プラットフォームのネイティブなルート証明書を使ってTLSで接続し、`gcp_auth`クレートによるApplication Default Credentialsでアクセストークンを取得します。認証情報の探索は`gcp_auth`の通常の順序に従います（たとえば、`GOOGLE_APPLICATION_CREDENTIALS`が指すファイル、gcloudツールの認証情報、Google Cloudのメタデータサーバー）。トークンは要求のたびに取得し、更新は`gcp_auth`が行います。認証情報には、旧テーブルを読む権限と、新しいテーブルを読み・書き・schemaを調べる権限が必要です。TLSの実装にも`gcp_auth`にも、ライブラリ本体は依存せず、CLIだけが依存します。
+
+Bigtableのflagと、DynamoDBまたはSQLiteのflagは混ぜられません。混ぜると、移行前に不正引数として失敗し、標準出力には何も出力しません。DynamoDBとSQLiteの呼び出し方は変わりません。
+
+CLIは`aggregates`・`events`・`snapshots`・`reasons`を持つ`MigrationReport` JSONを出力します。検査拒否と保存先の失敗は非0終了となり、保存先の失敗では途中までの報告とエラーも出力します。書込停止の運用前提は標準エラーに出力します。テーブル作成・初期化・書込停止のflagはありません。
+
+[BigtableのCLI integration試験](../migration-cli/tests/bigtable_cli_test.rs)は、Bigtableエミュレーターに対して実バイナリを起動し、公開APIによる読み戻しと旧テーブルの不変を確認します。Googleの本番サービスには接続しません。Dockerが必要です。
+
+```sh
+cargo test -p event-store-adapter-migration-rs --test bigtable_cli_test
 ```

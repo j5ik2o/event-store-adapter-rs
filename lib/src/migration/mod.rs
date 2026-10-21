@@ -1,11 +1,16 @@
-//! v3既定配置だけを対象とする移行（DynamoDBは機能`migration`、SQLiteは機能`sqlite-migration`）。
-//! 旧書込の停止と新しい保存先の用意は運用者が行う。
+//! v3既定配置だけを対象とする移行（DynamoDBは機能`migration`、SQLiteは機能`sqlite-migration`、
+//! Bigtableは機能`bigtable-migration`）。旧書込の停止と新しい保存先の用意は運用者が行う。
 //!
 //! DynamoDBは全件検査の成功後に旧両表を再Scanする。検査拒否では設定以外を送信せず、旧表は変更しない。
 //! 書込中の失敗では部分移行が残るため、新3表を作り直してから再実行する。
 //! SQLiteは旧ファイルを読み取り専用で2回読み、新ファイルへは1つのトランザクションで書く。
 //! 拒否・失敗では新ファイルに何も残らないので、同じ新ファイルで再実行できる。
+//! Bigtableは旧2テーブルへReadRowsだけを送り、全件検査の成功後に旧journalを再読して新2テーブルへ書く。
+//! 検査拒否では新2テーブルに何も書かず、旧テーブルも変更しない。複数行にまたがるトランザクションはないので、
+//! 書込中の失敗では部分移行が残る。新2テーブルを作り直し、`initialize_bigtable_store`で初期化し直してから再実行する。
 
+#[cfg(feature = "bigtable-migration")]
+mod bigtable;
 #[cfg(feature = "migration")]
 mod inspect;
 #[cfg(feature = "migration")]
@@ -30,6 +35,8 @@ use serde::{Deserialize, Serialize};
 #[cfg(feature = "migration")]
 use crate::dynamodb::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
 
+#[cfg(feature = "bigtable-migration")]
+pub use self::bigtable::{migrate_v3_bigtable, LegacyBigtableTables};
 #[cfg(feature = "sqlite-migration")]
 pub use self::sqlite::migrate_v3_sqlite;
 

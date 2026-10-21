@@ -2,7 +2,7 @@
 
 公開`EventStoreForDynamoDB`が使う実配置を説明します。[user-accountの実例](../examples/user-account/src/main.rs)は[表作成helper](../test-utils/src/dynamodb.rs)でこの配置を作成します。表・Streams・TTLの設定は利用者の責務です。
 
-通常storeはこの新配置だけを読み取ります。v3の既定2表配置は明示的な[移行手順](MIGRATION_GUIDE_v5.ja.md)で扱います。SQLite・Bigtableの利用者は3系を継続してください。
+通常storeはこの新配置だけを読み取ります。v3の既定2表配置は明示的な[移行手順](MIGRATION_GUIDE_v5.ja.md)で扱います。他の保存先は、[SQLite schema](SQLITE_DATABASE_SCHEMA.ja.md)と[Bigtable schema](BIGTABLE_DATABASE_SCHEMA.ja.md)を参照してください。
 
 ## 3表とindex
 

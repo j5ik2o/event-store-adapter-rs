@@ -58,14 +58,14 @@ pub trait BigtableTokenSource: Send + Sync {
 
 /// 要求にメタデータを付ける。トークンは持たず、要求のたびに取得元を呼ぶ。
 #[derive(Clone, Default)]
-pub(super) struct Authorizer {
+pub(crate) struct Authorizer {
   token_source: Option<Arc<dyn BigtableTokenSource>>,
   #[cfg(feature = "test-hooks")]
   hooks: Option<Arc<dyn super::BigtableTestHooks>>,
 }
 
 impl Authorizer {
-  pub(super) fn new(token_source: Arc<dyn BigtableTokenSource>) -> Self {
+  pub(crate) fn new(token_source: Arc<dyn BigtableTokenSource>) -> Self {
     Self {
       token_source: Some(token_source),
       #[cfg(feature = "test-hooks")]
@@ -83,7 +83,7 @@ impl Authorizer {
   ///
   /// 取得元の失敗と、メタデータの値にできないトークンは、`operation` を持つ保存先エラーにする。
   /// 誤りの文言にトークンは含めない。
-  pub(super) async fn authorize<T>(
+  pub(crate) async fn authorize<T>(
     &self,
     message: T,
     operation: StorageOperation,

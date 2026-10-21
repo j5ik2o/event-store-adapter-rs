@@ -5,14 +5,22 @@ edition = "2021"
 publish = false
 
 [dependencies]
-event-store-adapter-rs = { path = "../lib", features = ["migration", "sqlite-migration"] }
+event-store-adapter-rs = { path = "../lib", features = ["migration", "sqlite-migration", "bigtable-migration"] }
 aws-config = { workspace = true, features = ["behavior-version-latest"] }
 aws-sdk-dynamodb = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+# Bigtable: 本番の Cloud Bigtable への TLS の接続（tonic の TLS の機能）と、Application Default Credentials の取得（gcp_auth）。
+# どちらもライブラリ本体には足さず、この道具だけが持つ。
+tonic = { workspace = true, features = ["channel", "tls-ring", "tls-native-roots"] }
+gcp_auth = { workspace = true }
+async-trait = { workspace = true }
 
 [dev-dependencies]
 rusqlite = { workspace = true, features = ["bundled"] }
+# lib/tests/bigtable_support/mod.rs を #[path] で共有するために要る。
+googleapis-tonic-google-bigtable-v2 = { workspace = true }
+chrono = { workspace = true }
 event-store-adapter-test-utils-rs = { path = "../test-utils" }
 event-store-adapter-conformance-rs = { path = "../conformance-runner", features = ["dynamodb"] }
 testcontainers = { workspace = true }

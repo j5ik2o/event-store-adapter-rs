@@ -271,7 +271,7 @@ async fn verify_column_families(
 // ---------------------------------------------------------------------------
 
 /// 列ファミリと設定行を照合した、開いたストアの接続を表す。
-pub(super) struct OpenedStore {
+pub(crate) struct OpenedStore {
   pub journal: TableTarget,
   pub head: TableTarget,
   pub store_id: String,
@@ -320,7 +320,7 @@ async fn read_configuration(
 ///
 /// テーブルも設定行も作らず、欠けた定義も補わない（BT-D1）。設定値の誤りと journal・head の同じテーブルの指定は、
 /// 通信の前に設定エラーにする。
-pub(super) async fn open_checked(
+pub(crate) async fn open_checked(
   connection: &BigtableConnection,
   tables: &BigtableTables,
   options: &BigtableOptions,
