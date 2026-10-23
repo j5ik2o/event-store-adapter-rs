@@ -17,7 +17,7 @@ use serde_json::{json, Value};
 use tracing::Instrument;
 
 use super::{
-  emulator, envelope,
+  emulator, envelope, hash,
   scene::{Scene, Store},
 };
 use crate::{
@@ -169,6 +169,9 @@ pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
   let body = &prepared.body;
   if matches!(case.kind, CaseKind::ValueTable) && envelope::is_envelope_operation(body) {
     return envelope::run(body);
+  }
+  if matches!(case.kind, CaseKind::ValueTable) && hash::is_hash_operation(body) {
+    return hash::run(body);
   }
   if !hook_faults::supports_all_bigtable(&prepared.faults) {
     return crate::case::unverified("宣言された障害の段階・種類・方式へ未接続");

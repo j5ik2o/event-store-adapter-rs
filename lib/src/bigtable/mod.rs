@@ -57,6 +57,9 @@ pub use envelope::{
   encode_event as encode_bigtable_event_envelope_for_test,
   encode_snapshot as encode_bigtable_snapshot_envelope_for_test, EventEnvelopeFields, SnapshotEnvelopeFields,
 };
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub use keys::fnv1a64 as fnv1a64_for_test;
 use serde::{de::DeserializeOwned, Serialize};
 use tonic::transport::Channel;
 

@@ -42,11 +42,15 @@ pub type CaseExecutor = fn(&Case, PreparedCase) -> CaseOutcome;
 /// この言語が提供する保存先。
 pub const PROVIDED_BACKENDS: [&str; 4] = ["memory", "dynamodb", "sqlite", "bigtable"];
 
+/// FNV-1a 64 の値の表の操作。ハッシュを使う保存先（この言語では Bigtable）だけが実行する（K-1）。
+const HASH_OPERATION: &str = "fnv1a64";
+
 /// 特定の保存先に属する値の表の操作と、その保存先。
-const VALUE_OPERATION_BACKENDS: [(&str, &str); 3] = [
+const VALUE_OPERATION_BACKENDS: [(&str, &str); 4] = [
   ("encodeBigtableEventEnvelope", "bigtable"),
   ("encodeBigtableSnapshotEnvelope", "bigtable"),
   ("decodeBigtableEnvelope", "bigtable"),
+  (HASH_OPERATION, "bigtable"),
 ];
 
 /// 実行器が解釈する `store` の設定。
@@ -146,10 +150,18 @@ fn targets_backend(case: &Case, target: &Target) -> bool {
 
 /// 実行する保存先が対象にしないケースの理由を選ぶ。
 ///
-/// ケースの対象の保存先が、実行する保存先も、この言語が提供する保存先も含まないときだけ「提供しない」にする。
-/// 実行する保存先が `backends` にあるのに対象でないのは、能力（`requires`）が足りないためなので、
+/// FNV-1a 64 の値の表は、ハッシュを使う保存先だけが実行するので、ほかの保存先では専用の理由にする。
+/// それ以外は、ケースの対象の保存先が、実行する保存先も、この言語が提供する保存先も含まないときだけ
+/// 「提供しない」にする。実行する保存先が `backends` にあるのに対象でないのは、能力（`requires`）が足りないためなので、
 /// 「提供しない」にしない。
 fn not_targeted_reason(case: &Case, target: &Target) -> NotApplicableReason {
+  if matches!(case.kind, CaseKind::ValueTable)
+    && case.body.get("operation").and_then(Value::as_str) == Some(HASH_OPERATION)
+  {
+    return NotApplicableReason::HashBackendOnly {
+      detail: "ハッシュを使う保存先（Bigtable）だけが実行する".to_string(),
+    };
+  }
   if let Some(backends) = declared_backends(case) {
     let provides_any = backends.iter().any(|backend| PROVIDED_BACKENDS.contains(backend));
     if !backends.is_empty() && !backends.contains(&target.name) && !provides_any {
@@ -176,9 +188,9 @@ fn requests_change_feed(body: &Value) -> bool {
 
 /// ケース 1 つを分類し、実装済みの保存先へ渡す。
 ///
-/// 判定の順は、保存先の対象（対象でなければ、提供しない保存先か今回の保存先でないかの理由）、
-/// 表現不能（`signed_seq_nr`、変更フィードを表せない保存先での `store.change_feed`）、精度の選択、FNV-1a 64 の決定、
-/// `coverage.json` の除外、実行器が知らない `store`・`seed` の要素、準備の失敗、実装していない条件の語、
+/// 判定の順は、保存先の対象（対象でなければ、ハッシュを使う保存先だけの値の表か、提供しない保存先か、
+/// 今回の保存先でないかの理由）、表現不能（`signed_seq_nr`、変更フィードを表せない保存先での `store.change_feed`）、
+/// 精度の選択、`coverage.json` の除外、実行器が知らない `store`・`seed` の要素、準備の失敗、実装していない条件の語、
 /// 値の表の `buildAid` の実行、渡された保存先実行関数への委譲、の順。
 /// 対象外のケースは、中身を解釈する前に分類するので、知らない要素があっても誤りにならない。
 pub fn run_case(
@@ -209,13 +221,6 @@ pub fn run_case(
     return not_applicable(NotApplicableReason::Representation {
       representation: RepresentationGap::TimePrecision,
       detail: "ナノ秒を表せる型を使うので、ミリ秒の精度を選ぶケースは実行しない".to_string(),
-    });
-  }
-  if matches!(case.kind, CaseKind::ValueTable)
-    && case.body.get("operation") == Some(&Value::String("fnv1a64".to_string()))
-  {
-    return not_applicable(NotApplicableReason::Fnv1a64Decision {
-      detail: "最初のメジャーにハッシュを使う保存先がない（オーナーの決定、2026-10-06）".to_string(),
     });
   }
   let all_rules_excluded = !case.rules.is_empty()

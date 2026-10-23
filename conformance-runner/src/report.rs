@@ -33,8 +33,8 @@ pub enum NotApplicableReason {
     representation: RepresentationGap,
     detail: String,
   },
-  /// 最初のメジャーにハッシュを使う保存先がない（オーナーの決定）。
-  Fnv1a64Decision { detail: String },
+  /// ハッシュを使う保存先だけが実行するケース（FNV-1a 64 の値の表、K-1）で、実行する保存先がハッシュを使わない。
+  HashBackendOnly { detail: String },
   /// `coverage.json` の規則の単位の除外。
   CoverageExclusion { detail: String },
 }
