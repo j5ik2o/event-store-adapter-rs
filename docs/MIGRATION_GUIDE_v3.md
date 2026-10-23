@@ -133,7 +133,7 @@ implement exactly this pattern.
   `Result<Self, EventStoreWriteError>` and rejects `Some(0)` uniformly across all
   backends (`None` disables retention; history rows are only written while it is
   `Some(n)`). Which history rows survive pruning differs per backend — see the
-  [retention asymmetry note](DYNAMODB_DATABASE_SCHEMA.md#snapshot-retention-asymmetry-across-backends).
+  [retention asymmetry note](https://github.com/j5ik2o/event-store-adapter-rs/blob/v3.0.6/docs/DATABASE_SCHEMA.md#snapshot-retention-across-backends).
 - Match the new `EventStoreWriteError::ContractViolation` variant where you
   exhaustively match write errors. It signals a caller-side contract break
   (`seq_nr == 0`, creation/update mismatch, `keep_snapshot_count == 0`), not a

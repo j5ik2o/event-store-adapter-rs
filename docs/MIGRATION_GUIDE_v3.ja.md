@@ -133,7 +133,7 @@ async fn find_by_id(store: &impl EventStore<AID = UserAccountId, A = UserAccount
 - `with_keep_snapshot_count` は `Result<Self, EventStoreWriteError>` を返すように
   なり、全バックエンド一律で `Some(0)` を拒否します（無効化は `None`。履歴行は
   `Some(n)` の間だけ書かれます）。剪定でどの履歴行が残るかはバックエンドごとに
-  異なります — [保持の非対称の注記](DYNAMODB_DATABASE_SCHEMA.ja.md#スナップショット保持のバックエンド間非対称)
+  異なります — [保持の非対称の注記](https://github.com/j5ik2o/event-store-adapter-rs/blob/v3.0.6/docs/DATABASE_SCHEMA.ja.md#バックエンド共通のスナップショット保持)
   を参照してください。
 - 書き込みエラーを網羅的に match している箇所には、新しい
   `EventStoreWriteError::ContractViolation` を追加してください。これはストレージ
