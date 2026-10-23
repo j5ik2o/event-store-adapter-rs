@@ -10,10 +10,10 @@
   - 移行: `src/migration/`（feature `migration`・`sqlite-migration`・`bigtable-migration` のどれかのときだけ公開）です。
 - `conformance/`: 共通契約と DynamoDB プロファイルの期待値を配る適合テストデータ（データの版は 1.3.0）です。`python3 tools/conformance/manifest.py verify` で整合を確かめます。
 - `conformance-runner/`: 適合テストデータを実行する実行器です。パッケージ名は `event-store-adapter-conformance-rs` で、公開しません。引数は `--backend memory|dynamodb --data <パス> --report <パス> [--require-all]` です。実際の DynamoDB に対して実行するには feature `dynamodb` が要ります。付けないと、DynamoDB のケースは未検証として報告されます。
-- `migration-cli/`: v3 から 5.x への移行の実行ファイルです。パッケージ名は `event-store-adapter-migration-rs` で、公開しません。移行関数 `migrate_v3_dynamodb`・`migrate_v3_sqlite`・`migrate_v3_bigtable` を呼ぶ薄い実行ファイルです。使い方は `docs/MIGRATION_GUIDE_v5.md` にあります。
+- `migration-cli/`: v3 から 5.x への移行の実行ファイルです。パッケージ名は `event-store-adapter-migration-rs` で、公開しません。移行関数 `migrate_v3_dynamodb`・`migrate_v3_sqlite`・`migrate_v3_bigtable` を呼ぶ薄い実行ファイルです。使い方は `docs/MIGRATION_GUIDE.md` にあります。
 - `test-utils/`: パッケージ名は `event-store-adapter-test-utils-rs` です。`docker::dynamodb_local()` が、digest で固定した DynamoDB Local 3.3.1 を testcontainers で起動します。`dynamodb::create_dynamodb_local_client` はダミーの region と資格情報を明示したクライアントを返し、`dynamodb::create_tables` が journal・snapshot・head の 3 テーブルを作ります。
 - `examples/user-account/`: パッケージ名は `example-user-account` です。DynamoDB Local を起動して event sourcing の使い方を end to end で確かめます。
-- `docs/`: `DATABASE_SCHEMA*.md`（DynamoDB のテーブル配置）、`MIGRATION_GUIDE_v3*.md`（v2 から v3、旧版向け）、`MIGRATION_GUIDE_v5*.md`（v3 から 5.x）、`design/next-major.md`（5.x の設計）があります。レビュー前に、変更に関わる文書を読んでください。
+- `docs/`: `DYNAMODB_DATABASE_SCHEMA*.md`（DynamoDB のテーブル配置）、`MIGRATION_GUIDE_v3*.md`（v2 から v3、旧版向け）、`MIGRATION_GUIDE.md`・`MIGRATION_GUIDE.ja.md`（v3 から 5.x）、`design/next-major.md`（5.x の設計）があります。レビュー前に、変更に関わる文書を読んでください。
 - `tools/`: `conformance/manifest.py`（適合テストデータの整合の確認）と、観測基盤のサンプル設定ファイルがあります。ビルドとテストでは使いません。
 
 ## ビルド・テスト・開発コマンド

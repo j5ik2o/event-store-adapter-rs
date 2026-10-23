@@ -1,6 +1,8 @@
+> この文書は [MIGRATION_GUIDE_v3.md](MIGRATION_GUIDE_v3.md) の日本語版です。英語版が正本で、食い違うときは英語版に従います。
+
 # 移行ガイド: v2 → v3（EventEnvelope API）
 
-> この文書は v2 から v3 への移行について書いた旧版向けのガイドです。v3 から 5.x への移行は [MIGRATION_GUIDE_v5.ja.md](MIGRATION_GUIDE_v5.ja.md) を参照してください。
+> この文書は v2 から v3 への移行について書いた旧版向けのガイドです。v3 から 5.x への移行は [MIGRATION_GUIDE.ja.md](MIGRATION_GUIDE.ja.md) を参照してください。
 
 v3 は `Event` / `Aggregate` トレイト契約を封筒ベースの API に置き換えます。
 ドメインイベントと集約状態はプレーンな serde 型（payload）になり、ストアが必要と
@@ -131,7 +133,7 @@ async fn find_by_id(store: &impl EventStore<AID = UserAccountId, A = UserAccount
 - `with_keep_snapshot_count` は `Result<Self, EventStoreWriteError>` を返すように
   なり、全バックエンド一律で `Some(0)` を拒否します（無効化は `None`。履歴行は
   `Some(n)` の間だけ書かれます）。剪定でどの履歴行が残るかはバックエンドごとに
-  異なります — [保持の非対称の注記](DATABASE_SCHEMA.ja.md#スナップショット保持のバックエンド間非対称)
+  異なります — [保持の非対称の注記](DYNAMODB_DATABASE_SCHEMA.ja.md#スナップショット保持のバックエンド間非対称)
   を参照してください。
 - 書き込みエラーを網羅的に match している箇所には、新しい
   `EventStoreWriteError::ContractViolation` を追加してください。これはストレージ
@@ -146,7 +148,7 @@ async fn find_by_id(store: &impl EventStore<AID = UserAccountId, A = UserAccount
 **v3 は v2 で書き込まれたデータを読み取らず、移行ツールや互換レイヤも提供しません。**
 物理レイアウトは全バックエンドで変更されています（journal の `manifest` 列、ナノ秒
 `occurred_at`、純化された payload、キーによる current/履歴判別 —
-[DATABASE_SCHEMA.ja.md](DATABASE_SCHEMA.ja.md) を参照）。既存の保存データの移行 —
+[DYNAMODB_DATABASE_SCHEMA.ja.md](DYNAMODB_DATABASE_SCHEMA.ja.md) を参照）。既存の保存データの移行 —
 たとえば v2 リーダーで v2 ストリームをリプレイし v3 で再永続化するなど — は
 アプリケーションの責務です。保持すべきデータがあるシステムでは、アップグレード前に
 新規ストリームでの再出発か一回限りの変換を計画してください。

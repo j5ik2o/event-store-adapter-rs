@@ -1,10 +1,14 @@
-# Bigtableの保存schema（5系）
+> この文書は [BIGTABLE_DATABASE_SCHEMA.md](BIGTABLE_DATABASE_SCHEMA.md) の日本語版です。英語版が正本で、食い違うときは英語版に従います。
 
-公開`EventStoreForBigtable`（feature `bigtable`）が使う実配置を説明します。ライブラリが設定の行を作るのは、明示的な`initialize_bigtable_store`（または`initialize_bigtable_store_with_token_source`）だけです。通常の`EventStoreForBigtable::open`は、テーブルも列ファミリも設定の行も作りません。テーブルと列ファミリは、常に利用者が作ります。
+# Bigtable の保存先のスキーマ
 
-通常storeはこの新配置だけを読み取ります。v3の既定Bigtable配置は明示的な[移行手順](MIGRATION_GUIDE_v5.ja.md)で扱います。この保存先の最初の版は、変更フィードを提供しません。
+公開`EventStoreForBigtable`（feature `bigtable`）が使う5系の実配置を説明します。ライブラリが設定の行を作るのは、明示的な`initialize_bigtable_store`（または`initialize_bigtable_store_with_token_source`）だけです。通常の`EventStoreForBigtable::open`は、テーブルも列ファミリも設定の行も作りません。テーブルと列ファミリは、常に利用者が作ります。
 
-## テーブルとキー
+通常storeはこの新配置だけを読み取ります。v3の既定Bigtable配置は明示的な[移行手順](MIGRATION_GUIDE.ja.md)で扱います。この保存先の最初の版は、変更フィードを提供しません。
+
+## 配置
+
+### テーブルとキー
 
 1つのBigtableインスタンスに、journalテーブルとheadテーブルの2つのテーブルを使います。2つは別のテーブルでなければならず、同じテーブルIDを両方に指定すると設定エラーです。
 
@@ -29,7 +33,7 @@ journalの行キー    = P(aid) || U64BE(seq_nr)
 - `aid`に含まれる`#`・NUL・非ASCIIの文字は、ただのバイトです。区切り文字としては解釈しません。
 - 設定の行のキー`0x00`は1バイトなので、データの行のキー（先頭に8バイトのハッシュと2バイトの長さが必ず付く）と一致することはありません。
 
-### 列ファミリとガベージコレクション
+#### 列ファミリとガベージコレクション
 
 最初の`initialize_bigtable_store`の前に、すべての列ファミリを作ってください。
 
@@ -44,21 +48,9 @@ journalの行キー    = P(aid) || U64BE(seq_nr)
 
 `open`は、各テーブルのschemaを`GetTable`で読み、列ファミリが欠けている場合と、データの列ファミリの規則が「最大1版を残す」だけではない場合を、設定エラー（`ConfigurationReason::BigtableColumnFamilyMismatch`）として拒否します。データの列ファミリに年齢による規則を設定しないでください。期限切れのセルがデータを失わせます。`config`の列ファミリにも年齢による規則を設定しないでください。設定の行はセルの時刻0で書くので、年齢による規則があるとすぐに期限切れになり、以後の`open`と初期化の確認が失敗します。正しさは、ガベージコレクションがいつ走るかに依存しません。読み取りは常に列ごとの最新の1セルだけを求め、書き込みはセルの時刻を0にして、置き換える列の古い版を削除するからです。
 
-## App profile・接続・認証
+## 設定
 
-稼働中のシステムの読み取り・書き込み・保持・設定の照合は、1つのクラスタに固定し、単一行トランザクションを許可するapp profileで行ってください。インスタンスに複製用のクラスタがある場合も、アダプタの操作先はその1つのクラスタにそろえます。そのクラスタの障害中は、storeは保存先エラーを返して復旧を待ちます。複数クラスタへの同時書き込み、マルチクラスタルーティング、自動フェイルオーバーはサポートしません。ライブラリはapp profileを照合しません。利用者がapp profileを作り、そのIDを`BigtableOptions::app_profile_id`に渡します。IDが空ならインスタンスの既定のapp profileを使います。これは、その既定のprofileが上の要件を既に満たしている場合だけ正しい設定です。
-
-接続は、`tonic::transport::Channel`を2つ持つ`BigtableConnection`です。
-
-| Channel | 用途 |
-|:--------|:-----|
-| `data` | `ReadRows`・`CheckAndMutateRow`などのデータの要求 |
-| `admin` | `GetTable`。列ファミリの照合のために、ストアを開くときだけ使う |
-
-- **エミュレーター**: 2つのフィールドの両方に、1つの平文のchannel（たとえば`Endpoint::from_static("http://localhost:8086")`）を入れ、`EventStoreForBigtable::open`・`open_with_serializers`・`initialize_bigtable_store`を呼びます。認証は付けません。
-- **本番のCloud Bigtable**: 利用者が自分の依存で`tonic`のTLSのfeatureを有効にして、2つのTLSのchannel（データは`https://bigtable.googleapis.com`、adminは`https://bigtableadmin.googleapis.com`）を作ります。`BigtableTokenSource`を実装して、`open_with_token_source`・`open_with_serializers_and_token_source`・`initialize_bigtable_store_with_token_source`に渡します。ストアは、データとadminのすべての要求の直前に取得元を呼び、`authorization: Bearer <トークン>`を付けます。トークンの保持と更新は取得元の責任です。取得元が失敗したとき、またはメタデータの値にできないトークンを返したときは、その要求を送らずに、その操作が`EventStoreError::Storage`になります。同じ要求のために取得元を呼び直すことはしません。ライブラリ自身は、TLSの実装にもGoogleの認証のライブラリにも依存しません。
-
-## 設定の行
+### 設定の行
 
 各テーブルは、行キー`0x00`の設定の行を1つ持ち、列`config:metadata`にUTF-8のJSONオブジェクトを保存します。値は2つのテーブルで同じです。
 
@@ -114,7 +106,9 @@ initialize_bigtable_store(&connection, &tables, &options).await?;
 3. 行がある側のテーブルから、残った行キー`0x00`の行を削除します（好きなBigtableのクライアントで、`DeleteFromRow`の変更を使った`MutateRow`を送ります）。
 4. 同じ設定で`initialize_bigtable_store`をもう一度呼びます。
 
-## Journalの行
+## 記録
+
+### Journalの行
 
 イベント1件が、journalテーブルの1行になります。行は`event:envelope`がないときだけ作り、上書きも削除もしません。
 
@@ -127,7 +121,7 @@ initialize_bigtable_store(&connection, &tables, &options).await?;
 
 履歴件数を設定していない場合は、`history`のセルを書きません。セルの時刻は0（固定値）です。これはBigtable自身の管理にだけ使い、`occurred_at`をセルの時刻から求めることはありません。
 
-## Headの行
+### Headの行
 
 headテーブルは、集約ごとに小さな1行を持ちます。全イベントや`n`件の履歴snapshotは置かないので、履歴件数が増えてもheadの行は育ちません。
 
@@ -140,7 +134,7 @@ headテーブルは、集約ごとに小さな1行を持ちます。全イベン
 
 `head:has_snapshot`が`1`のとき、`snapshot:current`のシーケンス番号は`head:seq_nr`と等しくなります。イベントだけの追記は、既存の`snapshot:current`を残したまま、`head:has_snapshot`を`0`にします。snapshotの番号がheadの番号を超えることはありません。
 
-## 封筒
+### 封筒
 
 ライブラリは、封筒を次の固定のバイナリ形式で組み立てます。`U16`・`U32`・`U64`はビッグエンディアン、`I64`はビッグエンディアンの符号付き64ビットの2の補数です。先頭の`0x01`は形式の版番号です。serializerが受け取るのはpayloadだけです。
 
@@ -155,11 +149,11 @@ snapshot = 0x01 || U64(seq_nr)
 
 長さはバイト数です。読むときに、使われていない末尾・長さの不一致・未知の形式の版があれば、保存先エラーです。正しい封筒のpayloadを復元できない場合は、直列化エラーです。発生時刻はナノ秒で封筒に持ち、Bigtableのセルの時刻（マイクロ秒の精度）には持ちません。
 
-### 封筒の大きさの上限
+#### 封筒の大きさの上限
 
 `BigtableOptions::envelope_limit_bytes`は、メタデータを含む直列化後の1封筒の上限です。既定は1MiB（1,048,576バイト）、最大は8MiB（8,388,608バイト）、最小は17バイト（最小のsnapshot封筒）です。値は2つの設定の行に保存され、すべてのクライアントが同じ値を使う必要があります。上限を超える入力は、書き込みの前に、シーケンス番号を含む契約違反（`ContractRule::EnvelopeSizeLimit`、規則BT-16）として拒否します。上限を変える場合は、全クライアントを止め、2つの設定の行を同じ新しい値に更新してから、全クライアントを開き直して照合します。
 
-## 書込と読取
+## 書き込みと読み取り
 
 入力の検査と直列化は、要求を送る前に終えます。その後の`persist_event`と`persist_event_and_snapshot`は、次の手順で動きます。
 
@@ -201,3 +195,19 @@ snapshotを伴う追記が確定した後、storeはheadの位置`h`を固定し
 4. 全集約が済んだら、両方のテーブルの設定の行の`keep_snapshot_count`を変更先の値に更新します。全クライアントを新しいオプションで開き直して設定を照合してから、処理を再開します。
 
 途中で失敗したら、クライアントを止めたまま、同じ変更先で再実行します。済んだ書き出しや退役を繰り返しても、履歴は戻りません。2つの設定の行の片方だけを更新した場合は、両方が一致するまで再開しません。削除した履歴は戻せないので、storeの全体を元に戻すことは前提にしません。件数を増やす場合や、なしから件数を設定する場合も、削除済み・未保持の過去の履歴は補いません。新しい設定は、次のsnapshot書込から適用されます。
+
+## 運用
+
+### App profile・接続・認証
+
+稼働中のシステムの読み取り・書き込み・保持・設定の照合は、1つのクラスタに固定し、単一行トランザクションを許可するapp profileで行ってください。インスタンスに複製用のクラスタがある場合も、アダプタの操作先はその1つのクラスタにそろえます。そのクラスタの障害中は、storeは保存先エラーを返して復旧を待ちます。複数クラスタへの同時書き込み、マルチクラスタルーティング、自動フェイルオーバーはサポートしません。ライブラリはapp profileを照合しません。利用者がapp profileを作り、そのIDを`BigtableOptions::app_profile_id`に渡します。IDが空ならインスタンスの既定のapp profileを使います。これは、その既定のprofileが上の要件を既に満たしている場合だけ正しい設定です。
+
+接続は、`tonic::transport::Channel`を2つ持つ`BigtableConnection`です。
+
+| Channel | 用途 |
+|:--------|:-----|
+| `data` | `ReadRows`・`CheckAndMutateRow`などのデータの要求 |
+| `admin` | `GetTable`。列ファミリの照合のために、ストアを開くときだけ使う |
+
+- **エミュレーター**: 2つのフィールドの両方に、1つの平文のchannel（たとえば`Endpoint::from_static("http://localhost:8086")`）を入れ、`EventStoreForBigtable::open`・`open_with_serializers`・`initialize_bigtable_store`を呼びます。認証は付けません。
+- **本番のCloud Bigtable**: 利用者が自分の依存で`tonic`のTLSのfeatureを有効にして、2つのTLSのchannel（データは`https://bigtable.googleapis.com`、adminは`https://bigtableadmin.googleapis.com`）を作ります。`BigtableTokenSource`を実装して、`open_with_token_source`・`open_with_serializers_and_token_source`・`initialize_bigtable_store_with_token_source`に渡します。ストアは、データとadminのすべての要求の直前に取得元を呼び、`authorization: Bearer <トークン>`を付けます。トークンの保持と更新は取得元の責任です。取得元が失敗したとき、またはメタデータの値にできないトークンを返したときは、その要求を送らずに、その操作が`EventStoreError::Storage`になります。同じ要求のために取得元を呼び直すことはしません。ライブラリ自身は、TLSの実装にもGoogleの認証のライブラリにも依存しません。

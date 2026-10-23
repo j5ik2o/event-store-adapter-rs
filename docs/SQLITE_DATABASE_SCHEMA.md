@@ -1,10 +1,12 @@
-# SQLite storage schema (5.x)
+# SQLite storage schema
 
-This document describes the layout used by the public `EventStoreForSqlite` (feature `sqlite`). The library creates this layout only through the explicit `initialize_sqlite_store`; the regular `EventStoreForSqlite::open` never creates tables or configuration. The manual procedure below produces the same layout for callers that prefer to prepare the file themselves.
+This document describes the 5.x layout used by the public `EventStoreForSqlite` (feature `sqlite`). The library creates this layout only through the explicit `initialize_sqlite_store`; the regular `EventStoreForSqlite::open` never creates tables or configuration. The manual procedure below produces the same layout for callers that prefer to prepare the file themselves.
 
-The regular store reads only this layout. For v3's default SQLite layout, use the explicit [migration procedure](MIGRATION_GUIDE_v5.md). The first release of this storage does not provide a change feed.
+The regular store reads only this layout. For v3's default SQLite layout, use the explicit [migration procedure](MIGRATION_GUIDE.md). The first release of this storage does not provide a change feed.
 
-## Tables and keys
+## Layout
+
+### Tables and keys
 
 Everything lives in one local SQLite database file. There are no logical shards or key prefixes: `aid` is compared for exact equality and `seq_nr` as an integer. Every table is `STRICT`, and every `aid` column uses `COLLATE BINARY`.
 
@@ -20,7 +22,9 @@ Key and envelope columns are `NOT NULL`. `seq_nr` carries `CHECK (seq_nr BETWEEN
 
 `aid` is the UTF-8 string `type_name-value`, assembled from `AggregateId`. The type name cannot contain a hyphen; the value may. The complete string is limited to 1024 bytes. An empty type name or value is allowed.
 
-## Connection settings and configuration
+## Configuration
+
+### Connection settings and configuration
 
 Every connection the store uses is checked and configured as follows. A value that differs from the requirement is a configuration error; the store never continues with another value.
 
@@ -115,9 +119,9 @@ VALUES (1, '5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11', 1, NULL, 'delete', 0);
 COMMIT;
 ```
 
-Back the database up with SQLite's backup mechanisms. Do not copy only the main file while the database runs in WAL mode.
+## Records
 
-## Journal rows
+### Journal rows
 
 One event envelope becomes one row.
 
@@ -129,7 +133,7 @@ One event envelope becomes one row.
 | `manifest` | TEXT | Envelope manifest; empty when omitted |
 | `payload` | BLOB | Serializer output for the event payload only |
 
-## Head rows
+### Head rows
 
 | Column | Type | Meaning |
 |:-------|:-----|:--------|
@@ -142,7 +146,7 @@ One event envelope becomes one row.
 
 The head is created by sequence 1 and updated on every append, including appends without a snapshot. Its event columns hold the most recently appended envelope.
 
-## Snapshot rows
+### Snapshot rows
 
 | Table | Column | Type | Meaning |
 |:------|:-------|:-----|:--------|
@@ -190,3 +194,7 @@ Changing `keep_snapshot_count` is an offline administration procedure; the store
 3. When every aggregate is done, run a separate `BEGIN IMMEDIATE`, update `config.keep_snapshot_count`, and `COMMIT`. Reopen every client with the new options so they verify the configuration, then resume work.
 
 If a step fails, keep the clients stopped and rerun with the same target. Deleted history cannot be restored. Raising the count, or setting a count where there was none, does not recreate history that was deleted or never kept; the new setting applies from the next snapshot write.
+
+## Operations
+
+Back the database up with SQLite's backup mechanisms. Do not copy only the main file while the database runs in WAL mode.

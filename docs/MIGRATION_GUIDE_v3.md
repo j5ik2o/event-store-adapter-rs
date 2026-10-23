@@ -1,6 +1,6 @@
 # Migration Guide: v2 → v3 (the EventEnvelope API)
 
-> This guide is for the older v2 → v3 migration. For migrating from v3 to 5.x, see [MIGRATION_GUIDE_v5.md](MIGRATION_GUIDE_v5.md).
+> This guide is for the older v2 → v3 migration. For migrating from v3 to 5.x, see [MIGRATION_GUIDE.md](MIGRATION_GUIDE.md).
 
 v3 replaces the `Event` / `Aggregate` trait contract with an envelope-based API.
 Domain events and aggregate state become plain serde types (payloads), and the
@@ -133,7 +133,7 @@ implement exactly this pattern.
   `Result<Self, EventStoreWriteError>` and rejects `Some(0)` uniformly across all
   backends (`None` disables retention; history rows are only written while it is
   `Some(n)`). Which history rows survive pruning differs per backend — see the
-  [retention asymmetry note](DATABASE_SCHEMA.md#snapshot-retention-asymmetry-across-backends).
+  [retention asymmetry note](DYNAMODB_DATABASE_SCHEMA.md#snapshot-retention-asymmetry-across-backends).
 - Match the new `EventStoreWriteError::ContractViolation` variant where you
   exhaustively match write errors. It signals a caller-side contract break
   (`seq_nr == 0`, creation/update mismatch, `keep_snapshot_count == 0`), not a
@@ -147,7 +147,7 @@ implement exactly this pattern.
 **v3 does not read data written by v2, and no migration tooling or compatibility
 layer is provided.** The physical layout changed in all backends (journal
 `manifest` column, nanosecond `occurred_at`, pure payloads, key-based
-current/history discrimination — see [DATABASE_SCHEMA.md](DATABASE_SCHEMA.md)).
+current/history discrimination — see [DYNAMODB_DATABASE_SCHEMA.md](DYNAMODB_DATABASE_SCHEMA.md)).
 Migrating existing stored data — for example by replaying v2 streams through a
 v2 reader and re-persisting them through v3 — is the responsibility of the
 application. Plan for new streams or a one-off conversion before upgrading a
