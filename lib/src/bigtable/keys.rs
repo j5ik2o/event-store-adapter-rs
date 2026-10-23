@@ -12,7 +12,7 @@ use crate::seq_nr::SeqNr;
 pub(crate) const CONFIG_ROW_KEY: &[u8] = &[0x00];
 
 /// FNV-1a 64（hash.md の K-1）。
-pub(super) fn fnv1a64(input: &[u8]) -> u64 {
+pub fn fnv1a64(input: &[u8]) -> u64 {
   let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
   for byte in input {
     hash ^= u64::from(*byte);

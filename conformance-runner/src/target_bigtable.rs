@@ -1,6 +1,7 @@
 //! Bigtable の公開生成と実操作を、エミュレーターの場面ごとの journal・head のテーブルで実行する。
 //!
-//! 封筒の値の表（符号化と復元）はエミュレーターを使わず、ライブラリの `test-hooks` の経路で実行する。
+//! 封筒の値の表（符号化と復元）と FNV-1a 64 の値の表（行キーの接頭辞のハッシュ）はエミュレーターを使わず、
+//! ライブラリの `test-hooks` の経路で実行する。
 //! 機能 `bigtable` がなければ、実保存先の場面を実行できないので、理由付きの未検証にする。
 
 #[cfg(feature = "bigtable")]
@@ -9,6 +10,8 @@ mod emulator;
 mod envelope;
 #[cfg(feature = "bigtable")]
 mod execute;
+#[cfg(feature = "bigtable")]
+mod hash;
 #[cfg(feature = "bigtable")]
 mod scene;
 

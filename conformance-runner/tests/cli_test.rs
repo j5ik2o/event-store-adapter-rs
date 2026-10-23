@@ -185,7 +185,7 @@ fn should_cli_gives_every_not_applicable_and_unverified_case_a_reason_of_a_known
             "backend-not-targeted",
             "backend-not-provided",
             "representation",
-            "fnv1a64-decision",
+            "hash-backend-only",
             "coverage-exclusion"
           ]
           .contains(&kind),
@@ -468,6 +468,26 @@ const BIGTABLE_ONLY_CASES: [&str; 12] = [
   "bigtable-cas-response-lost",
 ];
 
+/// FNV-1a 64 の値の表（K-1）。ハッシュを使う保存先（Bigtable）だけが実行する。
+const FNV1A64_CASES: [&str; 4] = ["hash-fnv1a64-1", "hash-fnv1a64-2", "hash-fnv1a64-3", "hash-fnv1a64-4"];
+
+#[test]
+fn should_cli_reports_fnv1a64_cases_as_hash_backend_only_on_the_memory_leg() {
+  let execution = execute_on_real_data("cli-memory-hash-backend-only", &["--backend", "memory"]);
+
+  let report = execution.report();
+  for id in FNV1A64_CASES {
+    let case = case_of(&report, id);
+    assert_eq!(case["status"], "not-applicable", "{id}: {case}");
+    assert_eq!(case["reason"]["kind"], "hash-backend-only", "{id}: {case}");
+    assert_eq!(
+      case["reason"]["detail"], "ハッシュを使う保存先（Bigtable）だけが実行する",
+      "{id}: {case}"
+    );
+  }
+  assert_eq!(rule_counts(&report, "K-1"), (0, 0, 4, 0));
+}
+
 #[test]
 fn should_cli_with_require_all_runs_the_bigtable_cases() {
   let execution = execute_on_real_data("cli-require-all-bigtable", &["--backend", "bigtable", "--require-all"]);
@@ -482,15 +502,27 @@ fn should_cli_with_require_all_runs_the_bigtable_cases() {
   );
   assert_eq!(
     count_status(&report, "passed"),
-    if cfg!(feature = "bigtable") { 81 } else { 9 }
+    if cfg!(feature = "bigtable") { 85 } else { 9 }
   );
   assert_eq!(count_status(&report, "failed"), 0);
-  assert_eq!(count_status(&report, "not-applicable"), 88);
+  assert_eq!(count_status(&report, "not-applicable"), 84);
   assert_eq!(
     count_status(&report, "unverified"),
-    if cfg!(feature = "bigtable") { 0 } else { 72 }
+    if cfg!(feature = "bigtable") { 0 } else { 76 }
   );
   assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  // FNV-1a 64 の値の表は、feature があれば行キーと同じ関数で実行して成功し、なければ未検証と報告される。
+  for id in FNV1A64_CASES {
+    assert_eq!(
+      case_of(&report, id)["status"],
+      if cfg!(feature = "bigtable") {
+        "passed"
+      } else {
+        "unverified"
+      },
+      "{id}"
+    );
+  }
   // Bigtable の場面は、feature があれば実エミュレーターで成功し、なければ未検証と報告される。
   for id in BIGTABLE_ONLY_CASES {
     assert_eq!(
@@ -520,6 +552,7 @@ fn should_cli_with_require_all_runs_the_bigtable_cases() {
     assert_eq!(rule_counts(&report, "BT-16"), (6, 0, 0, 0));
     assert_eq!(rule_counts(&report, "BT-17"), (1, 0, 0, 0));
     assert_eq!(rule_counts(&report, "BT-D6a"), (10, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "K-1"), (4, 0, 0, 0));
   }
 }
 

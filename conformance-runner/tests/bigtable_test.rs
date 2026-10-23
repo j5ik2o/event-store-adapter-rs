@@ -40,6 +40,9 @@ const ENVELOPE_VALUE_CASES: [&str; 10] = [
   "bigtable-envelope-event-unknown-version",
 ];
 
+/// 行キーの接頭辞のハッシュ（FNV-1a 64）を確かめる値の表のケース。
+const FNV1A64_CASES: [&str; 4] = ["hash-fnv1a64-1", "hash-fnv1a64-2", "hash-fnv1a64-3", "hash-fnv1a64-4"];
+
 /// ナノ秒の時刻型と符号なしの seq_nr では表せないので、理由付きの対象外になる場面。
 const UNREPRESENTABLE_CASES: [&str; 5] = [
   "core-time-millisecond-below-min",
@@ -160,9 +163,10 @@ fn should_run_reports_every_bigtable_targeted_case_as_passed() {
 
   let reports = run_bigtable(&data);
 
-  // (passed, failed, not-applicable, unverified)。成功 81 は、Bigtable が対象の場面 50 と値の表 31
-  // （封筒の 10 件と、全ての保存先で実行する値の表 21）。対象外 88 の内訳は、runner_test の分類の試験が持つ。
-  assert_eq!(counts(&reports), (81, 0, 88, 0));
+  // (passed, failed, not-applicable, unverified)。成功 85 は、Bigtable が対象の場面 50 と値の表 35
+  // （封筒の 10 件と、FNV-1a 64 の 4 件と、全ての保存先で実行する値の表 21）。対象外 84 の内訳は、runner_test の
+  // 分類の試験が持つ。
+  assert_eq!(counts(&reports), (85, 0, 84, 0));
   let mut targeted = 0;
   for case in data.cases.iter().filter(|case| targets_bigtable(case)) {
     targeted += 1;
@@ -210,6 +214,47 @@ fn should_run_bigtable_report_the_bt_rules_as_passed_without_failures() {
   assert_eq!(rule_counts(&json, "BT-16"), (6, 0, 0, 0));
   assert_eq!(rule_counts(&json, "BT-17"), (1, 0, 0, 0));
   assert_eq!(rule_counts(&json, "BT-D6a"), (10, 0, 0, 0));
+  assert_eq!(rule_counts(&json, "K-1"), (4, 0, 0, 0));
+}
+
+#[test]
+fn should_run_bigtable_pass_the_fnv1a64_cases_with_the_hash_the_row_keys_use() {
+  let data = real_data();
+
+  for id in FNV1A64_CASES {
+    let case = case_of(&data, id);
+    assert_eq!(case.body["operation"], "fnv1a64", "{id}");
+
+    let outcome = execute(&data, case);
+
+    match outcome {
+      CaseOutcome::Passed { values: Some(values) } => {
+        assert_eq!(values.expected, case.body["expect"], "{id}");
+        assert_eq!(
+          values.actual, case.body["expect"],
+          "{id}: 実際の値を期待値と同じ表記で報告する"
+        );
+      }
+      other => panic!("{id}: 成功のはずが {other:?}"),
+    }
+  }
+}
+
+#[test]
+fn should_run_bigtable_fail_an_fnv1a64_case_whose_expected_value_differs_from_the_row_key_hash() {
+  let data = real_data();
+
+  for id in FNV1A64_CASES {
+    let mut altered = copy_of(case_of(&data, id));
+    altered.body["expect"]["value"] = json!("0x0000000000000000");
+
+    let outcome = execute(&data, &altered);
+
+    assert!(
+      is_failed_with_detail(&outcome),
+      "{id}: 期待値と違う値を成功にしない: {outcome:?}"
+    );
+  }
 }
 
 #[test]

@@ -259,7 +259,7 @@ fn kind_name(reason: &NotApplicableReason) -> &'static str {
     NotApplicableReason::BackendNotTargeted { .. } => "backend-not-targeted",
     NotApplicableReason::BackendNotProvided { .. } => "backend-not-provided",
     NotApplicableReason::Representation { .. } => "representation",
-    NotApplicableReason::Fnv1a64Decision { .. } => "fnv1a64-decision",
+    NotApplicableReason::HashBackendOnly { .. } => "hash-backend-only",
     NotApplicableReason::CoverageExclusion { .. } => "coverage-exclusion",
   }
 }
@@ -277,8 +277,8 @@ fn should_report_case_entry_of_not_applicable_case_carries_one_of_the_five_reaso
       representation: RepresentationGap::Unrepresentable,
       detail: "SeqNr は u64。負数を表せない".to_string(),
     },
-    NotApplicableReason::Fnv1a64Decision {
-      detail: "最初のメジャーにハッシュを使う保存先がない".to_string(),
+    NotApplicableReason::HashBackendOnly {
+      detail: "ハッシュを使う保存先（Bigtable）だけが実行する".to_string(),
     },
     NotApplicableReason::CoverageExclusion {
       detail: "deleted: 削除済み".to_string(),

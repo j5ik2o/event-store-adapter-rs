@@ -74,12 +74,13 @@ fn is_representation(outcome: &CaseOutcome, expected: RepresentationGap) -> bool
   )
 }
 
-fn is_fnv1a64_decision(outcome: &CaseOutcome) -> bool {
+/// ハッシュを使う保存先だけが実行する、と報告された対象外なら真。理由の文言も確かめる。
+fn is_hash_backend_only(outcome: &CaseOutcome) -> bool {
   matches!(
     outcome,
     CaseOutcome::NotApplicable {
-      reason: NotApplicableReason::Fnv1a64Decision { .. }
-    }
+      reason: NotApplicableReason::HashBackendOnly { detail }
+    } if detail == "ハッシュを使う保存先（Bigtable）だけが実行する"
   )
 }
 
@@ -267,7 +268,7 @@ fn should_run_case_preserves_classification_order_without_calling_the_executor()
   body["representation"].as_object_mut().unwrap().remove("signed_seq_nr");
   let mut precision = scenario(&["W-5"], body.clone());
   precision.kind = CaseKind::ValueTable;
-  precision.body["operation"] = json!("fnv1a64");
+  precision.body["operation"] = json!("validateOccurredAt");
   let mut fnv = scenario(&["W-5"], body.clone());
   fnv.kind = CaseKind::ValueTable;
   fnv.body["operation"] = json!("fnv1a64");
@@ -298,7 +299,7 @@ fn should_run_case_preserves_classification_order_without_calling_the_executor()
       Some("representation"),
       Some("time-precision"),
     ),
-    (fnv, "not-applicable", Some("fnv1a64-decision"), None),
+    (fnv, "not-applicable", Some("hash-backend-only"), None),
     (excluded, "not-applicable", Some("coverage-exclusion"), None),
     (invalid, "failed", None, None),
     (constraints, "unverified", Some("unimplemented-constraint-words"), None),
@@ -703,9 +704,7 @@ const TARGETS: [(&Target, CaseExecutor); 2] = [
   (&target_dynamodb::TARGET, classification_executor),
 ];
 
-#[test]
-fn should_run_marks_fnv1a64_cases_as_fnv1a64_decision_on_every_backend() {
-  let data = real_data();
+fn fnv1a64_ids(data: &DataSet) -> Vec<&str> {
   let ids: Vec<&str> = data
     .cases
     .iter()
@@ -713,13 +712,52 @@ fn should_run_marks_fnv1a64_cases_as_fnv1a64_decision_on_every_backend() {
     .map(|case| case.id.as_str())
     .collect();
   assert_eq!(ids.len(), 4);
+  ids
+}
 
-  for (target, execute) in TARGETS {
-    let reports = run(&data, target, execute);
+#[test]
+fn should_run_marks_fnv1a64_cases_as_hash_backend_only_on_every_backend_that_does_not_use_the_hash() {
+  let data = real_data();
+  let ids = fnv1a64_ids(&data);
+
+  for target in [&target_memory::TARGET, &target_dynamodb::TARGET, &target_sqlite::TARGET] {
+    let reports = run(&data, target, |case, prepared| {
+      assert!(
+        ids.iter().all(|id| *id != case.id),
+        "{}: ハッシュを使わない保存先の実行関数へ FNV-1a 64 の値の表を渡さない: {}",
+        target.name,
+        case.id
+      );
+      classification_executor(case, prepared)
+    });
     for id in &ids {
       let outcome = outcome_of(&reports, id);
-      assert!(is_fnv1a64_decision(outcome), "{} {id}: {outcome:?}", target.name);
+      assert!(is_hash_backend_only(outcome), "{} {id}: {outcome:?}", target.name);
     }
+  }
+}
+
+#[test]
+fn should_run_hands_fnv1a64_cases_to_the_executor_only_on_the_bigtable_leg() {
+  let data = real_data();
+  let ids = fnv1a64_ids(&data);
+  let called: RefCell<Vec<String>> = RefCell::new(Vec::new());
+
+  let reports = run(&data, &target_bigtable::TARGET, |case, _| {
+    called.borrow_mut().push(case.id.clone());
+    CaseOutcome::Passed { values: None }
+  });
+
+  for id in &ids {
+    assert!(
+      matches!(outcome_of(&reports, id), CaseOutcome::Passed { values: None }),
+      "{id}: {:?}",
+      outcome_of(&reports, id)
+    );
+    assert!(
+      called.borrow().iter().any(|called| called == id),
+      "{id} を実行関数へ渡す"
+    );
   }
 }
 
@@ -904,10 +942,11 @@ fn should_run_classifies_the_bigtable_leg_without_running_a_store() {
 
   let reports = run(&data, &target_bigtable::TARGET, classification_executor);
 
-  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 72 は、Bigtable が対象で
-  // 保存先の実行に回る場面と値の表。対象外 88 のうち、この言語が提供しない保存先（Spanner）の場面 14 件は「提供しない」、
-  // ほかの保存先だけが対象の場面と配置の 60 件は「今回の保存先でない」。
-  assert_eq!(counts(&reports), (9, 0, 88, 72));
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 76 は、Bigtable が対象で
+  // 保存先の実行に回る場面と値の表（FNV-1a 64 の 4 件を含む）。対象外 84 のうち、この言語が提供しない保存先（Spanner）の
+  // 場面 14 件は「提供しない」、ほかの保存先だけが対象の場面と配置の 60 件は「今回の保存先でない」、
+  // 残りの 10 件は表現能力の違い（負の SeqNr 2 件とミリ秒精度 8 件）。
+  assert_eq!(counts(&reports), (9, 0, 84, 76));
   let not_provided: Vec<&str> = reports
     .iter()
     .filter(|report| is_backend_not_provided(&report.outcome))
@@ -1447,15 +1486,15 @@ fn should_run_does_not_mark_fnv1a64_or_build_aid_value_tables_as_not_provided() 
 
   for (target, _) in TARGETS {
     let fnv1a64_outcome = run_case(fnv1a64, target, &data.coverage, |_, _| {
-      panic!("FNV-1a 64 の決定は共通処理で止まる")
+      panic!("ハッシュを使わない保存先の FNV-1a 64 の値の表は共通処理で止まる")
     });
     let build_aid_outcome = run_case(build_aid, target, &data.coverage, |_, _| {
       panic!("buildAid は共通処理で実行する")
     });
 
     assert!(
-      is_fnv1a64_decision(&fnv1a64_outcome),
-      "{}: {fnv1a64_outcome:?}",
+      is_hash_backend_only(&fnv1a64_outcome),
+      "提供しないのではなく、ハッシュを使う保存先だけが実行する: {}: {fnv1a64_outcome:?}",
       target.name
     );
     assert!(
