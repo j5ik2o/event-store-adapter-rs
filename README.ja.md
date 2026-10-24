@@ -1,3 +1,5 @@
+> この文書は [README.md](README.md) の日本語版です。英語版が正本で、食い違うときは英語版に従います。
+
 # event-store-adapter-rs
 
 [![Workflow Status](https://github.com/j5ik2o/event-store-adapter-rs/workflows/ci/badge.svg)](https://github.com/j5ik2o/event-store-adapter-rs/actions?query=workflow%3A%22ci%22)
@@ -8,15 +10,23 @@
 [![tokei](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-rs)](https://github.com/XAMPPRocky/tokei)
 
 
+## 概要
+
 このライブラリは、CQRS/Event Sourcing用のMemory・DynamoDB・SQLite・Bigtableイベントストアを提供します。
 
 このクレートは[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)に従います。メジャーの番号 5 は、共通契約の版と同じです。
 
 > 5.0.0は、新しいAPIの最初の版です。v3 DynamoDB・SQLite・Bigtableの旧データは明示的なmigration関数またはCLIだけで支援します。
 
-[English](./README.md)
+公開APIはcrate直下からexportされ、`next` namespaceや旧APIの別名はありません。
 
-## バックエンドとfeature
+### リンク
+
+- [共通ドキュメント](https://github.com/j5ik2o/event-store-adapter)
+- [CQRS/Event Sourcingサンプル](https://github.com/j5ik2o/cqrs-es-example-rs)
+- [English](./README.md)
+
+## インストール
 
 | Feature | 利用できるもの |
 |:--------|:-------------|
@@ -28,11 +38,9 @@
 | `sqlite-migration` | `migrate_v3_sqlite`。`sqlite`も有効になり、AWS・Bigtableのcrateは入らない |
 | `bigtable-migration` | `migrate_v3_bigtable`、`LegacyBigtableTables`。`bigtable`も有効になり、AWS・SQLiteのcrateは入らない |
 
-デフォルトfeatureは空です。`sqlite-system`は削除しました。公開APIはcrate直下からexportされ、`next` namespaceや旧APIの別名はありません。
+デフォルトfeatureは空です。`sqlite-system`は削除しました。
 
-## Memoryの使用例
-
-メモリの保存先は単一プロセスのメモリだけを使います。ファイルへの保存、再起動後の回復、プロセス間の共有はしません。
+## はじめに
 
 アプリケーションの依存を次のように設定してください。
 
@@ -100,7 +108,15 @@ async fn main() -> Result<(), EventStoreError> {
 
 `SeqNr`は`u64`で、範囲は`0..=SEQ_NR_MAX`（`2^53 - 1`）です。最初の書込は1、以降は連続した番号を使います。読取は下限を含み、0で先頭から読み取ります。`expected_version`引数とsnapshotの`version`はありません。`SnapshotEnvelope::seq_nr()`はsnapshotの反映番号、`SnapshotRead::head_seq_nr()`はイベントのheadを表します。イベントだけがある場合は`Some(SnapshotRead)`の`snapshot() == None`となり、作成イベントから再生します。
 
-## DynamoDBの使用例
+## 保存先
+
+### メモリ
+
+メモリの保存先は単一プロセスのメモリだけを使います。ファイルへの保存、再起動後の回復、プロセス間の共有はしません。
+
+完全な例は[はじめに](#はじめに)を参照してください。
+
+### DynamoDB
 
 `features = ["dynamodb"]`を指定します。互いに異なる3表とsnapshot履歴GSIを事前作成し、非同期の`EventStoreForDynamoDB::open(client, tables, options)`を呼びます。表作成はライブラリの責務外です。`DynamoDbTables`は3表とGSIの名前、`DynamoDbOptions`は保持と有限の再要求設定を指定します。
 
@@ -120,9 +136,9 @@ SDK Clientにはretry sleeperが必要です。実行可能な[user-account例](
 cargo +1.99.0 run -p example-user-account
 ```
 
-Dockerが必要です。キー・設定項目・transaction・保持の詳細は[DynamoDB schema](docs/DATABASE_SCHEMA.ja.md)を参照してください。
+Dockerが必要です。キー・設定項目・transaction・保持の詳細は[DynamoDB schema](docs/DYNAMODB_DATABASE_SCHEMA.ja.md)を参照してください。
 
-## SQLiteの使用例
+### SQLite
 
 `features = ["sqlite"]`を指定します。保存先は、使うホストのローカルファイルシステムに置く1つのSQLiteデータベースファイルで、WALと`synchronous=FULL`で動かします。SQLite 3.51.3以上が必要で、同梱のSQLiteはこれを満たします。初期化と「開く」は、別々の明示的な操作です。
 
@@ -187,7 +203,7 @@ async fn main() -> Result<(), EventStoreError> {
 
 storeのインスタンスとそのcloneは、1つの接続を共有します。表・接続の設定・手作業での初期化・transaction・保持の詳細は[SQLite schema](docs/SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。v3のSQLiteファイルからデータを移す場合は、[移行](#移行)を参照してください。
 
-## Bigtableの使用例
+### Bigtable
 
 `features = ["bigtable"]`を指定します。保存先は、Cloud Bigtable（またはBigtableエミュレーター）にgRPCでつなぐ、`journal`と`head`の2つのテーブルです。テーブルの作成とapp profileの用意はライブラリの範囲外です。最初の`initialize_bigtable_store`の前に、次を用意してください。
 
@@ -271,21 +287,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 storeのインスタンスとそのcloneは、接続を共有します。この版は変更フィードを提供しません。キー・設定の行・初期化（中断した初期化の回復を含む）・書込と読取・保持の詳細は[Bigtable schema](docs/BIGTABLE_DATABASE_SCHEMA.ja.md)を参照してください。v3のBigtableからデータを移す場合は、[移行](#移行)を参照してください。
 
-## Serializer・保持・エラー
+## 直列化
 
 既定のconstructorはJSONを使い、イベントと集約payloadに`Serialize + DeserializeOwned`を要求します。別のバイト形式には`EventStoreForMemory::with_serializers`または`EventStoreForDynamoDB::open_with_serializers`へ`Arc<dyn EventSerializer<P>>`と`Arc<dyn SnapshotSerializer<A>>`を渡します。serializerが受け取るのはpayloadだけです。payloadの要件は`Send + Sync + 'static`であり、この入口ではserde・Clone・Debugを要求しません。非serde payloadの実例は[Memory](lib/tests/memory_test.rs)・[DynamoDB](lib/tests/dynamodb_persist_event_test.rs)のintegration試験にあります。
 
+## 保持
+
 既定は`RetentionSettings::current_only()`です。`keep_latest(n)`は新しい順にn件の履歴snapshotを保持し、0は設定エラーになります。Memoryは削除だけを使用し、`RetentionMode::Ttl`の指定は履歴件数の有無にかかわらず`MemoryStorage::new`で設定エラーになります。DynamoDBは削除または`RetentionMode::Ttl { grace_seconds }`を使用できます。snapshot表のTTL属性`ttl`は別途設定してください。履歴件数を設定したMemoryは、イベント単独を含む追記の成功後に保持処理を実行します。DynamoDBは履歴件数を設定し、履歴snapshotを書いた追記の成功後だけ保持処理を実行します。DynamoDBはイベント単独の追記では保持処理を実行しません。保持失敗はaid・seq_nr・phase・errorを含む`tracing`警告で通知し、確定済みの書込は成功を返します。
+
+## エラー
 
 `EventStoreError`には`OptimisticLock`・`ContractViolation`・`Serialization`・`Configuration`・`Storage`の5分類があります。文字列の解析ではなく、`ContractRule`・`SerializationPhase`・`ConfigurationReason`・`StorageOperation`をmatchしてください。直列化と保存先のエラーはsourceを保持します。
 
 ## 移行
 
-通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数または薄いCLIを使用します。v3の既定SQLite配置には、`migrate_v3_sqlite`関数（feature `sqlite-migration`）、または同じCLIの`--old-sqlite`・`--sqlite`を使用します。旧SQLiteファイルは変更せずに読み取り、`initialize_sqlite_store`で初期化した新ファイルへ書き込みます。v3.0.6の既定のBigtable配置（journalとsnapshotの2つのテーブル）には、`migrate_v3_bigtable`関数（feature `bigtable-migration`）、または同じCLIの`--old-bigtable-*`・`--bigtable-*`を使用します。旧の2つのテーブルは読み取りだけで、列ファミリ付きで作り`initialize_bigtable_store`で初期化した新しい2つのテーブルへ書き込みます。[v5移行ガイド](docs/MIGRATION_GUIDE_v5.ja.md)の手順に従い、旧書込を停止して空の新表（SQLiteでは初期化済みで空のファイル、Bigtableでは初期化済みで空のテーブル）を用意してください。独自`KeyResolver`配置はこの移行の対象外です。
+通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数、または[v5移行ガイド](docs/MIGRATION_GUIDE.ja.md)に書いてある薄いCLIを使用します。v3の既定SQLite配置には、`migrate_v3_sqlite`関数（feature `sqlite-migration`）、または同じCLIの`--old-sqlite`・`--sqlite`を使用します。旧SQLiteファイルは変更せずに読み取り、`initialize_sqlite_store`で初期化した新ファイルへ書き込みます。v3.0.6の既定のBigtable配置（journalとsnapshotの2つのテーブル）には、`migrate_v3_bigtable`関数（feature `bigtable-migration`）、または同じCLIの`--old-bigtable-*`・`--bigtable-*`を使用します。旧の2つのテーブルは読み取りだけで、列ファミリ付きで作り`initialize_bigtable_store`で初期化した新しい2つのテーブルへ書き込みます。移行の前に、旧書込を停止して空の新表（SQLiteでは初期化済みで空のファイル、Bigtableでは初期化済みで空のテーブル）を用意してください。独自`KeyResolver`配置はこの移行の対象外です。
 
 3系を継続する利用者向けの[v3移行ガイド](docs/MIGRATION_GUIDE_v3.ja.md)は歴史資料として残しています。
 
-## 検証
+## 適合
 
 ```sh
 cargo +1.99.0 build --workspace --all-targets --all-features
@@ -300,19 +320,3 @@ DynamoDBとmigrationのintegration試験にはDockerが必要です。
 ## ライセンス
 
 MITまたはApache-2.0。[LICENSE-MIT](LICENSE-MIT)・[LICENSE-APACHE](LICENSE-APACHE)を参照してください。
-
-## リンク
-
-- [共通ドキュメント](https://github.com/j5ik2o/event-store-adapter)
-- [CQRS/Event Sourcingサンプル](https://github.com/j5ik2o/cqrs-es-example-rs)
-
-## 他の言語のための実装
-
-- [for Java](https://github.com/j5ik2o/event-store-adapter-java)
-- [for Scala](https://github.com/j5ik2o/event-store-adapter-scala)
-- [for Kotlin](https://github.com/j5ik2o/event-store-adapter-kotlin)
-- [for Rust](https://github.com/j5ik2o/event-store-adapter-rs)
-- [for Go](https://github.com/j5ik2o/event-store-adapter-go)
-- [for JavaScript/TypeScript](https://github.com/j5ik2o/event-store-adapter-js)
-- [for .NET](https://github.com/j5ik2o/event-store-adapter-dotnet)
-- [for PHP](https://github.com/j5ik2o/event-store-adapter-php)

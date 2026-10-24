@@ -1,10 +1,12 @@
-# Bigtable storage schema (5.x)
+# Bigtable storage schema
 
-This document describes the layout used by the public `EventStoreForBigtable` (feature `bigtable`). The library creates the configuration rows only through the explicit `initialize_bigtable_store` (or `initialize_bigtable_store_with_token_source`); the regular `EventStoreForBigtable::open` never creates tables, column families, or configuration rows. Tables and column families are always created by you.
+This document describes the 5.x layout used by the public `EventStoreForBigtable` (feature `bigtable`). The library creates the configuration rows only through the explicit `initialize_bigtable_store` (or `initialize_bigtable_store_with_token_source`); the regular `EventStoreForBigtable::open` never creates tables, column families, or configuration rows. Tables and column families are always created by you.
 
-The regular store reads only this layout. For v3's default Bigtable layout, use the explicit [migration procedure](MIGRATION_GUIDE_v5.md). The first release of this storage does not provide a change feed.
+The regular store reads only this layout. For v3's default Bigtable layout, use the explicit [migration procedure](MIGRATION_GUIDE.md). The first release of this storage does not provide a change feed.
 
-## Tables and keys
+## Layout
+
+### Tables and keys
 
 The store uses two tables in one Bigtable instance, a journal table and a head table. They must be different tables: giving the same table ID for both is a configuration error.
 
@@ -29,7 +31,7 @@ configuration row  = 0x00   (a single byte, in both tables)
 - A `#`, a NUL, or non-ASCII text in `aid` is just bytes. It is never interpreted as a separator.
 - The configuration row key `0x00` is one byte, so it never equals a data row key, which always starts with the 8-byte hash and the 2-byte length.
 
-### Column families and garbage collection
+#### Column families and garbage collection
 
 Create all of the column families before the first `initialize_bigtable_store`:
 
@@ -44,21 +46,9 @@ Create all of the column families before the first `initialize_bigtable_store`:
 
 `open` reads each table's schema with `GetTable` and rejects a missing family, or a data family whose rule is not exactly "keep at most one version", with a configuration error (`ConfigurationReason::BigtableColumnFamilyMismatch`). Do not set an age rule on a data family: expired cells would lose data. Do not set an age rule on a `config` family either: the configuration row is written with cell timestamp 0, so an age rule would expire it at once, and every later `open` and initialization check would fail. Correctness never depends on how soon garbage collection runs, because every read asks for only the latest cell of a column, and every write sets the cell timestamp to 0 and deletes the older versions of a column it replaces.
 
-## App profile, connection, and authentication
+## Configuration
 
-Every read, write, retention, and configuration check of a running system must use an app profile that is pinned to one cluster and allows single-row transactions. If the instance has replica clusters, point the adapter's operations at that one cluster. During an outage of that cluster the store returns storage errors and waits for recovery. Multi-cluster writes, multi-cluster routing, and automatic failover are not supported. The library does not check the app profile; you create it and pass its ID as `BigtableOptions::app_profile_id`. An empty ID uses the instance's default app profile, which is only correct when that profile already meets these requirements.
-
-The connection is a `BigtableConnection` with two `tonic::transport::Channel` values.
-
-| Channel | Use |
-|:--------|:----|
-| `data` | `ReadRows`, `CheckAndMutateRow`, and the other data requests |
-| `admin` | `GetTable`, only when the store is opened, to check the column families |
-
-- **Emulator**: use one plaintext channel (for example `Endpoint::from_static("http://localhost:8086")`) for both fields and call `EventStoreForBigtable::open`, `open_with_serializers`, and `initialize_bigtable_store`. No credentials are added.
-- **Production Cloud Bigtable**: build two TLS channels yourself (`https://bigtable.googleapis.com` for data and `https://bigtableadmin.googleapis.com` for admin) with the TLS features of `tonic` enabled in your own dependencies. Implement `BigtableTokenSource` and pass it to `open_with_token_source`, `open_with_serializers_and_token_source`, and `initialize_bigtable_store_with_token_source`. The store calls the source immediately before every data and admin request and sends `authorization: Bearer <token>`. Holding and refreshing the token is the source's job. If the source fails, or returns a token that cannot be a metadata value, the request is not sent and that operation returns `EventStoreError::Storage`; the store does not call the source again for the same request. The library itself depends on neither a TLS stack nor a Google authentication library.
-
-## Configuration rows
+### Configuration rows
 
 Each table holds one configuration row, row key `0x00`, with the column `config:metadata`. The value is a UTF-8 JSON object, identical in both tables:
 
@@ -114,7 +104,9 @@ To recover:
 3. Delete the leftover row with key `0x00` from the table that has it (a `MutateRow` with a `DeleteFromRow` mutation, using any Bigtable client).
 4. Call `initialize_bigtable_store` again with the same settings.
 
-## Journal rows
+## Records
+
+### Journal rows
 
 One event becomes one row in the journal table. The row is created only if `event:envelope` does not exist, and it is never overwritten or deleted.
 
@@ -127,7 +119,7 @@ One event becomes one row in the journal table. The row is created only if `even
 
 No `history` cell is written when no history count is configured. The cell timestamp is 0 (a fixed value); it is only used for Bigtable's own bookkeeping, and `occurred_at` is never derived from it.
 
-## Head rows
+### Head rows
 
 The head table keeps one small row per aggregate. It never holds all events or `n` history snapshots, so it does not grow with the history count.
 
@@ -140,7 +132,7 @@ The head table keeps one small row per aggregate. It never holds all events or `
 
 When `head:has_snapshot` is `1`, the sequence number in `snapshot:current` equals `head:seq_nr`. An event-only append keeps the existing `snapshot:current` and sets `head:has_snapshot` to `0`. The snapshot's sequence number is never above the head's.
 
-## Envelopes
+### Envelopes
 
 The library builds each envelope as a fixed binary layout. `U16`, `U32`, and `U64` are big-endian; `I64` is a big-endian signed 64-bit two's complement integer. The leading `0x01` is the format version. The serializers receive only the payload.
 
@@ -155,7 +147,7 @@ snapshot = 0x01 || U64(seq_nr)
 
 Lengths are byte counts. Unused trailing bytes, a length mismatch, or an unknown format version is a storage error when read. A payload that cannot be decoded from a well-formed envelope is a serialization error. The occurrence time is kept in nanoseconds in the envelope, never in the Bigtable cell timestamp (which has microsecond precision).
 
-### Envelope size limit
+#### Envelope size limit
 
 `BigtableOptions::envelope_limit_bytes` caps one serialized envelope including its metadata. The default is 1 MiB (1,048,576 bytes), the maximum is 8 MiB (8,388,608), and the minimum is 17 bytes (the smallest snapshot envelope). The value is stored in both configuration rows, and every client must use the same one. An input over the limit is rejected before any write as a contract violation (`ContractRule::EnvelopeSizeLimit`, rule BT-16) that names the sequence number. Change the limit only by stopping every client and updating both configuration rows to the same new value, then opening every client again to check them.
 
@@ -201,3 +193,19 @@ Changing `keep_snapshot_count` is an offline administration procedure; the store
 4. When every aggregate is done, update `keep_snapshot_count` in the configuration rows of both tables to the target. Open every client again with the new options so they check the configuration, then resume work.
 
 If a step fails, keep the clients stopped and rerun with the same target. A write-out or retirement that already finished does not bring history back when it is repeated. If only one of the two configuration rows has been updated, do not resume until both match. Deleted history cannot be restored, so a rollback of the whole store is not assumed. Raising the count, or setting a count where there was none, does not recreate history that was deleted or never kept; the new setting applies from the next snapshot write.
+
+## Operations
+
+### App profile, connection, and authentication
+
+Every read, write, retention, and configuration check of a running system must use an app profile that is pinned to one cluster and allows single-row transactions. If the instance has replica clusters, point the adapter's operations at that one cluster. During an outage of that cluster the store returns storage errors and waits for recovery. Multi-cluster writes, multi-cluster routing, and automatic failover are not supported. The library does not check the app profile; you create it and pass its ID as `BigtableOptions::app_profile_id`. An empty ID uses the instance's default app profile, which is only correct when that profile already meets these requirements.
+
+The connection is a `BigtableConnection` with two `tonic::transport::Channel` values.
+
+| Channel | Use |
+|:--------|:----|
+| `data` | `ReadRows`, `CheckAndMutateRow`, and the other data requests |
+| `admin` | `GetTable`, only when the store is opened, to check the column families |
+
+- **Emulator**: use one plaintext channel (for example `Endpoint::from_static("http://localhost:8086")`) for both fields and call `EventStoreForBigtable::open`, `open_with_serializers`, and `initialize_bigtable_store`. No credentials are added.
+- **Production Cloud Bigtable**: build two TLS channels yourself (`https://bigtable.googleapis.com` for data and `https://bigtableadmin.googleapis.com` for admin) with the TLS features of `tonic` enabled in your own dependencies. Implement `BigtableTokenSource` and pass it to `open_with_token_source`, `open_with_serializers_and_token_source`, and `initialize_bigtable_store_with_token_source`. The store calls the source immediately before every data and admin request and sends `authorization: Bearer <token>`. Holding and refreshing the token is the source's job. If the source fails, or returns a token that cannot be a metadata value, the request is not sent and that operation returns `EventStoreError::Storage`; the store does not call the source again for the same request. The library itself depends on neither a TLS stack nor a Google authentication library.

@@ -1,0 +1,10 @@
+{
+  "package": "event-store-adapter-rs",
+  "docs_root": ".",
+  "storages": ["memory", "dynamodb", "sqlite", "bigtable"],
+  "extra_documents": ["docs/MIGRATION_GUIDE_v3.md"],
+  "moved": {
+    "docs/DATABASE_SCHEMA.md": "docs/DYNAMODB_DATABASE_SCHEMA.md",
+    "docs/MIGRATION_GUIDE_v5.md": "docs/MIGRATION_GUIDE.md"
+  }
+}

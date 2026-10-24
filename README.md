@@ -8,15 +8,23 @@
 [![](https://tokei.rs/b1/github/j5ik2o/event-store-adapter-rs)](https://github.com/XAMPPRocky/tokei)
 
 
+## Overview
+
 This library provides Memory, DynamoDB, SQLite, and Bigtable event stores for CQRS/Event Sourcing.
 
 This crate follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision.
 
 > 5.0.0 is the first release of the new API. Stored v3 DynamoDB, SQLite, and Bigtable data is supported only through the explicit migration functions or CLI.
 
-[日本語](./README.ja.md)
+The public API is exported from the crate root; there is no `next` namespace or old API alias.
 
-## Backends and features
+### Links
+
+- [Common Documents](https://github.com/j5ik2o/event-store-adapter)
+- [CQRS/Event Sourcing Example](https://github.com/j5ik2o/cqrs-es-example-rs)
+- [日本語](./README.ja.md)
+
+## Installation
 
 | Feature | Availability |
 |:--------|:-------------|
@@ -28,11 +36,9 @@ This crate follows [common contract v5](https://github.com/j5ik2o/event-store-ad
 | `sqlite-migration` | `migrate_v3_sqlite`; also enables `sqlite`, and brings in no AWS or Bigtable crates |
 | `bigtable-migration` | `migrate_v3_bigtable` and `LegacyBigtableTables`; also enables `bigtable`, and brings in no AWS or SQLite crates |
 
-Default features are empty. The `sqlite-system` feature has been removed. The public API is exported from the crate root; there is no `next` namespace or old API alias.
+Default features are empty. The `sqlite-system` feature has been removed.
 
-## Memory example
-
-The memory storage lives in a single process. It does not persist to files, survive restarts, or share data across processes.
+## Quick start
 
 Create an application with these dependencies:
 
@@ -100,7 +106,15 @@ async fn main() -> Result<(), EventStoreError> {
 
 `SeqNr` is `u64`, limited to `0..=SEQ_NR_MAX` (`2^53 - 1`). The first write uses 1 and later writes must be contiguous. Reads include the lower bound; 0 reads from the beginning. There is no `expected_version` argument or snapshot `version`. `SnapshotEnvelope::seq_nr()` describes the snapshot; `SnapshotRead::head_seq_nr()` describes the event head. A stream with events but no snapshot returns `Some(SnapshotRead)` with `snapshot() == None`. Replay starts from the creation event in that case.
 
-## DynamoDB example
+## Storages
+
+### Memory
+
+The memory storage lives in a single process. It does not persist to files, survive restarts, or share data across processes.
+
+See [Quick start](#quick-start) for a complete example.
+
+### DynamoDB
 
 Enable `features = ["dynamodb"]`. Provision three distinct tables and the snapshot history GSI before calling the asynchronous `EventStoreForDynamoDB::open(client, tables, options)`. Table creation is outside the library. `DynamoDbTables` supplies the three table names and GSI name; `DynamoDbOptions` supplies retention and bounded retry settings.
 
@@ -120,9 +134,9 @@ The SDK client must have a retry sleeper. The runnable [user-account example](ex
 cargo +1.99.0 run -p example-user-account
 ```
 
-Docker is required for this example. See [the DynamoDB schema](docs/DATABASE_SCHEMA.md) for keys, configuration records, transactions, and retention.
+Docker is required for this example. See [the DynamoDB schema](docs/DYNAMODB_DATABASE_SCHEMA.md) for keys, configuration records, transactions, and retention.
 
-## SQLite example
+### SQLite
 
 Enable `features = ["sqlite"]`. The storage is one SQLite database file on the local file system of the host that uses it, run with WAL and `synchronous=FULL`; SQLite 3.51.3 or later is required, and the bundled build satisfies it. Initialization and opening are separate, explicit steps:
 
@@ -187,7 +201,7 @@ async fn main() -> Result<(), EventStoreError> {
 
 A store instance and its clones share one connection. See [the SQLite schema](docs/SQLITE_DATABASE_SCHEMA.md) for the tables, the connection settings, how to initialize a file by hand, transactions, and retention. To move data from a v3 SQLite file, see [Migration](#migration).
 
-## Bigtable example
+### Bigtable
 
 Enable `features = ["bigtable"]`. The store talks to Cloud Bigtable (or the Bigtable emulator) over gRPC through two tables, `journal` and `head`. Table creation is outside the library, and so is the app profile. Prepare these before the first `initialize_bigtable_store`:
 
@@ -271,21 +285,25 @@ Production Cloud Bigtable needs a TLS channel and an access token on every reque
 
 A store instance and its clones share the connection. This release does not provide a change feed. See [the Bigtable schema](docs/BIGTABLE_DATABASE_SCHEMA.md) for the keys, configuration rows, initialization (including recovery from an interrupted initialization), writes and reads, and retention. To move data from a v3 Bigtable, see [Migration](#migration).
 
-## Serialization, retention, and errors
+## Serialization
 
 The default constructors use JSON and require `Serialize + DeserializeOwned` on event and aggregate payloads. Use `EventStoreForMemory::with_serializers` or `EventStoreForDynamoDB::open_with_serializers` with `Arc<dyn EventSerializer<P>>` and `Arc<dyn SnapshotSerializer<A>>` for another byte format. These serializers receive only the payload. Payloads require `Send + Sync + 'static`; serde, Clone, and Debug are not required for these constructors. See the [Memory](lib/tests/memory_test.rs) and [DynamoDB](lib/tests/dynamodb_persist_event_test.rs) integration tests for non-serde payloads.
 
+## Retention
+
 `RetentionSettings::current_only()` is the default. `keep_latest(n)` retains the newest `n` history snapshots; 0 is invalid. Memory supports deletion only; `MemoryStorage::new` returns a configuration error for any `RetentionMode::Ttl`, with or without a history count. DynamoDB supports deletion or `RetentionMode::Ttl { grace_seconds }`; configure the snapshot table's TTL attribute `ttl` separately. With a history count, Memory runs retention after successful appends, including event-only appends. DynamoDB runs retention only when a history count is configured and an append that writes a history snapshot succeeds; event-only appends do not run retention. A retention failure emits a `tracing` warning with aid, seq_nr, phase, and error; the committed write still succeeds.
+
+## Errors
 
 `EventStoreError` distinguishes `OptimisticLock`, `ContractViolation`, `Serialization`, `Configuration`, and `Storage`. Match `ContractRule`, `SerializationPhase`, `ConfigurationReason`, or `StorageOperation` rather than parsing messages. Serialization and storage errors retain their source.
 
 ## Migration
 
-The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE_v5.md). For v3's default SQLite layout, use the `migrate_v3_sqlite` function (feature `sqlite-migration`) or the same CLI with `--old-sqlite` and `--sqlite`; it reads the old SQLite file without changing it and writes a new file that you initialized with `initialize_sqlite_store`. For v3.0.6's default Bigtable layout (the journal and snapshot tables), use the `migrate_v3_bigtable` function (feature `bigtable-migration`) or the same CLI with `--old-bigtable-*` and `--bigtable-*`; it only reads the two old tables and writes two new tables that you created with their column families and initialized with `initialize_bigtable_store`. Stop old writes and provision empty new tables (for SQLite, an initialized, empty file; for Bigtable, initialized, empty tables) before migration. Custom `KeyResolver` layouts are outside this migration's scope.
+The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE.md). For v3's default SQLite layout, use the `migrate_v3_sqlite` function (feature `sqlite-migration`) or the same CLI with `--old-sqlite` and `--sqlite`; it reads the old SQLite file without changing it and writes a new file that you initialized with `initialize_sqlite_store`. For v3.0.6's default Bigtable layout (the journal and snapshot tables), use the `migrate_v3_bigtable` function (feature `bigtable-migration`) or the same CLI with `--old-bigtable-*` and `--bigtable-*`; it only reads the two old tables and writes two new tables that you created with their column families and initialized with `initialize_bigtable_store`. Stop old writes and provision empty new tables (for SQLite, an initialized, empty file; for Bigtable, initialized, empty tables) before migration. Custom `KeyResolver` layouts are outside this migration's scope.
 
 Historical [v3 migration guidance](docs/MIGRATION_GUIDE_v3.md) remains available for users staying on 3.x.
 
-## Validation
+## Conformance
 
 ```sh
 cargo +1.99.0 build --workspace --all-targets --all-features
@@ -300,8 +318,3 @@ DynamoDB and migration integration tests require Docker.
 ## License
 
 MIT or Apache-2.0. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
-
-## Links
-
-- [Common Documents](https://github.com/j5ik2o/event-store-adapter)
-- [CQRS/Event Sourcing Example](https://github.com/j5ik2o/cqrs-es-example-rs)

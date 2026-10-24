@@ -1,10 +1,14 @@
-# SQLiteの保存schema（5系）
+> この文書は [SQLITE_DATABASE_SCHEMA.md](SQLITE_DATABASE_SCHEMA.md) の日本語版です。英語版が正本で、食い違うときは英語版に従います。
 
-公開`EventStoreForSqlite`（feature `sqlite`）が使う実配置を説明します。ライブラリがこの配置を作るのは、明示的な`initialize_sqlite_store`だけです。通常の`EventStoreForSqlite::open`は、表も設定も作りません。ファイルを自分で用意したい場合は、下記の手動の手順で同じ配置を作れます。
+# SQLite の保存先のスキーマ
 
-通常storeはこの新配置だけを読み取ります。v3の既定SQLite配置は明示的な[移行手順](MIGRATION_GUIDE_v5.ja.md)で扱います。この保存先の最初の版は、変更フィードを提供しません。
+公開`EventStoreForSqlite`（feature `sqlite`）が使う5系の実配置を説明します。ライブラリがこの配置を作るのは、明示的な`initialize_sqlite_store`だけです。通常の`EventStoreForSqlite::open`は、表も設定も作りません。ファイルを自分で用意したい場合は、下記の手動の手順で同じ配置を作れます。
 
-## 表とキー
+通常storeはこの新配置だけを読み取ります。v3の既定SQLite配置は明示的な[移行手順](MIGRATION_GUIDE.ja.md)で扱います。この保存先の最初の版は、変更フィードを提供しません。
+
+## 配置
+
+### 表とキー
 
 データはすべて、ローカルの1つのSQLiteデータベースファイルに置きます。論理shardやキーの接頭辞はなく、`aid`は完全一致、`seq_nr`は整数として比較します。全表を`STRICT`にし、全`aid`列は`COLLATE BINARY`です。
 
@@ -20,7 +24,9 @@
 
 `aid`は`AggregateId`の型名と値から組み立てるUTF-8の`type_name-value`文字列です。型名にはhyphenを含められず、値には含められます。全体の上限は1024バイトです。空の型名・値も許可します。
 
-## 接続の設定とconfig
+## 設定
+
+### 接続の設定とconfig
 
 storeが使う全接続を、次のとおり確認・設定します。要件と異なる値のまま処理を続けず、設定エラーにします。
 
@@ -115,9 +121,9 @@ VALUES (1, '5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11', 1, NULL, 'delete', 0);
 COMMIT;
 ```
 
-バックアップにはSQLiteのバックアップ機能を使ってください。WALで稼働中のデータベースの本体ファイルだけをコピーしてはいけません。
+## 記録
 
-## Journalの行
+### Journalの行
 
 イベント封筒1件が1行になります。
 
@@ -129,7 +135,7 @@ COMMIT;
 | `manifest` | TEXT | 封筒のmanifest。省略時は空文字列 |
 | `payload` | BLOB | イベントpayloadだけをserializerへ渡した出力 |
 
-## Headの行
+### Headの行
 
 | 列 | 型 | 意味 |
 |:---|:---|:-----|
@@ -142,7 +148,7 @@ COMMIT;
 
 headは番号1の追記で作られ、snapshotなしを含む全追記で更新されます。イベントの列には、最後に追記した封筒が入ります。
 
-## Snapshotの行
+### Snapshotの行
 
 | 表 | 列 | 型 | 意味 |
 |:---|:---|:---|:-----|
@@ -154,7 +160,7 @@ headは番号1の追記で作られ、snapshotなしを含む全追記で更新�
 
 snapshotを伴う追記は、その集約の`snapshot_current`の行を置き換えます。`version`列はありません。`snapshot_history`の行は`keep_snapshot_count`を設定したときだけ書かれ、同時に書いたcurrentと同じ封筒を持ちます。
 
-## 書込と読取
+## 書き込みと読み取り
 
 入力の検査と直列化は、トランザクションを始める前に済ませます。`persist_event`と`persist_event_and_snapshot`は、1接続の1トランザクションで次を行います。
 
@@ -190,3 +196,7 @@ TTL方式（`RetentionMode::Ttl`）は提供しません。`retention_mode`列�
 3. 全集約が済んだら、別の`BEGIN IMMEDIATE`で`config.keep_snapshot_count`を更新して`COMMIT`します。全クライアントを新しい設定で開き直して設定を照合してから、処理を再開します。
 
 途中で失敗したら、クライアントを止めたまま、同じ変更先で再実行します。削除した履歴は戻せません。件数を増やす場合や、なしから件数を設定する場合も、削除済み・未保持の過去の履歴は補いません。新しい設定は、次のsnapshot書込から適用されます。
+
+## 運用
+
+バックアップにはSQLiteのバックアップ機能を使ってください。WALで稼働中のデータベースの本体ファイルだけをコピーしてはいけません。
