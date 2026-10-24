@@ -16,7 +16,7 @@ ulid-generator-rs = "0.0.112"
 testcontainers = "0.28.0"
 once_cell = "1.19.0"
 tokio = "1.37.0"
-rusqlite = { version = "0.40.2", default-features = false }
+rusqlite = { version = "0.41.0", default-features = false }
 tonic = { version = "0.14.6", default-features = false }
 gcp_auth = "0.12.7"
 googleapis-tonic-google-bigtable-v2 = "0.39.0"
