@@ -22,6 +22,7 @@ The public API is exported from the crate root; there is no `next` namespace or 
 
 - [Common Documents](https://github.com/j5ik2o/event-store-adapter)
 - [CQRS/Event Sourcing Example](https://github.com/j5ik2o/cqrs-es-example-rs)
+- [Contributing](./CONTRIBUTING.md)
 - [日本語](./README.ja.md)
 
 ## Installation

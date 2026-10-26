@@ -24,6 +24,7 @@
 
 - [共通ドキュメント](https://github.com/j5ik2o/event-store-adapter)
 - [CQRS/Event Sourcingサンプル](https://github.com/j5ik2o/cqrs-es-example-rs)
+- [開発者向けの案内](./CONTRIBUTING.ja.md)
 - [English](./README.md)
 
 ## インストール
