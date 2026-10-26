@@ -42,7 +42,7 @@ Some files in this repository are pinned copies or data from the hub. CI compare
 - Formatting: use nightly rustfmt. The settings are in `rustfmt.toml` (`tab_spaces = 2`, `max_width = 120`). Install nightly if you do not have it.
 - API surface check: `cargo test -p event-store-adapter-api-surface-rs` and `cargo test --workspace` need the nightly of a fixed date, because the check builds rustdoc JSON with it.
 - Docker: the tests of the DynamoDB and Bigtable storages, the migration, the example, and the conformance runs for DynamoDB and Bigtable start containers with testcontainers, so Docker must be running. They use DynamoDB Local 3.3.1 and the Bigtable emulator (google-cloud-cli 587.0.0-emulators), both pinned by digest. The tests connect to DynamoDB Local with a dummy region and dummy credentials, and to the emulator without credentials. The Memory and SQLite tests do not need Docker.
-- Python 3: `tools/user-docs/check.py` and `tools/conformance/manifest.py` use only the standard library. The tests in `.github/test_*.py` need the `semver` package. CI uses Python 3.15.
+- Python 3: `tools/user-docs/check.py` and `tools/conformance/manifest.py` use only the standard library. The tests in `.github/test_*.py` need the `semver` package. CI uses Python 3.15. `tools/user-docs/check.py` requires Python 3.10 or later.
 - actionlint: CI installs it with `go install` (Go 1.27) and runs it on the workflow files.
 - cargo-deny: it audits the dependencies with the settings in `deny.toml`.
 
@@ -70,7 +70,7 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on pull requests to `m
 | `audit` | `cargo deny check advisories licenses` | No |
 | `CI Success` | Collects `lint`, `test-lib`, `test-conformance-migration`, `api-surface`, `feature-matrix`, `clippy`, `release-control`, and `conformance`. It does not include `audit` | No |
 
-The commands that CI runs, in a form you can run locally. `cargo +nightly fmt --all -- --check` is the form that `AGENTS.md` gives for the `cargo fmt -- --check` that the `lint` job runs with the nightly toolchain. The `audit` job runs `cargo deny check advisories licenses` through the cargo-deny action.
+Representative local commands based on CI are listed below. The complete commands and all feature combinations are in [the CI workflow](.github/workflows/ci.yml); the feature-matrix and clippy configurations are also described below. `cargo +nightly fmt --all -- --check` is the form that `AGENTS.md` gives for the `cargo fmt -- --check` that the `lint` job runs with the nightly toolchain. The `audit` job runs `cargo deny check advisories licenses` through the cargo-deny action.
 
 ```sh
 cargo +nightly fmt --all -- --check

@@ -44,7 +44,7 @@
 - 整形: nightly の rustfmt を使います。設定は `rustfmt.toml` にあります（`tab_spaces = 2`、`max_width = 120`）。nightly が入っていなければ入れてください。
 - 公開 API の形の照合: `cargo test -p event-store-adapter-api-surface-rs` と `cargo test --workspace` には、日付を固定した nightly が要ります。照合が、その nightly で rustdoc の JSON を作るためです。
 - Docker: DynamoDB と Bigtable の保存先の試験、移行、利用例、DynamoDB と Bigtable に対する適合試験は、testcontainers でコンテナを起動するので、Docker が起動している必要があります。使うのは、digest で固定した DynamoDB Local 3.3.1 と Bigtable エミュレーター（google-cloud-cli 587.0.0-emulators）です。試験は、DynamoDB Local にはダミーの region と資格情報で、エミュレーターには資格情報なしで接続します。メモリと SQLite の試験に Docker は要りません。
-- Python 3: `tools/user-docs/check.py` と `tools/conformance/manifest.py` は標準ライブラリだけを使います。`.github/test_*.py` の試験には `semver` のパッケージが要ります。CI は Python 3.15 を使います。
+- Python 3: `tools/user-docs/check.py` と `tools/conformance/manifest.py` は標準ライブラリだけを使います。`.github/test_*.py` の試験には `semver` のパッケージが要ります。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。
 - actionlint: CI は `go install`（Go 1.27）で入れ、workflow のファイルに実行します。
 - cargo-deny: `deny.toml` の設定で依存を監査します。
 
@@ -72,7 +72,7 @@ CI（`.github/workflows/ci.yml`）は、`main` への push、`main` への pull 
 | `audit` | `cargo deny check advisories licenses` | 要らない |
 | `CI Success` | `lint`、`test-lib`、`test-conformance-migration`、`api-surface`、`feature-matrix`、`clippy`、`release-control`、`conformance` をまとめる。`audit` は含まない | 要らない |
 
-CI が実行するコマンドを、手元で実行する形で並べます。`cargo +nightly fmt --all -- --check` は、`lint` のジョブが nightly のツールチェーンで実行する `cargo fmt -- --check` を、`AGENTS.md` が示す形にしたものです。`audit` のジョブは、cargo-deny の action を通して `cargo deny check advisories licenses` を実行します。
+CI をもとにした代表的なローカルコマンドを並べます。コマンドと feature の組み合わせの全体は [CI のワークフロー](.github/workflows/ci.yml) にあり、feature-matrix と clippy の構成は下にも説明しています。`cargo +nightly fmt --all -- --check` は、`lint` のジョブが nightly のツールチェーンで実行する `cargo fmt -- --check` を、`AGENTS.md` が示す形にしたものです。`audit` のジョブは、cargo-deny の action を通して `cargo deny check advisories licenses` を実行します。
 
 ```sh
 cargo +nightly fmt --all -- --check
