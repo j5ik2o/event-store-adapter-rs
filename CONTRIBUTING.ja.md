@@ -13,7 +13,7 @@
 | ディレクトリ | パッケージ | 役割 |
 |:--|:--|:--|
 | `lib` | `event-store-adapter-rs` | ライブラリのクレート。公開するパッケージ |
-| `test-utils` | `event-store-adapter-test-utils-rs` | テストのために、DynamoDB Local と Bigtable エミュレーターをコンテナで起動する |
+| `test-utils` | `event-store-adapter-test-utils-rs` | テストのために、DynamoDB Local、Spanner エミュレーター、Bigtable エミュレーターをコンテナで起動する |
 | `examples/user-account` | `example-user-account` | DynamoDB Local を使う利用例のアプリケーション |
 | `conformance-runner` | `event-store-adapter-conformance-rs` | `conformance/` の適合テストデータを実行する |
 | `migration-cli` | `event-store-adapter-migration-rs` | v3 のデータを移行するコマンドラインの道具 |
@@ -43,7 +43,7 @@
 - Rust のツールチェーン: ツールチェーンを固定するファイルはありません。CI は stable でビルドと試験をします。最小サポートの Rust の版は 1.94.1 です（`lib/Cargo.toml` の `rust-version`）。
 - 整形: nightly の rustfmt を使います。設定は `rustfmt.toml` にあります（`tab_spaces = 2`、`max_width = 120`）。nightly が入っていなければ入れてください。
 - 公開 API の形の照合: `cargo test -p event-store-adapter-api-surface-rs` と `cargo test --workspace` には、日付を固定した nightly が要ります。照合が、その nightly で rustdoc の JSON を作るためです。
-- Docker: DynamoDB と Bigtable の保存先の試験、移行、利用例、DynamoDB と Bigtable に対する適合試験は、testcontainers でコンテナを起動するので、Docker が起動している必要があります。使うのは、digest で固定した DynamoDB Local 3.3.1 と Bigtable エミュレーター（google-cloud-cli 587.0.0-emulators）です。試験は、DynamoDB Local にはダミーの region と資格情報で、エミュレーターには資格情報なしで接続します。メモリと SQLite の試験に Docker は要りません。
+- Docker: DynamoDB・Spanner・Bigtable の保存先の試験、移行、利用例、DynamoDB・Spanner・Bigtable に対する適合試験は、testcontainers でコンテナを起動するので、Docker が起動している必要があります。使うのは、digest で固定した DynamoDB Local 3.3.1、Spanner エミュレーター 1.5.58（`gcr.io/cloud-spanner-emulator/emulator`）、Bigtable エミュレーター（google-cloud-cli 587.0.0-emulators）です。試験は、DynamoDB Local にはダミーの region と資格情報で、2 つのエミュレーターには資格情報なしで接続します。Spanner の試験は、試験ごとに新しいデータベースを作り、Spanner の適合試験の実行は、場面が終わるたびにその場面のデータベースを削除します。メモリと SQLite の試験に Docker は要りません。
 - Python 3: `tools/user-docs/check.py` と `tools/conformance/manifest.py` は標準ライブラリだけを使います。`.github/test_*.py` の試験には `semver` のパッケージが要ります。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。
 - actionlint: CI は `go install`（Go 1.27）で入れ、workflow のファイルに実行します。
 - cargo-deny: `deny.toml` の設定で依存を監査します。
@@ -67,8 +67,8 @@ CI（`.github/workflows/ci.yml`）は、`main` への push、`main` への pull 
 | `test-conformance-migration` | すべての feature を有効にした、適合の実行器と移行 CLI の試験 | 要る |
 | `api-surface` | 固定した nightly での、公開 API の形 | 要らない |
 | `feature-matrix` | feature の組ごとのライブラリ（詳細は下） | 要らない |
-| `clippy` | 同じ 7 つの feature の組での、警告を拒否した clippy | 要らない |
-| `conformance` | 保存先ごとの適合テストデータ: `memory`、`dynamodb`、`sqlite`、`bigtable` | `dynamodb` と `bigtable` だけ要る |
+| `clippy` | 同じ 8 つの feature の組での、警告を拒否した clippy | 要らない |
+| `conformance` | 保存先ごとの適合テストデータ: `memory`、`dynamodb`、`sqlite`、`spanner`、`bigtable` | `dynamodb`、`spanner`、`bigtable` だけ要る |
 | `audit` | `cargo deny check advisories licenses` | 要らない |
 | `CI Success` | `lint`、`test-lib`、`test-conformance-migration`、`api-surface`、`feature-matrix`、`clippy`、`release-control`、`conformance` をまとめる。`audit` は含まない | 要らない |
 
@@ -98,16 +98,17 @@ cargo build --workspace --all-targets --all-features
 cargo test --workspace --all-features
 ```
 
-- `feature-matrix` は、`--no-default-features`、`--features sqlite`、`--features sqlite-migration` では試験を実行します。`--features dynamodb`、`--features bigtable`、`--features bigtable-migration`、`--all-features` ではビルドだけを行います。
-- `feature-matrix` は、`cargo tree` で依存グラフも確かめます。feature がないときは、クラウドの SDK も SQLite のクレートも入ってはいけません。`sqlite-migration` だけのときは、クラウドの SDK が入ってはいけません。`bigtable-migration` だけのときは、AWS・SQLite・Google の認証のクレートが入ってはいけません。`lib/src/` に手書きの `unsafe impl` がないことも確かめます。
-- `clippy` は、7 つのフラグの組で `cargo clippy --workspace --all-targets <フラグ> -- -D warnings` を実行します。組は、`--no-default-features`、`--no-default-features` に `dynamodb`・`sqlite`・`sqlite-migration`・`bigtable`・`bigtable-migration` のそれぞれの `--features <feature>` を付けたもの、`--all-features` です。
-- `conformance` の `dynamodb`・`sqlite`・`bigtable` の leg は、`--release` の後に `--features <保存先>` を付け、`--backend <保存先>` にします。`dynamodb` と `bigtable` の leg は、コンテナを自分で起動します。
+- `feature-matrix` は、`--no-default-features`、`--features sqlite`、`--features sqlite-migration` では試験を実行します。`--features dynamodb`、`--features spanner`、`--features bigtable`、`--features bigtable-migration`、`--all-features` ではビルドだけを行います。
+- `feature-matrix` は、`cargo tree` で依存グラフも確かめます。feature がないときは、クラウドの SDK も SQLite のクレートも入ってはいけません。`sqlite-migration` だけのときは、クラウドの SDK が入ってはいけません。`bigtable-migration` だけのときは、AWS・SQLite・Google の認証のクレートが入ってはいけません。`spanner` だけのときは、AWS・SQLite・Bigtable・Google の認証のクレートが入ってはいけません。`lib/src/` に手書きの `unsafe impl` がないことも確かめます。
+- `clippy` は、8 つのフラグの組で `cargo clippy --workspace --all-targets <フラグ> -- -D warnings` を実行します。組は、`--no-default-features`、`--no-default-features` に `dynamodb`・`sqlite`・`sqlite-migration`・`spanner`・`bigtable`・`bigtable-migration` のそれぞれの `--features <feature>` を付けたもの、`--all-features` です。
+- `conformance` の `dynamodb`・`sqlite`・`spanner`・`bigtable` の leg は、`--release` の後に `--features <保存先>` を付け、`--backend <保存先>` にします。`dynamodb`・`spanner`・`bigtable` の leg は、コンテナを自分で起動します。Spanner の leg を手元で実行するには、`cargo run -p event-store-adapter-conformance-rs --release --features spanner -- --backend spanner --data conformance --report conformance-report-spanner.json --require-all` を実行します。
 - 単体試験は、コードの隣の `*_test.rs` に置き、`#[cfg(test)] #[path = "x_test.rs"] mod tests;` で結びます。結合試験は、各クレートの `tests/` のディレクトリに置きます。
 - `tools/user-docs/check.py` は、README・保存先のスキーマの文書・移行ガイドを、英語と日本語の両方について照合します。見出しの組み立て、相対リンクの行き先が存在するか、日本語のファイルの 1 行目を見ます。文章の中身は見ません。
 
 ## 設計の経緯
 
 - `docs/design/next-major.md`（日本語は `docs/design/next-major.ja.md`）は、v5 を作るときの設計の記録です。現在の使い方は、README と現在のコードで確認してください。
+- `docs/design/spanner-backend.md`（日本語は `docs/design/spanner-backend.ja.md`）は、Spanner の保存先の設計の記録です。設計判断、適合テストデータでは表せない規則を確かめる試験、適合の結果、エミュレーターで確かめられないことを記しています。
 - すべての実装が共有する判断は、ハブのリポジトリの ADR にあります（「共通の契約と決定」を参照）。
 - `CHANGELOG.md` は 5.0.1 までのリリースの記録で、もう更新しません。以後の変更の記録は、[GitHub Releases](https://github.com/j5ik2o/event-store-adapter-rs/releases) のリリースノートです。
 - `aidlc/` には、以前の作業で生成した成果物があります。歴史的な記録です。

@@ -10,7 +10,9 @@ use event_store_adapter_conformance_rs::report::{
   CaseOutcome, CaseReport, NotApplicableReason, ObservedValues, RepresentationGap, UnverifiedReason,
 };
 use event_store_adapter_conformance_rs::runner::{run, run_case, CaseExecutor, PreparedCase, Target};
-use event_store_adapter_conformance_rs::{target_bigtable, target_dynamodb, target_memory, target_sqlite};
+use event_store_adapter_conformance_rs::{
+  target_bigtable, target_dynamodb, target_memory, target_spanner, target_sqlite,
+};
 use serde_json::{json, Value};
 
 fn classification_executor(_: &Case, _: PreparedCase) -> CaseOutcome {
@@ -80,7 +82,7 @@ fn is_hash_backend_only(outcome: &CaseOutcome) -> bool {
     outcome,
     CaseOutcome::NotApplicable {
       reason: NotApplicableReason::HashBackendOnly { detail }
-    } if detail == "ハッシュを使う保存先（Bigtable）だけが実行する"
+    } if detail == "ハッシュを使う保存先（Bigtable・Spanner）だけが実行する"
   )
 }
 
@@ -844,7 +846,7 @@ fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory()
 }
 
 #[test]
-fn should_run_marks_only_memory_only_sqlite_only_and_bigtable_cases_as_not_targeted_on_dynamodb() {
+fn should_run_marks_only_memory_only_sqlite_only_bigtable_and_spanner_cases_as_not_targeted_on_dynamodb() {
   let data = real_data();
 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
@@ -855,7 +857,8 @@ fn should_run_marks_only_memory_only_sqlite_only_and_bigtable_cases_as_not_targe
     .map(|report| report.id.as_str())
     .collect();
   not_targeted.sort_unstable();
-  // SQLite・Bigtable を提供するので、SQLite だけが対象の場面 8 件、Bigtable の場面 12 件と封筒の値の表 10 件も
+  // SQLite・Spanner・Bigtable を提供するので、SQLite だけが対象の場面 8 件、Spanner の場面 14 件
+  // （うち 1 件は SQLite・Bigtable と共有する `store-shared-persistent`）、Bigtable の場面 12 件と封筒の値の表 10 件も
   // 「提供しない」でなく「今回の保存先でない」になる。
   let mut expected = vec![
     "bigtable-cas-response-lost",
@@ -893,6 +896,20 @@ fn should_run_marks_only_memory_only_sqlite_only_and_bigtable_cases_as_not_targe
     "sqlite-seeded-keep-count-mismatch",
     "sqlite-seeded-layout-version-mismatch",
     "sqlite-ttl-unsupported",
+    "spanner-aborted-retry-limit-exceeded",
+    "spanner-aborted-retry-within-limit",
+    "spanner-change-feed-unsupported",
+    "spanner-commit-response-lost",
+    "spanner-seeded-change-feed-enabled",
+    "spanner-seeded-configuration-match",
+    "spanner-seeded-keep-count-mismatch",
+    "spanner-seeded-layout-version-mismatch",
+    "spanner-seeded-retention-mode-mismatch",
+    "spanner-seeded-ttl-configuration-match",
+    "spanner-seeded-ttl-grace-client-mismatch",
+    "spanner-seeded-ttl-grace-config-mismatch",
+    "spanner-seeded-ttl-grace-policy-mismatch",
+    "spanner-ttl-grace-days-not-positive",
     "sqlite-write-lock-busy",
     "store-shared-persistent",
   ];
@@ -907,8 +924,8 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
   // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーに加え、
-  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 14 は、
-  // この言語が提供しない保存先（Spanner）の場面で、22 は Bigtable の場面 12 件と封筒の値の表 10 件（今回の保存先でない）。
+  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 14 は Spanner の場面
+  // （今回の保存先でない）で、22 は Bigtable の場面 12 件と封筒の値の表 10 件（今回の保存先でない）。
   assert_eq!(counts(&reports), (64, 0, 105, 0));
 }
 
@@ -919,7 +936,7 @@ fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() 
   let reports = run(&data, &target_dynamodb::TARGET, classification_executor);
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 65 のうち 7 は、
-  // メモリだけが対象の場面、8 は SQLite だけが対象の場面、14 は、この言語が提供しない保存先（Spanner）の場面、
+  // メモリだけが対象の場面、8 は SQLite だけが対象の場面、14 は Spanner の場面（今回の保存先でない）、
   // 22 は Bigtable の場面と封筒の値の表。
   assert_eq!(counts(&reports), (9, 0, 65, 95));
 }
@@ -932,7 +949,7 @@ fn should_run_classifies_the_sqlite_leg_without_running_a_store() {
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 57 は、SQLite が対象で
   // 保存先の実行に回る場面 45 と値の表 12 で、SQLite だけの場面の `store`・`seed` の要素を未知の要素にしない。
-  // 対象外 103 のうち 14 は、この言語が提供しない保存先（Spanner）の場面、22 は Bigtable の場面と封筒の値の表。
+  // 対象外 103 のうち 14 は Spanner の場面（今回の保存先でない）、22 は Bigtable の場面と封筒の値の表。
   assert_eq!(counts(&reports), (9, 0, 103, 57));
 }
 
@@ -943,20 +960,115 @@ fn should_run_classifies_the_bigtable_leg_without_running_a_store() {
   let reports = run(&data, &target_bigtable::TARGET, classification_executor);
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 76 は、Bigtable が対象で
-  // 保存先の実行に回る場面と値の表（FNV-1a 64 の 4 件を含む）。対象外 84 のうち、この言語が提供しない保存先（Spanner）の
-  // 場面 14 件は「提供しない」、ほかの保存先だけが対象の場面と配置の 60 件は「今回の保存先でない」、
-  // 残りの 10 件は表現能力の違い（負の SeqNr 2 件とミリ秒精度 8 件）。
+  // 保存先の実行に回る場面と値の表（FNV-1a 64 の 4 件を含む）。対象外 84 のうち、Spanner の場面 14 件を含め、
+  // ほかの保存先だけが対象の場面と配置の 74 件は「今回の保存先でない」、残りの 10 件は表現能力の違い
+  // （負の SeqNr 2 件とミリ秒精度 8 件）。この言語が提供する保存先だけなので、「提供しない」になる場面はない。
   assert_eq!(counts(&reports), (9, 0, 84, 76));
   let not_provided: Vec<&str> = reports
     .iter()
     .filter(|report| is_backend_not_provided(&report.outcome))
     .map(|report| report.id.as_str())
     .collect();
-  assert_eq!(not_provided.len(), 14, "{not_provided:?}");
+  assert!(not_provided.is_empty(), "{not_provided:?}");
+  for id in spanner_only_ids(&data) {
+    assert!(
+      is_backend_not_targeted(outcome_of(&reports, id)),
+      "Spanner を提供するので、Spanner だけの場面は「今回の保存先でない」: {id}"
+    );
+  }
+}
+
+#[test]
+fn should_run_classifies_the_spanner_leg_without_running_a_store() {
+  let data = real_data();
+
+  let reports = run(&data, &target_spanner::TARGET, classification_executor);
+
+  // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 68 は、Spanner が対象で
+  // 保存先の実行に回る場面（共通 42 件・共有 1 件・Spanner だけ 14 件）と値の表（FNV-1a 64 の 4 件を含む 11 件）から、
+  // 表現能力の違いの 10 件を除いたもの。対象外 92 は、ほかの保存先だけが対象の場面と配置・値の表の 82 件
+  // （「今回の保存先でない」）と、表現能力の違いの 10 件（負の SeqNr 2 件とミリ秒精度 8 件）。
+  assert_eq!(counts(&reports), (9, 0, 92, 68));
+  let not_provided: Vec<&str> = reports
+    .iter()
+    .filter(|report| is_backend_not_provided(&report.outcome))
+    .map(|report| report.id.as_str())
+    .collect();
   assert!(
-    not_provided.iter().all(|id| id.starts_with("spanner-")),
-    "提供しないのは Spanner の場面だけ: {not_provided:?}"
+    not_provided.is_empty(),
+    "Spanner を提供するので、「提供しない」にする場面はない: {not_provided:?}"
   );
+  let not_targeted = reports
+    .iter()
+    .filter(|report| is_backend_not_targeted(&report.outcome))
+    .count();
+  assert_eq!(not_targeted, 82, "ほかの保存先だけが対象の場面と配置・値の表");
+}
+
+#[test]
+fn should_run_hands_every_spanner_case_to_the_executor_on_the_spanner_leg_instead_of_marking_it_not_provided() {
+  let data = real_data();
+  let ids = spanner_only_ids(&data);
+  assert_eq!(ids.len(), 14, "Spanner だけの場面 14 件");
+  let called: RefCell<Vec<String>> = RefCell::new(Vec::new());
+
+  let reports = run(&data, &target_spanner::TARGET, |case, prepared| {
+    called.borrow_mut().push(case.id.clone());
+    classification_executor(case, prepared)
+  });
+
+  for id in ids.iter().copied().chain(fnv1a64_ids(&data)) {
+    assert!(
+      is_not_executed(outcome_of(&reports, id)),
+      "提供しない・今回の保存先でないと分類せず、保存先実行関数へ委譲する: {id}: {:?}",
+      outcome_of(&reports, id)
+    );
+    assert!(
+      called.borrow().iter().any(|called| called == id),
+      "{id} を実行関数へ渡す"
+    );
+  }
+  for id in ["core-retention-delete-1", "store-shared-persistent"] {
+    assert!(
+      called.borrow().iter().any(|called| called == id),
+      "共通・共有の場面 {id} も渡す"
+    );
+  }
+}
+
+#[test]
+fn should_run_hands_fnv1a64_cases_to_the_executor_on_the_spanner_leg_as_well_as_the_bigtable_leg() {
+  let data = real_data();
+  let ids = fnv1a64_ids(&data);
+  assert_eq!(ids.len(), 4);
+  let called: RefCell<Vec<String>> = RefCell::new(Vec::new());
+
+  let reports = run(&data, &target_spanner::TARGET, |case, _| {
+    called.borrow_mut().push(case.id.clone());
+    CaseOutcome::Passed { values: None }
+  });
+
+  for id in &ids {
+    assert!(
+      matches!(outcome_of(&reports, id), CaseOutcome::Passed { values: None }),
+      "{id}: {:?}",
+      outcome_of(&reports, id)
+    );
+    assert!(
+      called.borrow().iter().any(|called| called == id),
+      "{id} を実行関数へ渡す"
+    );
+  }
+}
+
+/// 実データのうち、Spanner だけが対象の場面（14 件）の ID を返す。
+fn spanner_only_ids(data: &DataSet) -> Vec<&str> {
+  data
+    .cases
+    .iter()
+    .filter(|case| matches!(case.kind, CaseKind::Scenario) && case.body["backends"] == json!(["spanner"]))
+    .map(|case| case.id.as_str())
+    .collect()
 }
 
 #[test]
@@ -1253,7 +1365,7 @@ fn should_run_keeps_the_id_and_all_rules_of_each_case() {
 }
 
 // ---------------------------------------------------------------------------
-// この言語が提供しない保存先（Spanner・Bigtable）のケース
+// この言語が提供する保存先（Spanner・Bigtable）のケースと、提供しない保存先のケース
 // ---------------------------------------------------------------------------
 
 /// Bigtable の封筒の値の表の操作名。
@@ -1293,7 +1405,7 @@ fn case_of_real_data<'a>(data: &'a DataSet, id: &str) -> &'a Case {
 
 /// 実データのうち、この言語が提供しない保存先のケースを返す。
 ///
-/// 場面は `backends` にメモリも DynamoDB も SQLite も Bigtable もないもの。値の表と配置のケースにはない。
+/// 場面は `backends` にメモリも DynamoDB も SQLite も Spanner も Bigtable もないもの。値の表と配置のケースにはない。
 fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
   data
     .cases
@@ -1301,9 +1413,12 @@ fn cases_of_backends_not_provided(data: &DataSet) -> Vec<&Case> {
     .filter(|case| match case.kind {
       CaseKind::Scenario => case.body["backends"].as_array().is_some_and(|backends| {
         !backends.is_empty()
-          && backends
-            .iter()
-            .all(|name| !matches!(name.as_str(), Some("memory" | "dynamodb" | "sqlite" | "bigtable")))
+          && backends.iter().all(|name| {
+            !matches!(
+              name.as_str(),
+              Some("memory" | "dynamodb" | "sqlite" | "spanner" | "bigtable")
+            )
+          })
       }),
       CaseKind::ValueTable | CaseKind::Layout => false,
     })
@@ -1326,24 +1441,40 @@ fn bigtable_only_cases(data: &DataSet) -> Vec<&Case> {
 }
 
 #[test]
-fn should_run_marks_the_14_cases_of_backends_not_provided_as_not_provided_on_every_backend() {
+fn should_run_marks_no_real_case_as_not_provided_now_that_the_five_backends_are_provided() {
   let data = real_data();
+
   let cases = cases_of_backends_not_provided(&data);
-  assert_eq!(cases.len(), 14, "Spanner の場面 14 件");
+
+  assert!(
+    cases.is_empty(),
+    "実データの場面は、この言語が提供する 5 つの保存先のどれかを対象にする: {:?}",
+    cases.iter().map(|case| &case.id).collect::<Vec<_>>()
+  );
+}
+
+#[test]
+fn should_run_case_marks_a_scene_of_a_backend_that_no_language_provides_as_not_provided_and_names_the_backend() {
+  let case = scenario(&["T-1"], scenario_body(&["cassandra"]));
 
   for (target, _) in TARGETS {
-    for case in &cases {
-      let outcome = run_case(case, target, &data.coverage, |_, _| {
-        panic!("提供しない保存先のケースを保存先実行関数へ委譲しない")
-      });
+    let outcome = run_case(&case, target, &no_exclusions(), |_, _| {
+      panic!("提供しない保存先のケースを保存先実行関数へ委譲しない")
+    });
 
-      assert!(
-        is_backend_not_provided(&outcome),
-        "{} {}: {outcome:?}",
-        target.name,
-        case.id
-      );
-    }
+    let report = report_of_outcome(&outcome);
+    assert_eq!(report["status"], "not-applicable", "{}: {report}", target.name);
+    assert_eq!(
+      report["reason"]["kind"], "backend-not-provided",
+      "{}: {report}",
+      target.name
+    );
+    let detail = report["reason"]["detail"].as_str().expect("detail は文字列");
+    assert!(
+      detail.contains("提供しない") && detail.contains("cassandra"),
+      "{}: {detail}",
+      target.name
+    );
   }
 }
 
@@ -1372,29 +1503,30 @@ fn should_run_case_marks_a_sqlite_only_scene_as_not_targeted_instead_of_not_prov
 }
 
 #[test]
-fn should_run_case_marks_a_spanner_only_scene_as_not_provided_and_names_the_backend() {
+fn should_run_case_marks_a_spanner_only_scene_as_not_targeted_instead_of_not_provided() {
   let data = real_data();
   let case = case_of_real_data(&data, "spanner-change-feed-unsupported");
   assert_eq!(case.body["backends"], json!(["spanner"]));
 
-  for target in [&target_memory::TARGET, &target_dynamodb::TARGET, &target_sqlite::TARGET] {
+  for target in [
+    &target_memory::TARGET,
+    &target_dynamodb::TARGET,
+    &target_sqlite::TARGET,
+    &target_bigtable::TARGET,
+  ] {
     let outcome = run_case(case, target, &data.coverage, |_, _| {
-      panic!("提供しない保存先のケースを保存先実行関数へ委譲しない")
+      panic!("今回の保存先でない場面を保存先実行関数へ委譲しない")
     });
 
     let report = report_of_outcome(&outcome);
     assert_eq!(report["status"], "not-applicable", "{}: {report}", target.name);
     assert_eq!(
-      report["reason"]["kind"], "backend-not-provided",
-      "{}: {report}",
+      report["reason"]["kind"], "backend-not-targeted",
+      "Spanner は提供する保存先なので、「提供しない」にしない: {}: {report}",
       target.name
     );
     let detail = report["reason"]["detail"].as_str().expect("detail は文字列");
-    assert!(
-      detail.contains("提供しない") && detail.contains("spanner"),
-      "{}: {detail}",
-      target.name
-    );
+    assert!(detail.contains(target.name), "{}: {detail}", target.name);
   }
 }
 
@@ -1648,6 +1780,67 @@ fn should_run_case_does_not_treat_sqlite_store_settings_and_seed_items_as_unknow
 }
 
 #[test]
+fn should_run_case_accepts_the_spanner_store_settings_and_seed_items_but_still_fails_other_backends_elements() {
+  let mut known = scenario_body(&["spanner"]);
+  known["store"] = json!({
+    "retention_count": 1, "retention_mode": "ttl", "ttl_grace_days": 7, "transaction_retry_limit": 3
+  });
+  known["seed"] = json!({
+    "configuration": {"store_id": "5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11", "layout_version": 1},
+    "row_deletion_policy_days": 7
+  });
+  let accepted = run_case(
+    &scenario(&["T-1"], known),
+    &target_spanner::TARGET,
+    &no_exclusions(),
+    classification_executor,
+  );
+  assert!(is_not_executed(&accepted), "{accepted:?}");
+
+  for (key, value) in [
+    ("lock_wait_milliseconds", json!(100)),
+    ("envelope_limit_bytes", json!(1_048_576)),
+  ] {
+    let mut body = scenario_body(&["spanner"]);
+    body["store"][key] = value;
+
+    let rejected = run_case(
+      &scenario(&["T-1"], body),
+      &target_spanner::TARGET,
+      &no_exclusions(),
+      classification_executor,
+    );
+
+    assert!(
+      matches!(&rejected, CaseOutcome::Failed { detail, .. } if detail.contains(&format!("store.{key}"))),
+      "store.{key}: {rejected:?}"
+    );
+  }
+}
+
+#[test]
+fn should_target_spanner_describe_the_spanner_backend_by_the_settings_it_interprets() {
+  let target = &target_spanner::TARGET;
+
+  assert_eq!(target.name, "spanner");
+  assert!(
+    target.capabilities.is_empty(),
+    "期限切れ方式の能力の語は、場面の requires にない"
+  );
+  assert!(!target.has_layout, "3 テーブルの配置のケースの対象ではない");
+  assert!(
+    target.represents_change_feed,
+    "変更フィードを求める設定も設定の型で表せる（SPN-17）"
+  );
+  let mut store = target.extra_store_settings.to_vec();
+  store.sort_unstable();
+  assert_eq!(store, vec!["transaction_retry_limit", "ttl_grace_days"]);
+  let mut seed = target.extra_seed_items.to_vec();
+  seed.sort_unstable();
+  assert_eq!(seed, vec!["configuration", "row_deletion_policy_days"]);
+}
+
+#[test]
 fn should_run_case_fails_the_elements_of_other_backends_on_sqlite_as_unknown_element() {
   let elements = [
     ("store", "transaction_retry_limit", json!(3)),
@@ -1679,7 +1872,7 @@ fn should_run_case_fails_the_elements_of_other_backends_on_sqlite_as_unknown_ele
 
 #[test]
 fn should_run_case_marks_a_not_provided_scene_before_interpreting_any_unknown_element() {
-  let case = scene_with_elements_of_other_backends(&["spanner"]);
+  let case = scene_with_elements_of_other_backends(&["cassandra"]);
 
   for (target, _) in TARGETS {
     let outcome = run_case(&case, target, &no_exclusions(), |_, _| {

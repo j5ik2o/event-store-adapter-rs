@@ -11,8 +11,6 @@ mod envelope;
 #[cfg(feature = "bigtable")]
 mod execute;
 #[cfg(feature = "bigtable")]
-mod hash;
-#[cfg(feature = "bigtable")]
 mod scene;
 
 #[cfg(feature = "bigtable")]

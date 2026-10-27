@@ -11,7 +11,7 @@ The repository is a Cargo workspace. The release workflow publishes only `event-
 | Directory | Package | Role |
 |:--|:--|:--|
 | `lib` | `event-store-adapter-rs` | The library crate. The package that is published |
-| `test-utils` | `event-store-adapter-test-utils-rs` | Starts DynamoDB Local and the Bigtable emulator in containers for tests |
+| `test-utils` | `event-store-adapter-test-utils-rs` | Starts DynamoDB Local, the Spanner emulator, and the Bigtable emulator in containers for tests |
 | `examples/user-account` | `example-user-account` | An example application that uses DynamoDB Local |
 | `conformance-runner` | `event-store-adapter-conformance-rs` | Runs the conformance test data in `conformance/` |
 | `migration-cli` | `event-store-adapter-migration-rs` | The command line tool that migrates v3 data |
@@ -41,7 +41,7 @@ Some files in this repository are pinned copies or data from the hub. CI compare
 - Rust toolchain: no file pins the toolchain. CI builds and tests with stable. The minimum supported Rust version is 1.94.1 (`rust-version` in `lib/Cargo.toml`).
 - Formatting: use nightly rustfmt. The settings are in `rustfmt.toml` (`tab_spaces = 2`, `max_width = 120`). Install nightly if you do not have it.
 - API surface check: `cargo test -p event-store-adapter-api-surface-rs` and `cargo test --workspace` need the nightly of a fixed date, because the check builds rustdoc JSON with it.
-- Docker: the tests of the DynamoDB and Bigtable storages, the migration, the example, and the conformance runs for DynamoDB and Bigtable start containers with testcontainers, so Docker must be running. They use DynamoDB Local 3.3.1 and the Bigtable emulator (google-cloud-cli 587.0.0-emulators), both pinned by digest. The tests connect to DynamoDB Local with a dummy region and dummy credentials, and to the emulator without credentials. The Memory and SQLite tests do not need Docker.
+- Docker: the tests of the DynamoDB, Spanner, and Bigtable storages, the migration, the example, and the conformance runs for DynamoDB, Spanner, and Bigtable start containers with testcontainers, so Docker must be running. They use DynamoDB Local 3.3.1, the Spanner emulator 1.5.58 (`gcr.io/cloud-spanner-emulator/emulator`), and the Bigtable emulator (google-cloud-cli 587.0.0-emulators), all pinned by digest. The tests connect to DynamoDB Local with a dummy region and dummy credentials, and to the two emulators without credentials. The Spanner tests create a new database for each test, and the conformance run for Spanner drops each scene's database after the scene. The Memory and SQLite tests do not need Docker.
 - Python 3: `tools/user-docs/check.py` and `tools/conformance/manifest.py` use only the standard library. The tests in `.github/test_*.py` need the `semver` package. CI uses Python 3.15. `tools/user-docs/check.py` requires Python 3.10 or later.
 - actionlint: CI installs it with `go install` (Go 1.27) and runs it on the workflow files.
 - cargo-deny: it audits the dependencies with the settings in `deny.toml`.
@@ -65,8 +65,8 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on pull requests to `m
 | `test-conformance-migration` | The tests of the conformance runner and the migration CLI with all features | Yes |
 | `api-surface` | The shape of the public API, with the pinned nightly | No |
 | `feature-matrix` | The library for each feature set (details below) | No |
-| `clippy` | Clippy with warnings denied for the same seven feature sets | No |
-| `conformance` | The conformance test data for each storage: `memory`, `dynamodb`, `sqlite`, and `bigtable` | `dynamodb` and `bigtable` only |
+| `clippy` | Clippy with warnings denied for the same eight feature sets | No |
+| `conformance` | The conformance test data for each storage: `memory`, `dynamodb`, `sqlite`, `spanner`, and `bigtable` | `dynamodb`, `spanner`, and `bigtable` only |
 | `audit` | `cargo deny check advisories licenses` | No |
 | `CI Success` | Collects `lint`, `test-lib`, `test-conformance-migration`, `api-surface`, `feature-matrix`, `clippy`, `release-control`, and `conformance`. It does not include `audit` | No |
 
@@ -96,16 +96,17 @@ cargo build --workspace --all-targets --all-features
 cargo test --workspace --all-features
 ```
 
-- `feature-matrix` runs the tests for `--no-default-features`, `--features sqlite`, and `--features sqlite-migration`. It only builds `--features dynamodb`, `--features bigtable`, `--features bigtable-migration`, and `--all-features`.
-- `feature-matrix` also checks the dependency graph with `cargo tree`. Without features, no cloud SDK and no SQLite crate may appear. With only `sqlite-migration`, no cloud SDK may appear. With only `bigtable-migration`, no AWS, SQLite, or Google authentication crate may appear. It also checks that `lib/src/` has no hand-written `unsafe impl`.
-- `clippy` runs `cargo clippy --workspace --all-targets <flags> -- -D warnings` for seven sets of flags: `--no-default-features`; `--no-default-features` with `--features <feature>` for each of `dynamodb`, `sqlite`, `sqlite-migration`, `bigtable`, and `bigtable-migration`; and `--all-features`.
-- The `dynamodb`, `sqlite`, and `bigtable` legs of `conformance` add `--features <storage>` after `--release` and set `--backend <storage>`. The `dynamodb` and `bigtable` legs start the container themselves.
+- `feature-matrix` runs the tests for `--no-default-features`, `--features sqlite`, and `--features sqlite-migration`. It only builds `--features dynamodb`, `--features spanner`, `--features bigtable`, `--features bigtable-migration`, and `--all-features`.
+- `feature-matrix` also checks the dependency graph with `cargo tree`. Without features, no cloud SDK and no SQLite crate may appear. With only `sqlite-migration`, no cloud SDK may appear. With only `bigtable-migration`, no AWS, SQLite, or Google authentication crate may appear. With only `spanner`, no AWS, SQLite, Bigtable, or Google authentication crate may appear. It also checks that `lib/src/` has no hand-written `unsafe impl`.
+- `clippy` runs `cargo clippy --workspace --all-targets <flags> -- -D warnings` for eight sets of flags: `--no-default-features`; `--no-default-features` with `--features <feature>` for each of `dynamodb`, `sqlite`, `sqlite-migration`, `spanner`, `bigtable`, and `bigtable-migration`; and `--all-features`.
+- The `dynamodb`, `sqlite`, `spanner`, and `bigtable` legs of `conformance` add `--features <storage>` after `--release` and set `--backend <storage>`. The `dynamodb`, `spanner`, and `bigtable` legs start the container themselves. To run the Spanner leg locally, run `cargo run -p event-store-adapter-conformance-rs --release --features spanner -- --backend spanner --data conformance --report conformance-report-spanner.json --require-all`.
 - Unit tests live next to the code in `*_test.rs` files that are attached with `#[cfg(test)] #[path = "x_test.rs"] mod tests;`. Integration tests live in the `tests/` directory of each crate.
 - `tools/user-docs/check.py` checks the README, the storage schema documents, and the migration guides, in English and Japanese. It checks the heading structure, whether the targets of relative links exist, and the first line of each Japanese file. It does not check the text itself.
 
 ## Design history
 
 - `docs/design/next-major.md` (Japanese: `docs/design/next-major.ja.md`) is the design record from building v5. For current usage, read the README and the current code.
+- `docs/design/spanner-backend.md` (Japanese: `docs/design/spanner-backend.ja.md`) is the design record of the Spanner storage: its design decisions, the tests that cover the rules the conformance data cannot express, the conformance result, and what the emulator cannot verify.
 - The decisions shared by all implementations are in the ADRs of the hub repository (see "Shared contract and decisions").
 - `CHANGELOG.md` records the releases up to 5.0.1 and is no longer updated. The record of later changes is the release notes on [GitHub Releases](https://github.com/j5ik2o/event-store-adapter-rs/releases).
 - `aidlc/` holds generated artifacts of earlier work. They are historical records.

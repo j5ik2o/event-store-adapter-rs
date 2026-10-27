@@ -1,10 +1,9 @@
-//! Bigtable の FNV-1a 64 の値の表（K-1）。行キーの接頭辞に使うライブラリの関数を、`test-hooks` の経路で実行する。
+//! FNV-1a 64 の値の表（K-1）。行キーの接頭辞に使うライブラリの関数を、保存先ごとに受け取って実行する。
 //!
-//! ハッシュの計算は実行器の中に持たず、ライブラリが返す値を、データの固定 16 桁の 16 進数（`0x` 付き）と
-//! 符号なし 64bit として比べる。形の崩れたデータ（`0x` がない、16 桁でない、16 進でない文字がある、入力がない）は、
-//! そのケースの失敗にする。
+//! ハッシュの計算は実行器の中に持たず、保存先（Bigtable・Spanner）がライブラリの `test-hooks` の経路から渡す関数が
+//! 返す値を、データの固定 16 桁の 16 進数（`0x` 付き）と符号なし 64bit として比べる。
+//! 形の崩れたデータ（`0x` がない、16 桁でない、16 進でない文字がある、入力がない）は、そのケースの失敗にする。
 
-use event_store_adapter_rs::bigtable::fnv1a64_for_test;
 use serde_json::{json, Value};
 
 use crate::{
@@ -13,13 +12,13 @@ use crate::{
 };
 
 #[cfg(test)]
-#[path = "hash_test.rs"]
+#[path = "hash_values_test.rs"]
 mod tests;
 
 const FNV1A64: &str = "fnv1a64";
 
 /// 値の表の `operation` が、FNV-1a 64 なら真。
-pub(super) fn is_hash_operation(body: &Value) -> bool {
+pub(crate) fn is_hash_operation(body: &Value) -> bool {
   body.get("operation").and_then(Value::as_str) == Some(FNV1A64)
 }
 
@@ -37,7 +36,8 @@ fn expected_value(text: &str) -> Result<u64, String> {
   u64::from_str_radix(digits, 16).map_err(|error| format!("{text}: {error}"))
 }
 
-fn run_with(body: &Value, hash: impl Fn(&[u8]) -> u64) -> CaseOutcome {
+/// 値の表 `body` を、渡された `hash`（保存先が行キーに使うライブラリの関数）で実行する。
+pub(crate) fn run_with(body: &Value, hash: impl Fn(&[u8]) -> u64) -> CaseOutcome {
   let (input, expect) = match (required(body, "input"), required(body, "expect")) {
     (Ok(input), Ok(expect)) => (input, expect),
     (Err(detail), _) | (_, Err(detail)) => return failed(None, detail),
@@ -68,9 +68,4 @@ fn run_with(body: &Value, hash: impl Fn(&[u8]) -> u64) -> CaseOutcome {
       actual,
     }),
   }
-}
-
-/// FNV-1a 64 の値の表（[`is_hash_operation`] が真のもの）を、行キーに使うライブラリの関数で実行する。
-pub(super) fn run(body: &Value) -> CaseOutcome {
-  run_with(body, fnv1a64_for_test)
 }

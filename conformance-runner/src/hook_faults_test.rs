@@ -150,3 +150,125 @@ fn should_inject_map_journal_write_phases_to_append_storage_errors() {
   assert!(is_append_storage_error(&previous), "{previous:?}");
   assert!(is_append_storage_error(&tail), "{tail:?}");
 }
+
+// ---------------------------------------------------------------------------
+// Spanner の障害: コミットの中断（SPN-7・transaction-aborted）と、コミットの応答の消失（SPN-8）
+// ---------------------------------------------------------------------------
+
+fn aborted_fault(operation: u32, times: u32) -> Value {
+  json!({
+    "operation": operation,
+    "phase": "commit",
+    "kind": "transaction-aborted",
+    "injection": "replace-request",
+    "repeat": {"mode": "count", "count": times},
+    "details": {"message": "STORAGE_SENTINEL"}
+  })
+}
+
+/// `spanner` だけを対象にする、2 手順の場面の障害の計画を登録する。
+fn spanner_plan(faults: Vec<Value>) -> FaultPlan {
+  FaultPlan::register(&json!({"backends": ["spanner"], "steps": [{}, {}], "faults": faults})).expect("宣言は正しい")
+}
+
+// Spanner が表せる障害: コミットの中断と、コミットの応答の消失は、共通の障害に加えて表せる。
+#[test]
+fn should_supports_all_spanner_accept_aborted_commits_and_a_commit_response_loss() {
+  let plan = spanner_plan(vec![
+    aborted_fault(2, 2),
+    fault(1, "commit", "replace-response"),
+    fault(1, "commit", "replace-request"),
+    fault(1, "read-events", "replace-request"),
+  ]);
+
+  assert!(supports_all_spanner(&plan));
+}
+
+// コミットの中断は Spanner だけが表せる。メモリ・SQLite・Bigtable の判定は変えない。
+#[test]
+fn should_supports_all_keep_rejecting_aborted_commits_that_only_spanner_can_express() {
+  let plan = spanner_plan(vec![aborted_fault(2, 1)]);
+
+  assert!(!supports_all(&plan), "メモリと SQLite はコミットの中断を表せない");
+  assert!(!supports_all_bigtable(&plan), "Bigtable はコミットの中断を表せない");
+}
+
+#[test]
+fn should_supports_all_spanner_reject_a_fault_in_store_creation() {
+  let plan = spanner_plan(vec![aborted_fault(0, 1)]);
+
+  assert!(!supports_all_spanner(&plan), "ストアの生成（操作 0）の障害は表せない");
+}
+
+// コミットの中断は、コミットを送る前の差し込み（要求の置き換え）で、宣言した回数だけ中断として返す。
+#[test]
+fn should_inject_commit_request_report_an_abort_for_the_declared_number_of_times_and_then_proceed() {
+  let plan = spanner_plan(vec![aborted_fault(2, 2)]);
+  let hooks = hook_faults_of(&plan, 2);
+
+  let first = hooks.inject_commit_request();
+  let second = hooks.inject_commit_request();
+  let third = hooks.inject_commit_request();
+
+  assert!(matches!(first, CommitInjection::Aborted), "{first:?}");
+  assert!(matches!(second, CommitInjection::Aborted), "{second:?}");
+  assert!(
+    matches!(third, CommitInjection::Proceed),
+    "宣言した回数（2 回）で尽きる: {third:?}"
+  );
+}
+
+#[test]
+fn should_inject_commit_request_proceed_when_no_fault_is_declared_for_the_operation() {
+  let plan = spanner_plan(vec![aborted_fault(2, 1)]);
+  let hooks = hook_faults_of(&plan, 1);
+
+  let injection = hooks.inject_commit_request();
+
+  assert!(matches!(injection, CommitInjection::Proceed), "{injection:?}");
+}
+
+// 中断ではない storage-error の要求の置き換えは、再試行の対象にならない失敗として返す。
+#[test]
+fn should_inject_commit_request_report_a_storage_error_as_a_failure_and_not_as_an_abort() {
+  let plan = spanner_plan(vec![fault(1, "commit", "replace-request")]);
+  let hooks = hook_faults_of(&plan, 1);
+
+  let injection = hooks.inject_commit_request();
+
+  assert!(
+    matches!(
+      &injection,
+      CommitInjection::Failed(EventStoreError::Storage {
+        operation: StorageOperation::Append,
+        ..
+      })
+    ),
+    "{injection:?}"
+  );
+}
+
+// 応答の消失（replace-response）と中断は互いの差し込みで消費されない。
+#[test]
+fn should_inject_commit_request_leave_a_replace_response_fault_for_inject_response() {
+  let plan = spanner_plan(vec![fault(1, "commit", "replace-response")]);
+  let hooks = hook_faults_of(&plan, 1);
+
+  let request = hooks.inject_commit_request();
+  let response = hooks.inject_response(Phase::Commit);
+
+  assert!(matches!(request, CommitInjection::Proceed), "{request:?}");
+  assert!(is_append_storage_error(&response), "{response:?}");
+}
+
+#[test]
+fn should_inject_response_leave_an_aborted_commit_for_inject_commit_request() {
+  let plan = spanner_plan(vec![aborted_fault(1, 1)]);
+  let hooks = hook_faults_of(&plan, 1);
+
+  let response = hooks.inject_response(Phase::Commit);
+  let request = hooks.inject_commit_request();
+
+  assert!(response.is_ok(), "応答の差し込みは中断を適用しない: {response:?}");
+  assert!(matches!(request, CommitInjection::Aborted), "{request:?}");
+}

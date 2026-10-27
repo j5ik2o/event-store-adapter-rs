@@ -10,11 +10,11 @@
 
 ## Overview
 
-This library provides Memory, DynamoDB, SQLite, and Bigtable event stores for CQRS/Event Sourcing.
+This library provides Memory, DynamoDB, SQLite, Spanner, and Bigtable event stores for CQRS/Event Sourcing.
 
 This crate follows [common contract v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md); its major version 5 matches the contract revision.
 
-> 5.0.0 is the first release of the new API. Stored v3 DynamoDB, SQLite, and Bigtable data is supported only through the explicit migration functions or CLI.
+> 5.0.0 is the first release of the new API. Stored v3 DynamoDB, SQLite, and Bigtable data is supported only through the explicit migration functions or CLI. Earlier releases had no Spanner storage, so there is nothing to migrate for it.
 
 The public API is exported from the crate root; there is no `next` namespace or old API alias.
 
@@ -32,6 +32,7 @@ The public API is exported from the crate root; there is no `next` namespace or 
 | (none) | `EventStoreForMemory` and `MemoryStorage`, always available |
 | `dynamodb` | `EventStoreForDynamoDB`, using `aws-sdk-dynamodb` |
 | `sqlite` | `EventStoreForSqlite`, `initialize_sqlite_store`, and `SqliteOptions`, using `rusqlite` with a bundled SQLite |
+| `spanner` | `EventStoreForSpanner`, `initialize_spanner_store`, `SpannerOptions`, `SpannerRetention`, `SpannerConnection`, `SpannerTables`, and `SpannerTokenSource`, using `tonic` and the generated Spanner gRPC clients |
 | `bigtable` | `EventStoreForBigtable`, `initialize_bigtable_store`, `BigtableOptions`, `BigtableConnection`, `BigtableTables`, and `BigtableTokenSource`, using `tonic` and the generated Bigtable gRPC clients |
 | `migration` | `migrate_v3_dynamodb`; also enables `dynamodb` |
 | `sqlite-migration` | `migrate_v3_sqlite`; also enables `sqlite`, and brings in no AWS or Bigtable crates |
@@ -202,6 +203,98 @@ async fn main() -> Result<(), EventStoreError> {
 
 A store instance and its clones share one connection. See [the SQLite schema](docs/SQLITE_DATABASE_SCHEMA.md) for the tables, the connection settings, how to initialize a file by hand, transactions, and retention. To move data from a v3 SQLite file, see [Migration](#migration).
 
+### Spanner
+
+Enable `features = ["spanner"]`. The store talks to Cloud Spanner (or the Spanner emulator) over gRPC through five tables in one GoogleSQL-dialect database: `<prefix>_journal`, `<prefix>_head`, `<prefix>_snapshot_current`, `<prefix>_snapshot_history`, and `<prefix>_config`, all named from the one `table_prefix` you give. The library never runs DDL. Create the database and apply the DDL from [the Spanner schema](docs/SPANNER_DATABASE_SCHEMA.md) before the first `initialize_spanner_store` (for the Spanner TTL style, also the row deletion policy on `<prefix>_snapshot_history`).
+
+Initialization and opening are separate, explicit steps:
+
+- `initialize_spanner_store(&connection, &tables, &options)` checks the database dialect, the columns, the primary keys, and the row deletion policy against `options`, confirms that the five tables are empty, and writes one configuration row with a generated `store_id`. It never creates tables, and it fails with a configuration error (`ConfigurationReason::SpannerAlreadyInitialized`) when the configuration row exists or a table already holds rows.
+- `EventStoreForSpanner::open(connection, tables, options)` (or `open_with_serializers` for non-serde payloads) runs the same check and reads the configuration row. It never creates anything and never repairs a mismatch. A missing or different table, a missing or malformed configuration row, or a setting that differs from the recorded one is a configuration error (`EventStoreError::Configuration`); a connection or service failure is a storage error (`EventStoreError::Storage`).
+
+`SpannerOptions` has three fields. `retention` defaults to `SpannerRetention::CurrentOnly`. `KeepLatest { count }` keeps the newest `count` history snapshots and deletes older ones at once. `KeepLatestWithTtl { count, grace_days }` instead marks older history with `expired_at` and leaves the deletion to a `ROW DELETION POLICY (OLDER_THAN(expired_at, INTERVAL <grace_days> DAY))` on `<prefix>_snapshot_history`. `count` and `grace_days` must be at least 1 and fit in an INT64, and the value used by `open` must equal the one used to initialize the store and the days of the row deletion policy. `change_feed` must stay `false`: this storage does not provide a change feed, and `true` is a configuration error. `transaction_retry_limit` is how many times an aborted transaction is retried, not counting the first attempt, 5 by default; running out of retries is a storage error.
+
+An append is one SERIALIZABLE read-write transaction, and the commit is its commit point. Reads use strong read-only transactions, and the head and the rows read after it come from the same read point. The library retries only an ABORTED transaction, with the same event and the same `seq_nr`. If the response to a commit is lost, the append is a storage error whose outcome is unknown: nothing is retried or compensated, and sending the same `seq_nr` again is an optimistic-lock error when the first attempt did commit. Old history is retired in a separate transaction after the append commits. When that fails, a `tracing` warning is emitted and the append still succeeds.
+
+The connection is a `SpannerConnection` that holds one `tonic::transport::Channel`; the same channel serves the data API and the database admin API. Because `open` and `initialize_spanner_store` read the database dialect through the admin API (`GetDatabase`), the credentials need the `spanner.databases.get` permission in addition to the data API permissions. The emulator needs a plaintext channel and no credentials:
+
+```toml
+[dependencies]
+event-store-adapter-rs = { version = "5", features = ["spanner"] }
+chrono = "0.4"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.14", default-features = false, features = ["channel"] }
+```
+
+```rust
+use event_store_adapter_rs::{EventStoreForSpanner, SpannerOptions, SpannerRetention};
+use serde_json::Value;
+use tonic::transport::Endpoint;
+use chrono::Utc;
+use event_store_adapter_rs::{
+  initialize_spanner_store, AggregateId, EventEnvelope, EventStore, SnapshotEnvelope, SpannerConnection, SpannerTables,
+};
+use serde_json::json;
+
+#[derive(Debug, Clone)]
+struct AccountId(String);
+
+impl AggregateId for AccountId {
+  fn type_name(&self) -> String {
+    "Account".into()
+  }
+
+  fn value(&self) -> String {
+    self.0.clone()
+  }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+  // The emulator listens without TLS. The database and its five tables already exist.
+  let channel = Endpoint::from_static("http://localhost:9010").connect().await?;
+  let tables = SpannerTables {
+    project_id: "my-project".into(),
+    instance_id: "my-instance".into(),
+    database_id: "my-database".into(),
+    table_prefix: "esa".into(),
+  };
+  let connection = SpannerConnection::new(channel);
+  let options = SpannerOptions {
+    retention: SpannerRetention::KeepLatest { count: 2 },
+    ..SpannerOptions::default()
+  };
+  // Run once for new tables; they are no longer uninitialized afterwards.
+  initialize_spanner_store(&connection, &tables, &options).await?;
+  let store: EventStoreForSpanner<AccountId, Value, Value> =
+    EventStoreForSpanner::open(connection, tables, options).await?;
+  let id = AccountId("1".into());
+
+  store
+    .persist_event(
+      EventEnvelope::new(id.clone(), 1, Utc::now(), json!({"created": "Alice"})).with_manifest("account-created/v1"),
+    )
+    .await?;
+  store
+    .persist_event_and_snapshot(
+      EventEnvelope::new(id.clone(), 2, Utc::now(), json!({"renamed": "Bob"})),
+      SnapshotEnvelope::new(json!({"name": "Bob"}), 2).with_manifest("account/v1"),
+    )
+    .await?;
+  let events = store.get_events_by_id_since_seq_nr(&id, 1).await?;
+  assert_eq!(events.len(), 2);
+  let latest = store.get_latest_snapshot_by_id(&id).await?.unwrap();
+  assert_eq!(latest.head_seq_nr(), 2);
+  assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
+  Ok(())
+}
+```
+
+Production Cloud Spanner needs a TLS channel and an access token on every request. The library does not depend on a TLS stack or on Google's authentication libraries. Enable the TLS features of `tonic` in your own dependencies (for example `tls-ring` with `tls-native-roots`), build the `Channel` for `https://spanner.googleapis.com` yourself, implement `SpannerTokenSource`, whose `access_token` returns a fresh token, and pass it with `SpannerConnection::with_token_source`. The store calls the source right before every data and admin request and sends `authorization: Bearer <token>`; holding and refreshing the token is the source's job, and a failing source turns that operation into a storage error without sending the request.
+
+The rules of this storage hold for one Spanner database in a configuration where read-write transactions and strongly consistent reads of that database hold, and all tables are in that database. A store instance and its clones share the connection, and several store instances may open the same database as long as they use the same settings. Deployments that read old points in time or split the five tables across databases are out of scope. This release does not provide a change feed. Earlier releases had no Spanner storage, so there is no migration tool; see [Migration](#migration). See [the Spanner schema](docs/SPANNER_DATABASE_SCHEMA.md) for the layout, the configuration row, initialization, writes and reads, and retention.
+
 ### Bigtable
 
 Enable `features = ["bigtable"]`. The store talks to Cloud Bigtable (or the Bigtable emulator) over gRPC through two tables, `journal` and `head`. Table creation is outside the library, and so is the app profile. Prepare these before the first `initialize_bigtable_store`:
@@ -292,7 +385,7 @@ The default constructors use JSON and require `Serialize + DeserializeOwned` on 
 
 ## Retention
 
-`RetentionSettings::current_only()` is the default. `keep_latest(n)` retains the newest `n` history snapshots; 0 is invalid. Memory supports deletion only; `MemoryStorage::new` returns a configuration error for any `RetentionMode::Ttl`, with or without a history count. DynamoDB supports deletion or `RetentionMode::Ttl { grace_seconds }`; configure the snapshot table's TTL attribute `ttl` separately. With a history count, Memory runs retention after successful appends, including event-only appends. DynamoDB runs retention only when a history count is configured and an append that writes a history snapshot succeeds; event-only appends do not run retention. A retention failure emits a `tracing` warning with aid, seq_nr, phase, and error; the committed write still succeeds.
+`RetentionSettings::current_only()` is the default. `keep_latest(n)` retains the newest `n` history snapshots; 0 is invalid. Memory supports deletion only; `MemoryStorage::new` returns a configuration error for any `RetentionMode::Ttl`, with or without a history count. DynamoDB supports deletion or `RetentionMode::Ttl { grace_seconds }`; configure the snapshot table's TTL attribute `ttl` separately. With a history count, Memory runs retention after successful appends, including event-only appends. DynamoDB runs retention only when a history count is configured and an append that writes a history snapshot succeeds; event-only appends do not run retention. Spanner supports `SpannerRetention::KeepLatest { count }`, which deletes older history at once, and `KeepLatestWithTtl { count, grace_days }`, which marks older history and leaves the deletion to the row deletion policy; it runs retention in a separate transaction after an append that writes a history snapshot succeeds. A retention failure emits a `tracing` warning with aid, seq_nr, phase, and error; the committed write still succeeds.
 
 ## Errors
 
@@ -300,7 +393,7 @@ The default constructors use JSON and require `Serialize + DeserializeOwned` on 
 
 ## Migration
 
-The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE.md). For v3's default SQLite layout, use the `migrate_v3_sqlite` function (feature `sqlite-migration`) or the same CLI with `--old-sqlite` and `--sqlite`; it reads the old SQLite file without changing it and writes a new file that you initialized with `initialize_sqlite_store`. For v3.0.6's default Bigtable layout (the journal and snapshot tables), use the `migrate_v3_bigtable` function (feature `bigtable-migration`) or the same CLI with `--old-bigtable-*` and `--bigtable-*`; it only reads the two old tables and writes two new tables that you created with their column families and initialized with `initialize_bigtable_store`. Stop old writes and provision empty new tables (for SQLite, an initialized, empty file; for Bigtable, initialized, empty tables) before migration. Custom `KeyResolver` layouts are outside this migration's scope.
+The normal stores read only the new layout. For v3's default DynamoDB layout, use the feature-gated `migrate_v3_dynamodb` function or the thin CLI described in [the v5 migration guide](docs/MIGRATION_GUIDE.md). For v3's default SQLite layout, use the `migrate_v3_sqlite` function (feature `sqlite-migration`) or the same CLI with `--old-sqlite` and `--sqlite`; it reads the old SQLite file without changing it and writes a new file that you initialized with `initialize_sqlite_store`. For v3.0.6's default Bigtable layout (the journal and snapshot tables), use the `migrate_v3_bigtable` function (feature `bigtable-migration`) or the same CLI with `--old-bigtable-*` and `--bigtable-*`; it only reads the two old tables and writes two new tables that you created with their column families and initialized with `initialize_bigtable_store`. Stop old writes and provision empty new tables (for SQLite, an initialized, empty file; for Bigtable, initialized, empty tables) before migration. Earlier releases had no Spanner storage, so there is no Spanner migration function or CLI option; start a Spanner store from an empty database as described in [the migration guide](docs/MIGRATION_GUIDE.md). Custom `KeyResolver` layouts are outside this migration's scope.
 
 Historical [v3 migration guidance](docs/MIGRATION_GUIDE_v3.md) remains available for users staying on 3.x.
 
@@ -314,7 +407,7 @@ rustup toolchain install nightly-2026-09-27 --profile minimal
 cargo +1.99.0 test --workspace --all-features
 ```
 
-DynamoDB and migration integration tests require Docker.
+DynamoDB, Spanner, Bigtable, and migration integration tests require Docker.
 
 ## License
 

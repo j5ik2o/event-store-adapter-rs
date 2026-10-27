@@ -1,5 +1,8 @@
-//! FNV-1a 64 の値の表の実行（`hash.rs`）の試験。`hash.rs` の末尾から
-//! `#[cfg(test)] #[path = "hash_test.rs"] mod tests;` で結ぶ。
+//! FNV-1a 64 の値の表の実行（`hash_values.rs`）の試験。`hash_values.rs` の冒頭近くから
+//! `#[cfg(test)] #[path = "hash_values_test.rs"] mod tests;` で結ぶ。
+//!
+//! ライブラリの関数は、保存先ごとの実行の試験（`tests/bigtable_test.rs`・`tests/spanner_test.rs`）が実データで確かめる。
+//! ここでは、保存先に依存しない値の表の読み方と比べ方を、データの期待値と同じ値を返す参照実装で確かめる。
 
 use std::path::Path;
 
@@ -7,6 +10,17 @@ use serde_json::{json, Value};
 
 use super::*;
 use crate::data::{load, Case, DataSet};
+
+/// FNV-1a 64（hash.md の K-1）の参照実装。ライブラリの関数とは独立に、規格の定数から書く。
+fn reference_fnv1a64(input: &[u8]) -> u64 {
+  input.iter().fold(0xcbf2_9ce4_8422_2325_u64, |hash, byte| {
+    (hash ^ u64::from(*byte)).wrapping_mul(0x0000_0100_0000_01b3)
+  })
+}
+
+fn run(body: &Value) -> CaseOutcome {
+  run_with(body, reference_fnv1a64)
+}
 
 fn hash_case(utf8: &str, expect_value: &str) -> Value {
   json!({"operation": FNV1A64, "input": {"utf8": utf8}, "expect": {"value": expect_value}})
@@ -78,7 +92,7 @@ fn should_expected_value_reject_values_that_are_not_a_fixed_sixteen_digit_hexade
 }
 
 #[test]
-fn should_run_pass_a_case_whose_expectation_equals_the_library_output() {
+fn should_run_pass_a_case_whose_expectation_equals_the_hash_output() {
   let outcome = run(&hash_case("a", "0xaf63dc4c8601ec8c"));
 
   match outcome {
@@ -91,7 +105,7 @@ fn should_run_pass_a_case_whose_expectation_equals_the_library_output() {
 }
 
 #[test]
-fn should_run_pass_every_fnv1a64_case_of_the_distributed_data_with_the_library_function() {
+fn should_run_pass_every_fnv1a64_case_of_the_distributed_data_with_the_reference_hash() {
   let data = real_data();
 
   for case in hash_cases(&data) {
@@ -106,7 +120,7 @@ fn should_run_pass_every_fnv1a64_case_of_the_distributed_data_with_the_library_f
 }
 
 #[test]
-fn should_run_fail_a_case_whose_expectation_differs_from_the_library_output() {
+fn should_run_fail_a_case_whose_expectation_differs_from_the_hash_output() {
   let outcome = run(&hash_case("a", "0xaf63dc4c8601ec8d"));
 
   match outcome {
@@ -168,7 +182,7 @@ fn should_run_fail_every_fnv1a64_case_of_the_distributed_data_when_the_hash_retu
       case.id
     );
 
-    let outcome = crate::runner::run_case(case, &crate::target_bigtable::TARGET, &data.coverage, |_, prepared| {
+    let outcome = crate::runner::run_case(case, &crate::target_spanner::TARGET, &data.coverage, |_, prepared| {
       run_with(&prepared.body, wrong_hash)
     });
 

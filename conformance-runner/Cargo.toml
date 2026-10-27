@@ -9,6 +9,7 @@ default = []
 dynamodb = ["event-store-adapter-rs/dynamodb", "dep:event-store-adapter-test-utils-rs", "dep:testcontainers", "dep:aws-smithy-http-client"]
 sqlite = ["event-store-adapter-rs/sqlite", "dep:rusqlite"]
 bigtable = ["event-store-adapter-rs/bigtable", "dep:event-store-adapter-test-utils-rs", "tokio/rt-multi-thread"]
+spanner = ["event-store-adapter-rs/spanner", "dep:event-store-adapter-test-utils-rs", "tokio/rt-multi-thread"]
 
 [[test]]
 name = "sqlite_test"
@@ -17,6 +18,10 @@ required-features = ["sqlite"]
 [[test]]
 name = "bigtable_test"
 required-features = ["bigtable"]
+
+[[test]]
+name = "spanner_test"
+required-features = ["spanner"]
 
 [[test]]
 name = "dynamodb_config_read_test"

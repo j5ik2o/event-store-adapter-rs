@@ -21,6 +21,8 @@ tonic = { version = "0.14.6", default-features = false }
 gcp_auth = "0.12.7"
 googleapis-tonic-google-bigtable-v2 = "0.39.0"
 googleapis-tonic-google-bigtable-admin-v2 = "0.45.0"
+googleapis-tonic-google-spanner-v1 = "0.45.0"
+googleapis-tonic-google-spanner-admin-database-v1 = "0.40.0"
 
 tracing = "0.1"
 tracing-subscriber = "0.3"

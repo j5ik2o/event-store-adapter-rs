@@ -101,6 +101,9 @@ jobs:
           - name: sqlite-migration
             flags: --no-default-features --features sqlite-migration
             mode: test
+          - name: spanner
+            flags: --no-default-features --features spanner
+            mode: build
           - name: bigtable
             flags: --no-default-features --features bigtable
             mode: build
@@ -148,6 +151,13 @@ jobs:
             echo "AWS, SQLite or Google auth crates leaked into the bigtable-migration dependency graph"
             exit 1
           fi
+      - name: AWS, SQLite, Bigtable and Google auth crates must be absent with only the Spanner feature
+        if: matrix.name == 'spanner'
+        run: |
+          if cargo tree -p event-store-adapter-rs -e normal --no-default-features --features spanner | grep -E "aws-|rusqlite|libsqlite3|bigtable|gcp_auth|google-cloud-auth|yup-oauth2"; then
+            echo "AWS, SQLite, Bigtable or Google auth crates leaked into the spanner dependency graph"
+            exit 1
+          fi
       - name: no hand-written unsafe impl
         if: matrix.name == 'no-features'
         run: |
@@ -174,6 +184,8 @@ jobs:
             flags: --no-default-features --features sqlite
           - name: sqlite-migration
             flags: --no-default-features --features sqlite-migration
+          - name: spanner
+            flags: --no-default-features --features spanner
           - name: bigtable
             flags: --no-default-features --features bigtable
           - name: bigtable-migration
@@ -204,7 +216,9 @@ jobs:
       matrix:
         # The dynamodb leg builds the runner with its dynamodb feature; the runner itself starts the
         # digest-pinned DynamoDB Local container. The sqlite leg builds the runner with its sqlite feature and
-        # runs each scene on a fresh temporary file (no container). The bigtable leg builds the runner with its bigtable
+        # runs each scene on a fresh temporary file (no container). The spanner leg builds the runner with its spanner
+        # feature; the runner itself starts the digest-pinned Spanner emulator container (1.5.58) and runs each scene on a
+        # new database with the five tables, dropping it afterwards. The bigtable leg builds the runner with its bigtable
         # feature; the runner itself starts the digest-pinned Bigtable emulator container and runs each scene on a new
         # journal/head table pair. --require-all fails a leg on any unverified case.
         include:
@@ -214,6 +228,8 @@ jobs:
             features: --features dynamodb
           - backend: sqlite
             features: --features sqlite
+          - backend: spanner
+            features: --features spanner
           - backend: bigtable
             features: --features bigtable
     name: conformance (${{ matrix.backend }})

@@ -1,7 +1,7 @@
 //! 障害の登録と、発火の数え方（適用の回数）の試験。
 
 use event_store_adapter_conformance_rs::data::load;
-use event_store_adapter_conformance_rs::fault::{FaultError, FaultPlan, Phase, Repeat, UnfiredFault};
+use event_store_adapter_conformance_rs::fault::{FaultError, FaultKind, FaultPlan, Phase, Repeat, UnfiredFault};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 
@@ -581,4 +581,80 @@ fn should_register_rejects_journal_write_phases_in_a_scene_that_does_not_target_
     0,
     "backends がない場面も受け付けない"
   );
+}
+
+// ---------------------------------------------------------------------------
+// Spanner のコミットの中断（transaction-aborted）
+// ---------------------------------------------------------------------------
+
+/// `backends` を持つ場面に、`transaction-aborted` の障害を宣言する。
+fn aborted_case(backends: Value, phase: &str, injection: &str) -> Value {
+  let mut declared = case(
+    2,
+    vec![json!({
+      "operation": 2,
+      "phase": phase,
+      "kind": "transaction-aborted",
+      "injection": injection,
+      "repeat": count(2),
+      "details": {"message": "STORAGE_SENTINEL"}
+    })],
+  );
+  declared["backends"] = backends;
+  declared
+}
+
+#[test]
+fn should_register_accepts_transaction_aborted_at_commit_in_a_scene_that_targets_only_spanner() {
+  let plan = register(&aborted_case(json!(["spanner"]), "commit", "replace-request"));
+
+  let declared = &plan.faults()[0];
+  assert_eq!(declared.kind, FaultKind::TransactionAborted);
+  assert_eq!(declared.phase, Phase::Commit);
+  assert_eq!(declared.repeat, Repeat::Count { count: 2 });
+  let mut operation = plan.begin_operation(2);
+  assert_eq!(
+    operation.start_application(Phase::Commit).map(|fault| fault.index),
+    Some(0)
+  );
+  assert_eq!(
+    operation.start_application(Phase::Commit).map(|fault| fault.index),
+    Some(0)
+  );
+  assert_eq!(operation.finish(), Ok(()));
+}
+
+#[test]
+fn should_register_rejects_transaction_aborted_in_a_scene_that_does_not_target_only_spanner() {
+  for backends in [
+    json!(["spanner", "memory"]),
+    json!(["memory"]),
+    json!(["bigtable"]),
+    json!(["dynamodb"]),
+    json!([]),
+  ] {
+    let error = register_error(&aborted_case(backends.clone(), "commit", "replace-request"));
+
+    assert_eq!(error.index, 0, "{backends}");
+  }
+  let mut without_backends = aborted_case(json!(["spanner"]), "commit", "replace-request");
+  without_backends.as_object_mut().unwrap().remove("backends");
+  assert_eq!(
+    register_error(&without_backends).index,
+    0,
+    "backends がない場面も受け付けない"
+  );
+}
+
+#[test]
+fn should_register_rejects_transaction_aborted_outside_the_commit_phase_or_the_replace_request_injection() {
+  for phase in ["read-events", "read-snapshot", "retention-delete", "serialize-event"] {
+    let error = register_error(&aborted_case(json!(["spanner"]), phase, "replace-request"));
+
+    assert_eq!(error.index, 0, "段階 {phase}");
+  }
+
+  let error = register_error(&aborted_case(json!(["spanner"]), "commit", "replace-response"));
+
+  assert_eq!(error.index, 0, "コミットの中断は、応答の置き換えとして宣言できない");
 }

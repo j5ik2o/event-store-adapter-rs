@@ -12,11 +12,11 @@
 
 ## 概要
 
-このライブラリは、CQRS/Event Sourcing用のMemory・DynamoDB・SQLite・Bigtableイベントストアを提供します。
+このライブラリは、CQRS/Event Sourcing用のMemory・DynamoDB・SQLite・Spanner・Bigtableイベントストアを提供します。
 
 このクレートは[共通契約 v5](https://github.com/j5ik2o/event-store-adapter/blob/main/docs/spec/README.md)に従います。メジャーの番号 5 は、共通契約の版と同じです。
 
-> 5.0.0は、新しいAPIの最初の版です。v3 DynamoDB・SQLite・Bigtableの旧データは明示的なmigration関数またはCLIだけで支援します。
+> 5.0.0は、新しいAPIの最初の版です。v3 DynamoDB・SQLite・Bigtableの旧データは明示的なmigration関数またはCLIだけで支援します。以前の版にはSpannerの保存先がないため、Spannerに移行するものはありません。
 
 公開APIはcrate直下からexportされ、`next` namespaceや旧APIの別名はありません。
 
@@ -34,6 +34,7 @@
 | （なし） | `EventStoreForMemory`、`MemoryStorage`。常時利用可能 |
 | `dynamodb` | `aws-sdk-dynamodb`を使用する`EventStoreForDynamoDB` |
 | `sqlite` | 同梱のSQLiteを持つ`rusqlite`を使用する`EventStoreForSqlite`、`initialize_sqlite_store`、`SqliteOptions` |
+| `spanner` | `tonic`と生成されたSpannerのgRPCクライアントを使用する`EventStoreForSpanner`、`initialize_spanner_store`、`SpannerOptions`、`SpannerRetention`、`SpannerConnection`、`SpannerTables`、`SpannerTokenSource` |
 | `bigtable` | `tonic`と生成されたBigtableのgRPCクライアントを使用する`EventStoreForBigtable`、`initialize_bigtable_store`、`BigtableOptions`、`BigtableConnection`、`BigtableTables`、`BigtableTokenSource` |
 | `migration` | `migrate_v3_dynamodb`。`dynamodb`も有効になる |
 | `sqlite-migration` | `migrate_v3_sqlite`。`sqlite`も有効になり、AWS・Bigtableのcrateは入らない |
@@ -204,6 +205,98 @@ async fn main() -> Result<(), EventStoreError> {
 
 storeのインスタンスとそのcloneは、1つの接続を共有します。表・接続の設定・手作業での初期化・transaction・保持の詳細は[SQLite schema](docs/SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。v3のSQLiteファイルからデータを移す場合は、[移行](#移行)を参照してください。
 
+### Spanner
+
+`features = ["spanner"]`を指定します。保存先は、GoogleSQL方言の1つのデータベースにある5つの表（`<prefix>_journal`・`<prefix>_head`・`<prefix>_snapshot_current`・`<prefix>_snapshot_history`・`<prefix>_config`）で、Cloud Spanner（またはSpannerエミュレーター）にgRPCで接続します。表の名前は、渡した1つの`table_prefix`からすべて導きます。ライブラリはDDLを実行しません。最初の`initialize_spanner_store`の前に、データベースを作り、[Spannerのスキーマ](docs/SPANNER_DATABASE_SCHEMA.ja.md)のDDLを適用してください（Spanner TTL方式では、`<prefix>_snapshot_history`の行削除ポリシーも）。
+
+初期化と「開く」は、別々の明示的な操作です。
+
+- `initialize_spanner_store(&connection, &tables, &options)`は、データベースの方言・列・主キー・行削除ポリシーを`options`と照合し、5つの表が空であることを確かめてから、生成した`store_id`を持つ設定の行を1行書きます。表は作りません。設定の行がすでにある、またはいずれかの表に行がある場合は、設定エラー（`ConfigurationReason::SpannerAlreadyInitialized`）になります。
+- `EventStoreForSpanner::open(connection, tables, options)`（非serde payloadには`open_with_serializers`）は、同じ照合を行い、設定の行を読みます。何も作らず、食い違いも修復しません。表が欠けている・異なる、設定の行が欠けている・壊れている、記録された設定と食い違う場合は設定エラー（`EventStoreError::Configuration`）です。接続やサービスの失敗は保存先エラー（`EventStoreError::Storage`）です。
+
+`SpannerOptions`は3つのフィールドを持ちます。`retention`の既定は`SpannerRetention::CurrentOnly`です。`KeepLatest { count }`は新しい順に`count`件の履歴snapshotを保持し、古いものはすぐに削除します。`KeepLatestWithTtl { count, grace_days }`は、古い履歴を削除せず`expired_at`で印を付け、削除を`<prefix>_snapshot_history`の`ROW DELETION POLICY (OLDER_THAN(expired_at, INTERVAL <grace_days> DAY))`に任せます。`count`と`grace_days`は1以上でINT64に収まる値にし、`open`に渡す値は、ストアの初期化に使った値、および行削除ポリシーの日数と一致が必要です。`change_feed`は`false`のままにしてください。この保存先は変更フィードを提供せず、`true`は設定エラーです。`transaction_retry_limit`は、中断（ABORTED）されたトランザクションを再試行する回数で、最初の試行は数えず、既定は5です。使い切ると保存先エラーになります。
+
+追記は、SERIALIZABLEの読み書きトランザクション1つで行い、そのコミットが確定点です。読み取りはstrongの読み取り専用トランザクションを使い、headとそれに続けて読む行は同じ読み取り時点のものです。ライブラリが再試行するのは中断（ABORTED）されたトランザクションだけで、同じイベントと同じ`seq_nr`で行います。コミットの応答が失われた追記は、結果が不明な保存先エラーです。再試行も補償もせず、同じ`seq_nr`を送り直すと、最初のコミットが成功していたなら楽観ロックのエラーになります。古い履歴の整理は、追記のコミットの後に別のトランザクションで行います。それが失敗しても、`tracing`の警告を出すだけで、追記は成功のままです。
+
+接続は、1つの`tonic::transport::Channel`を持つ`SpannerConnection`です。同じchannelをデータAPIとデータベース管理APIの両方に使います。`open`と`initialize_spanner_store`は管理APIの`GetDatabase`で方言を読むので、認証情報にはデータAPIの権限に加えて`spanner.databases.get`の権限が要ります。エミュレーターには、平文のchannelが要り、認証情報は要りません。
+
+```toml
+[dependencies]
+event-store-adapter-rs = { version = "5", features = ["spanner"] }
+chrono = "0.4"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tonic = { version = "0.14", default-features = false, features = ["channel"] }
+```
+
+```rust
+use event_store_adapter_rs::{EventStoreForSpanner, SpannerOptions, SpannerRetention};
+use serde_json::Value;
+use tonic::transport::Endpoint;
+use chrono::Utc;
+use event_store_adapter_rs::{
+  initialize_spanner_store, AggregateId, EventEnvelope, EventStore, SnapshotEnvelope, SpannerConnection, SpannerTables,
+};
+use serde_json::json;
+
+#[derive(Debug, Clone)]
+struct AccountId(String);
+
+impl AggregateId for AccountId {
+  fn type_name(&self) -> String {
+    "Account".into()
+  }
+
+  fn value(&self) -> String {
+    self.0.clone()
+  }
+}
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+  // The emulator listens without TLS. The database and its five tables already exist.
+  let channel = Endpoint::from_static("http://localhost:9010").connect().await?;
+  let tables = SpannerTables {
+    project_id: "my-project".into(),
+    instance_id: "my-instance".into(),
+    database_id: "my-database".into(),
+    table_prefix: "esa".into(),
+  };
+  let connection = SpannerConnection::new(channel);
+  let options = SpannerOptions {
+    retention: SpannerRetention::KeepLatest { count: 2 },
+    ..SpannerOptions::default()
+  };
+  // Run once for new tables; they are no longer uninitialized afterwards.
+  initialize_spanner_store(&connection, &tables, &options).await?;
+  let store: EventStoreForSpanner<AccountId, Value, Value> =
+    EventStoreForSpanner::open(connection, tables, options).await?;
+  let id = AccountId("1".into());
+
+  store
+    .persist_event(
+      EventEnvelope::new(id.clone(), 1, Utc::now(), json!({"created": "Alice"})).with_manifest("account-created/v1"),
+    )
+    .await?;
+  store
+    .persist_event_and_snapshot(
+      EventEnvelope::new(id.clone(), 2, Utc::now(), json!({"renamed": "Bob"})),
+      SnapshotEnvelope::new(json!({"name": "Bob"}), 2).with_manifest("account/v1"),
+    )
+    .await?;
+  let events = store.get_events_by_id_since_seq_nr(&id, 1).await?;
+  assert_eq!(events.len(), 2);
+  let latest = store.get_latest_snapshot_by_id(&id).await?.unwrap();
+  assert_eq!(latest.head_seq_nr(), 2);
+  assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
+  Ok(())
+}
+```
+
+本番のCloud Spannerには、TLSのchannelと、すべての要求に付けるアクセストークンが要ります。ライブラリは、TLSの実装にもGoogleの認証のライブラリにも依存しません。利用者が自分の依存で`tonic`のTLSのfeature（たとえば`tls-ring`と`tls-native-roots`）を有効にして、`https://spanner.googleapis.com`への`Channel`を自分で作り、新しいトークンを返す`access_token`を持つ`SpannerTokenSource`を実装して、`SpannerConnection::with_token_source`に渡してください。ストアは、データとデータベース管理のすべての要求の直前に取得元を呼び、`authorization: Bearer <トークン>`を付けます。トークンの保持と更新は取得元の責任で、取得元が失敗した操作は、要求を送らずに保存先エラーになります。
+
+この保存先の規則は、1つのSpannerデータベースの中で、そのデータベースの読み書きトランザクションとstrongな読み取りが成り立つ構成で、すべての表がそのデータベースにある場合に成り立ちます。storeのインスタンスとそのcloneは接続を共有し、同じ設定を使うなら、複数のstoreのインスタンスが同じデータベースを開いてかまいません。過去の時点を読む構成や、5つの表を複数のデータベースに分ける構成は対象外です。この版は変更フィードを提供しません。以前の版にはSpannerの保存先がないため、移行ツールはありません。[移行](#移行)を参照してください。配置・設定の行・初期化・書込と読取・保持の詳細は[Spannerのスキーマ](docs/SPANNER_DATABASE_SCHEMA.ja.md)を参照してください。
+
 ### Bigtable
 
 `features = ["bigtable"]`を指定します。保存先は、Cloud Bigtable（またはBigtableエミュレーター）にgRPCでつなぐ、`journal`と`head`の2つのテーブルです。テーブルの作成とapp profileの用意はライブラリの範囲外です。最初の`initialize_bigtable_store`の前に、次を用意してください。
@@ -294,7 +387,7 @@ storeのインスタンスとそのcloneは、接続を共有します。この�
 
 ## 保持
 
-既定は`RetentionSettings::current_only()`です。`keep_latest(n)`は新しい順にn件の履歴snapshotを保持し、0は設定エラーになります。Memoryは削除だけを使用し、`RetentionMode::Ttl`の指定は履歴件数の有無にかかわらず`MemoryStorage::new`で設定エラーになります。DynamoDBは削除または`RetentionMode::Ttl { grace_seconds }`を使用できます。snapshot表のTTL属性`ttl`は別途設定してください。履歴件数を設定したMemoryは、イベント単独を含む追記の成功後に保持処理を実行します。DynamoDBは履歴件数を設定し、履歴snapshotを書いた追記の成功後だけ保持処理を実行します。DynamoDBはイベント単独の追記では保持処理を実行しません。保持失敗はaid・seq_nr・phase・errorを含む`tracing`警告で通知し、確定済みの書込は成功を返します。
+既定は`RetentionSettings::current_only()`です。`keep_latest(n)`は新しい順にn件の履歴snapshotを保持し、0は設定エラーになります。Memoryは削除だけを使用し、`RetentionMode::Ttl`の指定は履歴件数の有無にかかわらず`MemoryStorage::new`で設定エラーになります。DynamoDBは削除または`RetentionMode::Ttl { grace_seconds }`を使用できます。snapshot表のTTL属性`ttl`は別途設定してください。履歴件数を設定したMemoryは、イベント単独を含む追記の成功後に保持処理を実行します。DynamoDBは履歴件数を設定し、履歴snapshotを書いた追記の成功後だけ保持処理を実行します。DynamoDBはイベント単独の追記では保持処理を実行しません。Spannerは、古い履歴をすぐに削除する`SpannerRetention::KeepLatest { count }`と、印を付けて削除を行削除ポリシーに任せる`KeepLatestWithTtl { count, grace_days }`を使用できます。履歴snapshotを書いた追記の成功後に、別のトランザクションで保持処理を実行します。保持失敗はaid・seq_nr・phase・errorを含む`tracing`警告で通知し、確定済みの書込は成功を返します。
 
 ## エラー
 
@@ -302,7 +395,7 @@ storeのインスタンスとそのcloneは、接続を共有します。この�
 
 ## 移行
 
-通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数、または[v5移行ガイド](docs/MIGRATION_GUIDE.ja.md)に書いてある薄いCLIを使用します。v3の既定SQLite配置には、`migrate_v3_sqlite`関数（feature `sqlite-migration`）、または同じCLIの`--old-sqlite`・`--sqlite`を使用します。旧SQLiteファイルは変更せずに読み取り、`initialize_sqlite_store`で初期化した新ファイルへ書き込みます。v3.0.6の既定のBigtable配置（journalとsnapshotの2つのテーブル）には、`migrate_v3_bigtable`関数（feature `bigtable-migration`）、または同じCLIの`--old-bigtable-*`・`--bigtable-*`を使用します。旧の2つのテーブルは読み取りだけで、列ファミリ付きで作り`initialize_bigtable_store`で初期化した新しい2つのテーブルへ書き込みます。移行の前に、旧書込を停止して空の新表（SQLiteでは初期化済みで空のファイル、Bigtableでは初期化済みで空のテーブル）を用意してください。独自`KeyResolver`配置はこの移行の対象外です。
+通常storeは新配置だけを読み取ります。v3の既定DynamoDB配置にはfeature付き`migrate_v3_dynamodb`関数、または[v5移行ガイド](docs/MIGRATION_GUIDE.ja.md)に書いてある薄いCLIを使用します。v3の既定SQLite配置には、`migrate_v3_sqlite`関数（feature `sqlite-migration`）、または同じCLIの`--old-sqlite`・`--sqlite`を使用します。旧SQLiteファイルは変更せずに読み取り、`initialize_sqlite_store`で初期化した新ファイルへ書き込みます。v3.0.6の既定のBigtable配置（journalとsnapshotの2つのテーブル）には、`migrate_v3_bigtable`関数（feature `bigtable-migration`）、または同じCLIの`--old-bigtable-*`・`--bigtable-*`を使用します。旧の2つのテーブルは読み取りだけで、列ファミリ付きで作り`initialize_bigtable_store`で初期化した新しい2つのテーブルへ書き込みます。移行の前に、旧書込を停止して空の新表（SQLiteでは初期化済みで空のファイル、Bigtableでは初期化済みで空のテーブル）を用意してください。以前の版にはSpannerの保存先がないため、Spannerの移行関数もCLIのオプションもありません。[移行ガイド](docs/MIGRATION_GUIDE.ja.md)の手順で、空のデータベースから始めてください。独自`KeyResolver`配置はこの移行の対象外です。
 
 3系を継続する利用者向けの[v3移行ガイド](docs/MIGRATION_GUIDE_v3.ja.md)は歴史資料として残しています。
 
@@ -316,7 +409,7 @@ rustup toolchain install nightly-2026-09-27 --profile minimal
 cargo +1.99.0 test --workspace --all-features
 ```
 
-DynamoDBとmigrationのintegration試験にはDockerが必要です。
+DynamoDB・Spanner・Bigtable・migrationのintegration試験にはDockerが必要です。
 
 ## ライセンス
 

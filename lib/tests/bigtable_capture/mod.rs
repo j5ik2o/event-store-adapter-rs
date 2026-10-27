@@ -19,11 +19,12 @@ use tracing_subscriber::Layer;
 /// 記録する事象の target の接頭辞。
 const TARGET_PREFIX: &str = "event_store_adapter::";
 
-/// 収集した tracing の事象 1 件（target と、フィールド `category`・`aid` の値）。
+/// 収集した tracing の事象 1 件（target と、フィールド `category`・`aid`・`phase` の値）。
 struct CapturedEvent {
   target: String,
   category: Option<String>,
   aid: Option<String>,
+  phase: Option<String>,
 }
 
 /// プロセス全体で共有する、収集した事象の記録。読んでも消さない。
@@ -34,12 +35,22 @@ impl Captured {
   /// target と `aid` が一致する事象の `category` を、記録した順に返す。`category` のない事象は飛ばす。
   pub fn categories_of(&self, target: &str, aid: &str) -> Vec<String> {
     self
+      .categories_and_phases_of(target, aid)
+      .into_iter()
+      .map(|(category, _)| category)
+      .collect()
+  }
+
+  /// target と `aid` が一致する事象の `category` と `phase` の組を、記録した順に返す。`category` のない事象は飛ばす。
+  /// `phase` のない事象の `phase` は `None` である。
+  pub fn categories_and_phases_of(&self, target: &str, aid: &str) -> Vec<(String, Option<String>)> {
+    self
       .0
       .lock()
       .unwrap()
       .iter()
       .filter(|event| event.target == target && event.aid.as_deref() == Some(aid))
-      .filter_map(|event| event.category.clone())
+      .filter_map(|event| event.category.clone().map(|category| (category, event.phase.clone())))
       .collect()
   }
 }
@@ -48,6 +59,7 @@ impl Captured {
 struct FieldsVisitor {
   category: Option<String>,
   aid: Option<String>,
+  phase: Option<String>,
 }
 
 impl Visit for FieldsVisitor {
@@ -59,8 +71,10 @@ impl Visit for FieldsVisitor {
 
   /// `aid = %値` のように表示の形で渡された値は、`record_str` ではなくここへ届く。
   fn record_debug(&mut self, field: &Field, value: &dyn std::fmt::Debug) {
-    if field.name() == "aid" {
-      self.aid = Some(format!("{value:?}"));
+    match field.name() {
+      "aid" => self.aid = Some(format!("{value:?}")),
+      "phase" => self.phase = Some(format!("{value:?}")),
+      _ => {}
     }
   }
 }
@@ -80,6 +94,7 @@ impl<S: Subscriber> Layer<S> for CaptureLayer {
       target: target.to_string(),
       category: fields.category,
       aid: fields.aid,
+      phase: fields.phase,
     });
   }
 }

@@ -7,7 +7,9 @@ use std::sync::Arc;
 
 use event_store_adapter_rs::{
   aggregate_id::AidString,
-  bigtable::{overwrite_bigtable_configuration_for_test, BigtableConfigurationRecord, BigtableTestHooks},
+  bigtable::{
+    fnv1a64_for_test, overwrite_bigtable_configuration_for_test, BigtableConfigurationRecord, BigtableTestHooks,
+  },
   error::EventStoreError,
   initialize_bigtable_store,
   serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer},
@@ -17,7 +19,7 @@ use serde_json::{json, Value};
 use tracing::Instrument;
 
 use super::{
-  emulator, envelope, hash,
+  emulator, envelope,
   scene::{Scene, Store},
 };
 use crate::{
@@ -26,6 +28,7 @@ use crate::{
   },
   data::{Case, CaseKind},
   fault::Phase,
+  hash_values,
   hook_faults::{self, HookFaults},
   notifications::OperationNotifications,
   report::CaseOutcome,
@@ -170,8 +173,8 @@ pub fn run_case(case: &Case, prepared: PreparedCase) -> CaseOutcome {
   if matches!(case.kind, CaseKind::ValueTable) && envelope::is_envelope_operation(body) {
     return envelope::run(body);
   }
-  if matches!(case.kind, CaseKind::ValueTable) && hash::is_hash_operation(body) {
-    return hash::run(body);
+  if matches!(case.kind, CaseKind::ValueTable) && hash_values::is_hash_operation(body) {
+    return hash_values::run_with(body, fnv1a64_for_test);
   }
   if !hook_faults::supports_all_bigtable(&prepared.faults) {
     return crate::case::unverified("宣言された障害の段階・種類・方式へ未接続");

@@ -1,4 +1,4 @@
-//! メモリ・SQLite・Bigtable が共有する、障害の差し込みと保持履歴・観測の処理。
+//! メモリ・SQLite・Bigtable・Spanner が共有する、障害の差し込みと保持履歴・観測の処理。
 //!
 //! 各保存先は、同じ段階を同じ誤りの分類へ対応付け、`retention-query` の応答計画（`history_pages`）を
 //! 論理的な履歴のフックへ対応付ける（`conformance/README.md`）。同じ契約を 2 か所に書かないよう、ここに置く。
@@ -17,7 +17,7 @@ use crate::{
   fault::{Fault, FaultKind, FaultPlan, Injection, OperationFaults, Phase},
 };
 
-/// メモリ・SQLite・Bigtable の全てが、フックと直列化の差し込みで表せる障害かを返す。
+/// メモリ・SQLite・Bigtable・Spanner の全てが、フックと直列化の差し込みで表せる障害かを返す。
 fn is_common_fault_supported(fault: &Fault) -> bool {
   match fault.phase {
     Phase::SerializeEvent | Phase::SerializeSnapshot | Phase::DeserializeEvent | Phase::DeserializeSnapshot => {
@@ -50,6 +50,20 @@ fn is_bigtable_fault_supported(fault: &Fault) -> bool {
   }
 }
 
+/// Spanner だけが表せる障害かを返す。機能 `spanner` と試験のときだけ使う。
+///
+/// コミットの中断（SPN-7・`transaction-aborted`）と、コミットの応答の消失（SPN-8）が対象である。
+#[cfg(any(feature = "spanner", test))]
+fn is_spanner_fault_supported(fault: &Fault) -> bool {
+  match fault.phase {
+    Phase::Commit => {
+      (fault.kind == FaultKind::TransactionAborted && fault.injection == Injection::ReplaceRequest)
+        || (fault.kind == FaultKind::StorageError && fault.injection == Injection::ReplaceResponse)
+    }
+    _ => false,
+  }
+}
+
 /// 宣言された障害がすべて、メモリと SQLite のフックと直列化の差し込みで表せるかを返す。
 ///
 /// ストアの生成（操作 0）の障害は表せない。表せない障害があるケースは、実行せずに未検証にする。
@@ -69,6 +83,29 @@ pub(crate) fn supports_all_bigtable(plan: &FaultPlan) -> bool {
     .faults()
     .iter()
     .all(|fault| fault.operation != 0 && (is_common_fault_supported(fault) || is_bigtable_fault_supported(fault)))
+}
+
+/// 宣言された障害がすべて、Spanner のフックと直列化の差し込みで表せるかを返す。
+///
+/// 共通の障害に加えて、コミットの中断と応答の消失を表せる。ストアの生成（操作 0）の障害は表せない。
+#[cfg(any(feature = "spanner", test))]
+pub(crate) fn supports_all_spanner(plan: &FaultPlan) -> bool {
+  plan
+    .faults()
+    .iter()
+    .all(|fault| fault.operation != 0 && (is_common_fault_supported(fault) || is_spanner_fault_supported(fault)))
+}
+
+/// コミットを送る前の差し込みの結果（`inject_commit_request`）。
+#[cfg(any(feature = "spanner", test))]
+#[derive(Debug)]
+pub(crate) enum CommitInjection {
+  /// 差し込む障害がない。コミットを送る。
+  Proceed,
+  /// コミットを ABORTED で中断する。ライブラリは同じ試行を再試行する（SPN-7）。
+  Aborted,
+  /// 再試行しない保存先の失敗として返す。
+  Failed(EventStoreError),
 }
 
 /// 操作ごとの障害の適用回数と、応答計画の誤りを持ち、フックと直列化から呼ばれる。
@@ -105,9 +142,39 @@ impl HookFaults {
 
   /// 段階 `phase` に適用できる応答の置き換え（`replace-response`）の障害があれば、その段階の誤りを返す。
   /// なければ成功を返す。要求の置き換えの障害は消費しない。
-  #[cfg(any(feature = "bigtable", test))]
+  #[cfg(any(feature = "bigtable", feature = "spanner", test))]
   pub(crate) fn inject_response(&self, phase: Phase) -> Result<(), EventStoreError> {
     self.apply(phase, Injection::ReplaceResponse)
+  }
+
+  /// コミットを送る前の差し込み。中断（`transaction-aborted`）の障害があれば `Aborted` を、
+  /// 中断ではない要求の置き換えの障害があれば、その保存先エラーを `Failed` で返す。なければ `Proceed` を返す。
+  /// 応答の置き換えの障害は消費しない。
+  #[cfg(any(feature = "spanner", test))]
+  pub(crate) fn inject_commit_request(&self) -> CommitInjection {
+    let fault = self
+      .faults
+      .lock()
+      .expect("障害消費のロック")
+      .start_application_injected(Phase::Commit, Injection::ReplaceRequest)
+      .cloned();
+    let Some(fault) = fault else {
+      return CommitInjection::Proceed;
+    };
+    if fault.kind == FaultKind::TransactionAborted {
+      return CommitInjection::Aborted;
+    }
+    CommitInjection::Failed(EventStoreError::Storage {
+      operation: StorageOperation::Append,
+      source: Box::new(std::io::Error::other(
+        fault
+          .details
+          .get("message")
+          .and_then(Value::as_str)
+          .unwrap_or("injected fault")
+          .to_owned(),
+      )),
+    })
   }
 
   fn apply(&self, phase: Phase, injection: Injection) -> Result<(), EventStoreError> {

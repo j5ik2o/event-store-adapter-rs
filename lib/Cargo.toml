@@ -30,6 +30,15 @@ sqlite-migration = ["sqlite"]
 sqlite = ["dep:rusqlite", "dep:uuid"]
 bigtable = ["dep:tonic", "dep:googleapis-tonic-google-bigtable-v2", "dep:googleapis-tonic-google-bigtable-admin-v2", "dep:uuid"]
 bigtable-migration = ["bigtable"]
+spanner = [
+  "dep:tonic",
+  "dep:googleapis-tonic-google-spanner-v1",
+  "dep:googleapis-tonic-google-spanner-admin-database-v1",
+  "dep:prost-types",
+  "dep:base64",
+  "dep:tokio",
+  "dep:uuid",
+]
 
 [dependencies]
 thiserror = { workspace = true }
@@ -41,6 +50,13 @@ rusqlite = { workspace = true, optional = true, features = ["bundled"] }
 tonic = { workspace = true, optional = true, features = ["channel", "codegen"] }
 googleapis-tonic-google-bigtable-v2 = { workspace = true, optional = true }
 googleapis-tonic-google-bigtable-admin-v2 = { workspace = true, optional = true }
+# Spanner のデータ API と管理 API の gRPC。機能 `spanner` を付けないビルドには入らない。
+googleapis-tonic-google-spanner-v1 = { workspace = true, optional = true }
+googleapis-tonic-google-spanner-admin-database-v1 = { workspace = true, optional = true }
+prost-types = { version = "0.14.4", optional = true }
+base64 = { version = "0.22.1", optional = true }
+# 中断（ABORTED）の再試行の前に待つ。
+tokio = { workspace = true, optional = true, features = ["time"] }
 chrono = { workspace = true, features = ["serde"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }

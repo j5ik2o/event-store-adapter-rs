@@ -1,4 +1,4 @@
-//! Event stores for Memory, DynamoDB, SQLite, and Bigtable using the shared event envelope contract.
+//! Event stores for Memory, DynamoDB, SQLite, Spanner, and Bigtable using the shared event envelope contract.
 //! Legacy v3 DynamoDB, SQLite, and Bigtable data is supported only by the feature-gated migration module
 //! (features `migration`, `sqlite-migration`, and `bigtable-migration`).
 
@@ -16,10 +16,16 @@ pub mod migration;
 pub mod retention;
 pub mod seq_nr;
 pub mod serializer;
+#[cfg(feature = "spanner")]
+pub mod spanner;
 #[cfg(feature = "sqlite")]
 pub mod sqlite;
 
+#[cfg(any(feature = "bigtable", feature = "spanner"))]
+mod bearer_token;
 mod generic_event_store;
+#[cfg(any(feature = "bigtable", feature = "spanner"))]
+mod key_hash;
 mod storage_backend;
 
 pub use aggregate_id::{AggregateId, AidString};
@@ -45,6 +51,11 @@ pub use migration::{MigrationError, MigrationRejection, MigrationReport};
 pub use retention::{select_expired_history, ttl_expires_epoch_seconds, RetentionMode, RetentionSettings};
 pub use seq_nr::{SeqNr, SEQ_NR_MAX};
 pub use serializer::{EventSerializer, JsonEventSerializer, JsonSnapshotSerializer, SnapshotSerializer};
+#[cfg(feature = "spanner")]
+pub use spanner::{
+  initialize_spanner_store, EventStoreForSpanner, SpannerConnection, SpannerOptions, SpannerRetention, SpannerTables,
+  SpannerTokenSource,
+};
 #[cfg(feature = "sqlite")]
 pub use sqlite::{initialize_sqlite_store, EventStoreForSqlite, SqliteOptions};
 
