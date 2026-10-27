@@ -218,7 +218,7 @@ storeのインスタンスとそのcloneは、1つの接続を共有します。
 
 追記は、SERIALIZABLEの読み書きトランザクション1つで行い、そのコミットが確定点です。読み取りはstrongの読み取り専用トランザクションを使い、headとそれに続けて読む行は同じ読み取り時点のものです。ライブラリが再試行するのは中断（ABORTED）されたトランザクションだけで、同じイベントと同じ`seq_nr`で行います。コミットの応答が失われた追記は、結果が不明な保存先エラーです。再試行も補償もせず、同じ`seq_nr`を送り直すと、最初のコミットが成功していたなら楽観ロックのエラーになります。古い履歴の整理は、追記のコミットの後に別のトランザクションで行います。それが失敗しても、`tracing`の警告を出すだけで、追記は成功のままです。
 
-接続は、1つの`tonic::transport::Channel`を持つ`SpannerConnection`です。同じchannelをデータAPIとデータベース管理APIの両方に使います。エミュレーターには、平文のchannelが要り、認証情報は要りません。
+接続は、1つの`tonic::transport::Channel`を持つ`SpannerConnection`です。同じchannelをデータAPIとデータベース管理APIの両方に使います。`open`と`initialize_spanner_store`は管理APIの`GetDatabase`で方言を読むので、認証情報にはデータAPIの権限に加えて`spanner.databases.get`の権限が要ります。エミュレーターには、平文のchannelが要り、認証情報は要りません。
 
 ```toml
 [dependencies]

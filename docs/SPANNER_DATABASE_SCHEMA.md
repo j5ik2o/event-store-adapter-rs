@@ -46,7 +46,7 @@ The `config` table holds exactly one row, with `singleton = 1`:
 
 ### Client settings that must match
 
-`open` and `initialize_spanner_store` read the database with strong, read-only queries (`INFORMATION_SCHEMA` and the database admin API) and check, in this order: the dialect, the columns and primary keys of the five tables, the row deletion policy on `snapshot_history`, and, for `open`, the configuration row. The `SpannerOptions::retention` value must equal what the row records, and the row deletion policy must match the retention style:
+`open` and `initialize_spanner_store` read the database with strong, read-only queries (`INFORMATION_SCHEMA` and the database admin API, which needs the `spanner.databases.get` permission) and check, in this order: the dialect, the columns and primary keys of the five tables, the row deletion policy on `snapshot_history`, and, for `open`, the configuration row. The `SpannerOptions::retention` value must equal what the row records, and the row deletion policy must match the retention style:
 
 - `CurrentOnly` records `keep_snapshot_count = NULL` and `retention_mode = 'delete'`.
 - `KeepLatest { count }` records `keep_snapshot_count = count` and `retention_mode = 'delete'`.

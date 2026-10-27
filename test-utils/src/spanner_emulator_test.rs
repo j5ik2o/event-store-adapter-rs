@@ -46,7 +46,7 @@ async fn insert_current(raw: &RawSql, seq: i64) -> anyhow::Result<i64> {
 
 // 起動したコンテナは、digest で固定した 1.5.58 のイメージから作られる。動くタグ（`latest` など）で起動しない。
 #[tokio::test]
-async fn test_spanner_emulator_starts_from_the_digest_pinned_image() {
+async fn should_spanner_emulator_starts_from_the_digest_pinned_image() {
   let (container, _channel) = start().await;
 
   let image = container.image();
@@ -66,7 +66,7 @@ async fn test_spanner_emulator_starts_from_the_digest_pinned_image() {
 
 // プロファイル 3 章の 5 テーブルを作り、config の 1 行を書いて、列の型どおりに読み戻せる。INT64 は符号付き 64 ビットの全域を失わない。
 #[tokio::test]
-async fn test_spanner_emulator_creates_the_five_tables_and_round_trips_raw_rows() {
+async fn should_spanner_emulator_creates_the_five_tables_and_round_trips_raw_rows() {
   let (_container, channel) = start().await;
   create_database(&channel, "db1", store_ddl("esa", None))
     .await
@@ -144,7 +144,7 @@ async fn test_spanner_emulator_creates_the_five_tables_and_round_trips_raw_rows(
 
 // SPN-2 の照合が頼る情報（情報スキーマの列・主キー・行削除ポリシーと、管理 API のデータベースの方言）を、エミュレーターが返す。
 #[tokio::test]
-async fn test_spanner_emulator_reports_the_layout_policy_and_dialect_that_the_open_check_reads() {
+async fn should_spanner_emulator_reports_the_layout_policy_and_dialect_that_the_open_check_reads() {
   let (_container, channel) = start().await;
   create_database(&channel, "db2", store_ddl("esa", Some(7)))
     .await
@@ -215,7 +215,7 @@ async fn test_spanner_emulator_reports_the_layout_policy_and_dialect_that_the_op
 // 読み取り専用トランザクション（strong）を開いている間に、別の読み書きトランザクションがコミットできる。
 // 開いた読み取り専用トランザクションの中の 2 回目の読み取りは、開いた時点の状態を返す（SPN-9 の同じ時点の読み取り）。
 #[tokio::test]
-async fn test_spanner_emulator_commits_a_writer_while_a_strong_read_only_transaction_is_open() {
+async fn should_spanner_emulator_commits_a_writer_while_a_strong_read_only_transaction_is_open() {
   let (_container, channel) = start().await;
   create_database(&channel, "db3", store_ddl("esa", None))
     .await
@@ -290,7 +290,7 @@ async fn test_spanner_emulator_commits_a_writer_while_a_strong_read_only_transac
 
 // PostgreSQL 方言のデータベースも作れる（ライブラリが GoogleSQL 以外の方言を拒否することの試験に使う）。
 #[tokio::test]
-async fn test_spanner_emulator_creates_a_postgresql_dialect_database() {
+async fn should_spanner_emulator_creates_a_postgresql_dialect_database() {
   let (_container, channel) = start().await;
   crate::spanner::create_database_with_dialect(&channel, "pgdb", DatabaseDialect::Postgresql, vec![])
     .await
@@ -309,7 +309,7 @@ async fn test_spanner_emulator_creates_a_postgresql_dialect_database() {
 
 // 使い終えたデータベースは削除でき、削除後は取得できない（場面ごとに新しいデータベースを作る呼び出し側が、数の上限に達しない）。
 #[tokio::test]
-async fn test_spanner_emulator_drops_a_database_so_that_it_cannot_be_read_afterwards() {
+async fn should_spanner_emulator_drops_a_database_so_that_it_cannot_be_read_afterwards() {
   let (_container, channel) = start().await;
   create_database(&channel, "dropped", store_ddl("esa", None))
     .await
@@ -332,7 +332,7 @@ async fn test_spanner_emulator_drops_a_database_so_that_it_cannot_be_read_afterw
 // ライブラリの結合試験の大きな payload が、分割された値の結合を実際に通ることの前提である。
 // 非ストリーミングの ExecuteSql は 3 MiB（base64 で約 4.2 MiB）で tonic の既定の受信上限（4 MiB）を超える。
 #[tokio::test]
-async fn test_spanner_emulator_streams_a_one_mebibyte_value_in_chunks() {
+async fn should_spanner_emulator_streams_a_one_mebibyte_value_in_chunks() {
   let (_container, channel) = start().await;
   create_database(&channel, "db4", store_ddl("esa", None))
     .await

@@ -48,7 +48,7 @@
 
 ### クライアントの設定との一致
 
-`open`と`initialize_spanner_store`は、strongの読み取り専用の問い合わせ（`INFORMATION_SCHEMA`とデータベース管理API）でデータベースを読み、次の順に照合します。方言、5つのテーブルの列と主キー、`snapshot_history`の行削除ポリシー、そして`open`では設定の行です。`SpannerOptions::retention`の値は行の記録と等しく、行削除ポリシーは保持の方式に合っていなければなりません。
+`open`と`initialize_spanner_store`は、strongの読み取り専用の問い合わせ（`INFORMATION_SCHEMA`と、`spanner.databases.get`の権限が要るデータベース管理API）でデータベースを読み、次の順に照合します。方言、5つのテーブルの列と主キー、`snapshot_history`の行削除ポリシー、そして`open`では設定の行です。`SpannerOptions::retention`の値は行の記録と等しく、行削除ポリシーは保持の方式に合っていなければなりません。
 
 - `CurrentOnly`は、`keep_snapshot_count = NULL`と`retention_mode = 'delete'`を記録します。
 - `KeepLatest { count }`は、`keep_snapshot_count = count`と`retention_mode = 'delete'`を記録します。

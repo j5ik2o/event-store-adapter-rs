@@ -216,7 +216,7 @@ Initialization and opening are separate, explicit steps:
 
 An append is one SERIALIZABLE read-write transaction, and the commit is its commit point. Reads use strong read-only transactions, and the head and the rows read after it come from the same read point. The library retries only an ABORTED transaction, with the same event and the same `seq_nr`. If the response to a commit is lost, the append is a storage error whose outcome is unknown: nothing is retried or compensated, and sending the same `seq_nr` again is an optimistic-lock error when the first attempt did commit. Old history is retired in a separate transaction after the append commits. When that fails, a `tracing` warning is emitted and the append still succeeds.
 
-The connection is a `SpannerConnection` that holds one `tonic::transport::Channel`; the same channel serves the data API and the database admin API. The emulator needs a plaintext channel and no credentials:
+The connection is a `SpannerConnection` that holds one `tonic::transport::Channel`; the same channel serves the data API and the database admin API. Because `open` and `initialize_spanner_store` read the database dialect through the admin API (`GetDatabase`), the credentials need the `spanner.databases.get` permission in addition to the data API permissions. The emulator needs a plaintext channel and no credentials:
 
 ```toml
 [dependencies]
