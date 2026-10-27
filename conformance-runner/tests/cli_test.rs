@@ -277,18 +277,27 @@ fn rule_counts(report: &Value, rule: &str) -> (u64, u64, u64, u64) {
   )
 }
 
-/// この言語が提供しない保存先（Spanner）の場面 14 件が理由付きの対象外になり、Bigtable の場面 12 件と封筒の値の表 10 件が
-/// 「今回の保存先でない」対象外になること、BT-D6a の行にも対象外だけが数えられていることを確かめる。
-fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Value) {
+/// この言語は Spanner と Bigtable を提供するので、Spanner の場面 14 件と Bigtable の場面 12 件・封筒の値の表 10 件は、
+/// 「提供しない」ではなく「今回の保存先でない」対象外になること（「提供しない」の理由が 1 件もないこと）、
+/// BT-D6a の行にも対象外だけが数えられていることを確かめる。
+fn assert_no_case_is_reported_as_not_provided_and_other_backends_cases_are_not_targeted(report: &Value) {
   let not_provided: Vec<&Value> = report["cases"]
     .as_array()
     .expect("cases は配列")
     .iter()
     .filter(|case| case["reason"]["kind"] == "backend-not-provided")
     .collect();
-  assert_eq!(not_provided.len(), 14, "{not_provided:?}");
-  for case in not_provided {
+  assert!(not_provided.is_empty(), "{not_provided:?}");
+  let spanner_only: Vec<&Value> = report["cases"]
+    .as_array()
+    .expect("cases は配列")
+    .iter()
+    .filter(|case| case["id"].as_str().is_some_and(|id| id.starts_with("spanner-")))
+    .collect();
+  assert_eq!(spanner_only.len(), 14, "Spanner の場面 14 件");
+  for case in spanner_only {
     assert_eq!(case["status"], "not-applicable", "{case}");
+    assert_eq!(case["reason"]["kind"], "backend-not-targeted", "{case}");
     assert!(
       case["reason"]["detail"]
         .as_str()
@@ -296,9 +305,6 @@ fn assert_cases_of_backends_not_provided_are_reported_with_a_reason(report: &Val
       "{case}"
     );
   }
-  let case = case_of(report, "spanner-change-feed-unsupported");
-  assert_eq!(case["status"], "not-applicable");
-  assert_eq!(case["reason"]["kind"], "backend-not-provided");
   let bigtable_only: Vec<&Value> = report["cases"]
     .as_array()
     .expect("cases は配列")
@@ -347,7 +353,7 @@ fn should_cli_with_require_all_reports_the_new_memory_cases_and_their_rules() {
   for id in MEMORY_STORE_AND_PAYLOAD_CASES {
     assert_eq!(case_of(&report, id)["status"], "passed", "{id}");
   }
-  assert_cases_of_backends_not_provided_are_reported_with_a_reason(&report);
+  assert_no_case_is_reported_as_not_provided_and_other_backends_cases_are_not_targeted(&report);
   assert_sqlite_only_cases_are_not_targeted(&report);
   // (passed, failed, not-applicable, unverified)
   assert_eq!(rule_counts(&report, "DY-19"), (0, 0, 2, 0));
@@ -392,7 +398,7 @@ fn should_cli_with_require_all_preserves_dynamodb_execution_failures() {
     assert_eq!(case_of(&report, id)["status"], "not-applicable", "{id}");
     assert_eq!(case_of(&report, id)["reason"]["kind"], "backend-not-targeted", "{id}");
   }
-  assert_cases_of_backends_not_provided_are_reported_with_a_reason(&report);
+  assert_no_case_is_reported_as_not_provided_and_other_backends_cases_are_not_targeted(&report);
   assert_sqlite_only_cases_are_not_targeted(&report);
   assert_eq!(rule_counts(&report, "MEM-2"), (0, 0, 3, 0));
   assert_eq!(rule_counts(&report, "MEM-6"), (0, 0, 2, 0));
@@ -441,7 +447,7 @@ fn should_cli_with_require_all_runs_the_sqlite_cases() {
       "{id}"
     );
   }
-  assert_cases_of_backends_not_provided_are_reported_with_a_reason(&report);
+  assert_no_case_is_reported_as_not_provided_and_other_backends_cases_are_not_targeted(&report);
   if cfg!(feature = "sqlite") {
     // (passed, failed, not-applicable, unverified)
     assert_eq!(rule_counts(&report, "SQ-2"), (3, 0, 0, 0));
@@ -449,6 +455,87 @@ fn should_cli_with_require_all_runs_the_sqlite_cases() {
     assert_eq!(rule_counts(&report, "SQ-11"), (1, 0, 0, 0));
     assert_eq!(rule_counts(&report, "SQ-19"), (2, 0, 0, 0));
     assert_eq!(rule_counts(&report, "SQ-20"), (2, 0, 0, 0));
+  }
+}
+
+/// Spanner だけの場面 14 件（`spanner/` の 2 つのファイル）。
+const SPANNER_ONLY_CASES: [&str; 14] = [
+  "spanner-aborted-retry-within-limit",
+  "spanner-aborted-retry-limit-exceeded",
+  "spanner-commit-response-lost",
+  "spanner-change-feed-unsupported",
+  "spanner-seeded-layout-version-mismatch",
+  "spanner-seeded-keep-count-mismatch",
+  "spanner-seeded-retention-mode-mismatch",
+  "spanner-seeded-ttl-grace-config-mismatch",
+  "spanner-seeded-ttl-grace-policy-mismatch",
+  "spanner-seeded-ttl-grace-client-mismatch",
+  "spanner-seeded-change-feed-enabled",
+  "spanner-ttl-grace-days-not-positive",
+  "spanner-seeded-configuration-match",
+  "spanner-seeded-ttl-configuration-match",
+];
+
+#[test]
+fn should_cli_with_require_all_runs_the_spanner_cases() {
+  let execution = execute_on_real_data("cli-require-all-spanner", &["--backend", "spanner", "--require-all"]);
+
+  let report = execution.report();
+  assert_eq!(report["backend"], "spanner");
+  assert_eq!(
+    execution.code(),
+    Some(if cfg!(feature = "spanner") { 0 } else { 1 }),
+    "stderr: {}",
+    String::from_utf8_lossy(&execution.output.stderr)
+  );
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(
+    count_status(&report, "passed"),
+    if cfg!(feature = "spanner") { 77 } else { 9 }
+  );
+  assert_eq!(count_status(&report, "failed"), 0);
+  assert_eq!(count_status(&report, "not-applicable"), 92);
+  assert_eq!(
+    count_status(&report, "unverified"),
+    if cfg!(feature = "spanner") { 0 } else { 68 }
+  );
+  // Spanner の場面と FNV-1a 64 の値の表は、feature があれば実エミュレーターで成功し、なければ未検証と報告される。
+  for id in SPANNER_ONLY_CASES.into_iter().chain(FNV1A64_CASES) {
+    assert_eq!(
+      case_of(&report, id)["status"],
+      if cfg!(feature = "spanner") {
+        "passed"
+      } else {
+        "unverified"
+      },
+      "{id}"
+    );
+  }
+  assert_eq!(
+    report["cases"]
+      .as_array()
+      .expect("cases は配列")
+      .iter()
+      .filter(|case| case["reason"]["kind"] == "backend-not-provided")
+      .count(),
+    0,
+    "この言語が提供する保存先だけなので、「提供しない」の理由はない"
+  );
+  // ほかの保存先だけの場面は「今回の保存先でない」対象外。
+  for id in BIGTABLE_ONLY_CASES.into_iter().chain(SQLITE_ONLY_CASES) {
+    let case = case_of(&report, id);
+    if id == "store-shared-persistent" {
+      continue; // SQLite・Spanner・Bigtable が共有する場面は、Spanner も対象
+    }
+    assert_eq!(case["status"], "not-applicable", "{id}");
+    assert_eq!(case["reason"]["kind"], "backend-not-targeted", "{id}");
+  }
+  if cfg!(feature = "spanner") {
+    // (passed, failed, not-applicable, unverified)
+    assert_eq!(rule_counts(&report, "SPN-7"), (2, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "SPN-8"), (1, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "SPN-17"), (2, 0, 0, 0));
+    assert_eq!(rule_counts(&report, "K-1"), (4, 0, 0, 0));
   }
 }
 
@@ -468,7 +555,7 @@ const BIGTABLE_ONLY_CASES: [&str; 12] = [
   "bigtable-cas-response-lost",
 ];
 
-/// FNV-1a 64 の値の表（K-1）。ハッシュを使う保存先（Bigtable）だけが実行する。
+/// FNV-1a 64 の値の表（K-1）。ハッシュを使う保存先（Bigtable・Spanner）だけが実行する。
 const FNV1A64_CASES: [&str; 4] = ["hash-fnv1a64-1", "hash-fnv1a64-2", "hash-fnv1a64-3", "hash-fnv1a64-4"];
 
 #[test]
@@ -481,7 +568,7 @@ fn should_cli_reports_fnv1a64_cases_as_hash_backend_only_on_the_memory_leg() {
     assert_eq!(case["status"], "not-applicable", "{id}: {case}");
     assert_eq!(case["reason"]["kind"], "hash-backend-only", "{id}: {case}");
     assert_eq!(
-      case["reason"]["detail"], "ハッシュを使う保存先（Bigtable）だけが実行する",
+      case["reason"]["detail"], "ハッシュを使う保存先（Bigtable・Spanner）だけが実行する",
       "{id}: {case}"
     );
   }
@@ -542,8 +629,8 @@ fn should_cli_with_require_all_runs_the_bigtable_cases() {
       .iter()
       .filter(|case| case["reason"]["kind"] == "backend-not-provided")
       .count(),
-    14,
-    "提供しないのは Spanner の場面だけ"
+    0,
+    "この言語が提供する保存先だけなので、「提供しない」の理由はない"
   );
   if cfg!(feature = "bigtable") {
     // (passed, failed, not-applicable, unverified)
@@ -665,7 +752,7 @@ fn should_cli_rejects_unknown_argument() {
 
 #[test]
 fn should_cli_rejects_unknown_backend() {
-  let execution = execute_on_real_data("cli-unknown-backend", &["--backend", "spanner"]);
+  let execution = execute_on_real_data("cli-unknown-backend", &["--backend", "cassandra"]);
 
   assert_eq!(execution.code(), Some(2));
   assert!(!execution.report_exists());

@@ -516,7 +516,7 @@ fn should_report_of_real_data_lists_the_sqlite_spanner_and_bigtable_profile_rule
     assert_eq!(
       (passed, failed, unverified),
       (0, 0, 0),
-      "この言語が提供しない保存先の規則は、成功にも失敗にも未検証にも数えない: {row}"
+      "メモリが対象にしない保存先の規則は、成功にも失敗にも未検証にも数えない: {row}"
     );
     assert!(
       not_applicable >= 1 || row["reason"]["kind"] == "coverage-exclusion",

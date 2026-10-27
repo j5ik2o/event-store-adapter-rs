@@ -6,3 +6,6 @@ pub mod dynamodb;
 #[cfg(test)]
 mod dynamodb_local_test;
 pub mod id_generator;
+pub mod spanner;
+#[cfg(test)]
+mod spanner_emulator_test;

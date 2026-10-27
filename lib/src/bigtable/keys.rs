@@ -11,15 +11,7 @@ use crate::seq_nr::SeqNr;
 /// 設定行のキー。データ行のキーは最小でも 11 バイトなので、この 1 バイトと完全一致しない。
 pub(crate) const CONFIG_ROW_KEY: &[u8] = &[0x00];
 
-/// FNV-1a 64（hash.md の K-1）。
-pub fn fnv1a64(input: &[u8]) -> u64 {
-  let mut hash: u64 = 0xcbf2_9ce4_8422_2325;
-  for byte in input {
-    hash ^= u64::from(*byte);
-    hash = hash.wrapping_mul(0x0000_0100_0000_01b3);
-  }
-  hash
-}
+pub use crate::key_hash::fnv1a64;
 
 /// `H ‖ L16 ‖ A`。aid の長さが符号なし 16bit に収まらなければ T-12 の契約違反にする。
 pub(super) fn aggregate_prefix(hash: u64, aid: &AidString) -> Result<Vec<u8>, EventStoreError> {

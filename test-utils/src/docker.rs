@@ -58,3 +58,24 @@ pub async fn bigtable_emulator() -> anyhow::Result<ContainerAsync<GenericImage>>
   crate::bigtable::wait_until_list_tables_succeeds(port).await?;
   Ok(container)
 }
+
+// Spanner エミュレーターは 1.5.58（2026-09-15 公開）を digest で固定する。動くタグ（`latest` など）は使わない。
+// testcontainers 0.28.0 は name:tag で結合するため、name に "@sha256" を含めて digest 参照にする。
+const SPANNER_EMULATOR_IMAGE_NAME: &str = "gcr.io/cloud-spanner-emulator/emulator@sha256";
+const SPANNER_EMULATOR_IMAGE_DIGEST: &str = "c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79";
+
+/// Spanner エミュレーターがコンテナ内で待ち受ける gRPC のポート。
+pub const SPANNER_EMULATOR_PORT: u16 = 9010;
+
+/// Spanner エミュレーターを digest 固定のイメージで起動し、インスタンス構成の一覧（`ListInstanceConfigs`）が成功してから返す。
+///
+/// 返したコンテナは呼び出し側が保持する（drop で削除される）。
+pub async fn spanner_emulator() -> anyhow::Result<ContainerAsync<GenericImage>> {
+  let container = GenericImage::new(SPANNER_EMULATOR_IMAGE_NAME, SPANNER_EMULATOR_IMAGE_DIGEST)
+    .with_exposed_port(testcontainers::core::ContainerPort::Tcp(SPANNER_EMULATOR_PORT))
+    .start()
+    .await?;
+  let port = container.get_host_port_ipv4(SPANNER_EMULATOR_PORT).await?;
+  crate::spanner::wait_until_list_instance_configs_succeeds(port).await?;
+  Ok(container)
+}

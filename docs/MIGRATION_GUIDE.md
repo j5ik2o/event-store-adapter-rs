@@ -13,10 +13,11 @@ This guide describes migrating from Rust v3 to the 5.x API. 5.0.0 is the first r
 - Use asynchronous `EventStoreForDynamoDB::open(client, tables, options).await` with three precreated tables, a history GSI, and a client configured with an SDK retry sleeper.
 - For SQLite, enable the `sqlite` feature, call `initialize_sqlite_store(path, &options)` once on a new file, and then call the synchronous `EventStoreForSqlite::open(path, options)`. `open` creates nothing, and this storage provides no change feed. See the [README](../README.md) and [the SQLite schema](SQLITE_DATABASE_SCHEMA.md).
 - For Bigtable, enable the `bigtable` feature, create the two tables with their column families, call `initialize_bigtable_store(&connection, &tables, &options).await` once, and then call `EventStoreForBigtable::open(connection, tables, options).await`. `open` creates nothing, and this storage provides no change feed. Production Cloud Bigtable needs a TLS channel and a `BigtableTokenSource` (`open_with_token_source`). See the [README](../README.md) and [the Bigtable schema](BIGTABLE_DATABASE_SCHEMA.md).
+- For Spanner, enable the `spanner` feature, create a GoogleSQL-dialect database and apply the DDL from [the Spanner schema](SPANNER_DATABASE_SCHEMA.md), call `initialize_spanner_store(&connection, &tables, &options).await` once, and then call `EventStoreForSpanner::open(connection, tables, options).await`. `open` creates nothing, and this storage provides no change feed. Production Cloud Spanner needs a TLS channel and a `SpannerTokenSource` (`SpannerConnection::with_token_source`). See the [README](../README.md) and [the Spanner schema](SPANNER_DATABASE_SCHEMA.md).
 - Replay from creation when `SnapshotRead::snapshot()` is absent. Snapshot and head sequence numbers are separate; read events after the snapshot and check that replay reaches the observed head. The [compiled repository example](../examples/user-account/src/user_account_repository.rs) handles these cases.
 - For non-serde payloads, pass your event and snapshot serializers to `with_serializers` / `open_with_serializers`. See [README](../README.md) for all four operations and [the schema](DYNAMODB_DATABASE_SCHEMA.md) for retention.
 
-The `sqlite-system` feature, its implementation and examples have been removed. The `sqlite` and `bigtable` features are new v5 storages with their own layouts. In v3.0.6 the `sqlite` and `sqlite-system` features select the same SQLite implementation, so a file written by either is moved by the [SQLite migration](#migrating-v3-sqlite-data) below, and data written by v3's Bigtable store is moved by the [Bigtable migration](#migrating-v3-bigtable-data) below.
+The `sqlite-system` feature, its implementation and examples have been removed. The `sqlite`, `spanner`, and `bigtable` features are new v5 storages with their own layouts. In v3.0.6 the `sqlite` and `sqlite-system` features select the same SQLite implementation, so a file written by either is moved by the [SQLite migration](#migrating-v3-sqlite-data) below, and data written by v3's Bigtable store is moved by the [Bigtable migration](#migrating-v3-bigtable-data) below. No earlier release had a Spanner storage, so there is nothing to migrate for it; see [Starting a Spanner store](#starting-a-spanner-store) below.
 
 ## Data migration
 
@@ -285,6 +286,15 @@ The [Bigtable CLI integration tests](../migration-cli/tests/bigtable_cli_test.rs
 cargo test -p event-store-adapter-migration-rs --test bigtable_cli_test
 ```
 
+### Starting a Spanner store
+
+No earlier release of this crate had a Spanner storage. There is therefore no Spanner migration function or CLI option, and the migration CLI does not change. A Spanner store always starts empty. Moving events from another store into it is outside this library.
+
+1. Create a database in the GoogleSQL dialect. A PostgreSQL-dialect database is rejected with `ConfigurationReason::SpannerLayoutMismatch`.
+2. Apply the DDL from [the Spanner schema](SPANNER_DATABASE_SCHEMA.md#creating-the-tables) with your table prefix. For the Spanner TTL style (`SpannerRetention::KeepLatestWithTtl`), also add the row deletion policy with the same number of days as `grace_days`; for the other retention settings, do not add a policy.
+3. Call `initialize_spanner_store` once, with the options the application will use, while no writer is running.
+4. Open the store with `EventStoreForSpanner::open` and the same options.
+
 ## Verification and cutover
 
 Each storage's steps below continue from step 3 of its operational procedure under Data migration.
@@ -308,3 +318,7 @@ Each storage's steps below continue from step 3 of its operational procedure und
    2. Delete the **two new tables** and create them again with their column families.
    3. Call `initialize_bigtable_store` again with the same settings.
    4. Run the migration again with the same input.
+
+### Spanner
+
+Spanner has no data migration, so there is nothing to compare. Before switching application writes to a new database, check that `EventStoreForSpanner::open` succeeds with the options you will use. A configuration error (`ConfigurationReason::SpannerLayoutMismatch`, `SpannerConfigurationInvalid`, or `SpannerConfigurationMismatch`) means that the DDL, the row deletion policy, or the configuration row differs from those options. `open` changes nothing, so fix the cause and open it again. If `initialize_spanner_store` fails with `SpannerAlreadyInitialized`, the configuration row was already written or a table is not empty; do not run it again against a store that is in use.

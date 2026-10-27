@@ -59,6 +59,9 @@ pub enum FaultKind {
   SdkError,
   SdkResponse,
   ReadInterleave,
+  /// Spanner のコミットが ABORTED で中断される障害（SPN-7）。`backends` が `spanner` だけの場面の、
+  /// 段階 `commit`・方式 `replace-request` でだけ宣言できる。
+  TransactionAborted,
 }
 
 impl FaultKind {
@@ -70,6 +73,7 @@ impl FaultKind {
       "sdk-error" => Some(FaultKind::SdkError),
       "sdk-response" => Some(FaultKind::SdkResponse),
       "read-interleave" => Some(FaultKind::ReadInterleave),
+      "transaction-aborted" => Some(FaultKind::TransactionAborted),
       _ => None,
     }
   }
@@ -121,12 +125,12 @@ pub struct FaultError {
   pub message: String,
 }
 
-/// 場面の `backends` が、ちょうど `bigtable` だけかを返す。`backends` がなければ偽を返す。
-fn targets_only_bigtable(case: &Value) -> bool {
+/// 場面の `backends` が、ちょうど `backend` だけかを返す。`backends` がなければ偽を返す。
+fn targets_only(case: &Value, backend: &str) -> bool {
   case
     .get("backends")
     .and_then(Value::as_array)
-    .is_some_and(|backends| backends.len() == 1 && backends[0].as_str() == Some("bigtable"))
+    .is_some_and(|backends| backends.len() == 1 && backends[0].as_str() == Some(backend))
 }
 
 fn fault_error(index: usize, message: &str) -> FaultError {
@@ -163,7 +167,7 @@ impl FaultPlan {
         .and_then(Value::as_str)
         .and_then(Phase::parse)
         .ok_or_else(|| fault_error(index, "phase が知らない段階"))?;
-      if matches!(phase, Phase::JournalWritePrevious | Phase::JournalWriteTail) && !targets_only_bigtable(case) {
+      if matches!(phase, Phase::JournalWritePrevious | Phase::JournalWriteTail) && !targets_only(case, "bigtable") {
         return Err(fault_error(
           index,
           "journal-write の段階は backends が bigtable だけの場面でしか宣言できない",
@@ -179,6 +183,20 @@ impl FaultPlan {
         .and_then(Value::as_str)
         .and_then(Injection::parse)
         .ok_or_else(|| fault_error(index, "injection が知らない方式"))?;
+      if kind == FaultKind::TransactionAborted {
+        if !targets_only(case, "spanner") {
+          return Err(fault_error(
+            index,
+            "transaction-aborted の種類は backends が spanner だけの場面でしか宣言できない",
+          ));
+        }
+        if phase != Phase::Commit || injection != Injection::ReplaceRequest {
+          return Err(fault_error(
+            index,
+            "transaction-aborted の種類は段階 commit の replace-request でしか宣言できない",
+          ));
+        }
+      }
       let repeat = match fault.pointer("/repeat/mode").and_then(Value::as_str) {
         Some("count") => {
           let count = fault

@@ -15,10 +15,11 @@
 - DynamoDBは事前作成した3表・履歴GSIと、SDK retry sleeperを設定したClientで、非同期の`EventStoreForDynamoDB::open(client, tables, options).await`を呼びます。
 - SQLiteはfeature `sqlite`を有効にし、新しいファイルに`initialize_sqlite_store(path, &options)`を1回呼んでから、同期の`EventStoreForSqlite::open(path, options)`を呼びます。`open`は何も作りません。この保存先は変更フィードを提供しません。[README](../README.ja.md)と[SQLite schema](SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。
 - Bigtableはfeature `bigtable`を有効にし、列ファミリ付きで2つのテーブルを作り、`initialize_bigtable_store(&connection, &tables, &options).await`を1回呼んでから、`EventStoreForBigtable::open(connection, tables, options).await`を呼びます。`open`は何も作りません。この保存先は変更フィードを提供しません。本番のCloud BigtableにはTLSのchannelと`BigtableTokenSource`（`open_with_token_source`）が要ります。[README](../README.ja.md)と[Bigtable schema](BIGTABLE_DATABASE_SCHEMA.ja.md)を参照してください。
+- Spannerはfeature `spanner`を有効にし、GoogleSQL方言のデータベースを作って[Spannerのスキーマ](SPANNER_DATABASE_SCHEMA.ja.md)のDDLを適用し、`initialize_spanner_store(&connection, &tables, &options).await`を1回呼んでから、`EventStoreForSpanner::open(connection, tables, options).await`を呼びます。`open`は何も作りません。この保存先は変更フィードを提供しません。本番のCloud SpannerにはTLSのchannelと`SpannerTokenSource`（`SpannerConnection::with_token_source`）が要ります。[README](../README.ja.md)と[Spannerのスキーマ](SPANNER_DATABASE_SCHEMA.ja.md)を参照してください。
 - `SnapshotRead::snapshot()`が不在なら作成イベントから再生します。snapshotとheadの番号は別の意味です。snapshot後のイベントを読み、観測headまで再生できたことを確認します。[コンパイルしたrepository例](../examples/user-account/src/user_account_repository.rs)がこの場合を扱います。
 - 非serde payloadには`with_serializers`／`open_with_serializers`へイベント・snapshot serializerを渡します。4操作は[README](../README.ja.md)、保持の実配置は[schema](DYNAMODB_DATABASE_SCHEMA.ja.md)を参照してください。
 
-`sqlite-system`のfeature、本体、利用例は削除しました。feature `sqlite`と`bigtable`は、独自の配置を持つ5系の新しい保存先です。v3.0.6では`sqlite`と`sqlite-system`が同じSQLite実装を選ぶため、どちらで書いたファイルも、下記の[SQLiteの移行](#v3-sqliteデータの移行)で移します。v3のBigtable保存先が書いたデータは、下記の[Bigtableの移行](#v3-bigtableデータの移行)で移します。
+`sqlite-system`のfeature、本体、利用例は削除しました。feature `sqlite`・`spanner`・`bigtable`は、独自の配置を持つ5系の新しい保存先です。v3.0.6では`sqlite`と`sqlite-system`が同じSQLite実装を選ぶため、どちらで書いたファイルも、下記の[SQLiteの移行](#v3-sqliteデータの移行)で移します。v3のBigtable保存先が書いたデータは、下記の[Bigtableの移行](#v3-bigtableデータの移行)で移します。以前の版にはSpannerの保存先がないため、Spannerに移すものはありません。下記の[Spannerストアの新規導入](#spannerストアの新規導入)を参照してください。
 
 ## データの移行
 
@@ -287,6 +288,15 @@ CLIは`aggregates`・`events`・`snapshots`・`reasons`を持つ`MigrationReport
 cargo test -p event-store-adapter-migration-rs --test bigtable_cli_test
 ```
 
+### Spannerストアの新規導入
+
+このクレートの以前の版には、Spannerの保存先がありません。そのため、Spannerの移行関数もCLIのオプションもなく、移行CLIは変わりません。Spannerのストアは、必ず空の状態から始めます。ほかのストアのイベントをこのストアへ移すことは、このライブラリの対象外です。
+
+1. GoogleSQL方言のデータベースを作ります。PostgreSQL方言のデータベースは、`ConfigurationReason::SpannerLayoutMismatch`で拒否されます。
+2. 自分の接頭辞で、[Spannerのスキーマ](SPANNER_DATABASE_SCHEMA.ja.md#テーブルの作成)のDDLを適用します。Spanner TTL方式（`SpannerRetention::KeepLatestWithTtl`）では、`grace_days`と同じ日数の行削除ポリシーも付けます。ほかの保持の設定では、ポリシーを付けません。
+3. 書込を行うものがいない間に、アプリケーションが使うoptionsで`initialize_spanner_store`を1回呼びます。
+4. 同じoptionsで`EventStoreForSpanner::open`を呼んで、ストアを開きます。
+
 ## 確認と切り替え
 
 以下の各保存先の手順は、データの移行にある運用手順の手順3に続きます。
@@ -310,3 +320,7 @@ cargo test -p event-store-adapter-migration-rs --test bigtable_cli_test
    2. **新しい2つのテーブル**を消し、列ファミリ付きで作り直します。
    3. 同じ設定で`initialize_bigtable_store`をもう一度呼びます。
    4. 同じ入力で、移行をもう一度実行します。
+
+### Spanner
+
+Spannerにはデータの移行がないため、比べるものはありません。アプリケーションの書込先を新しいデータベースへ切り替える前に、使うoptionsで`EventStoreForSpanner::open`が成功することを確かめます。設定エラー（`ConfigurationReason::SpannerLayoutMismatch`・`SpannerConfigurationInvalid`・`SpannerConfigurationMismatch`）は、DDL・行削除ポリシー・設定の行のいずれかが、そのoptionsと異なることを表します。`open`は何も変えないため、原因を直して、もう一度開いてください。`initialize_spanner_store`が`SpannerAlreadyInitialized`で失敗した場合は、設定の行がすでに書かれているか、いずれかのテーブルが空ではありません。使用中のストアに対して、もう一度実行しないでください。

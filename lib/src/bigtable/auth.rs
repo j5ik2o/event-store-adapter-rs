@@ -4,10 +4,9 @@
 
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use tonic::metadata::AsciiMetadataValue;
-
+use crate::bearer_token::bearer_value;
 use crate::error::{EventStoreError, StorageOperation};
+use async_trait::async_trait;
 
 const AUTHORIZATION: &str = "authorization";
 
@@ -95,21 +94,7 @@ impl Authorizer {
       .access_token()
       .await
       .map_err(|source| EventStoreError::Storage { operation, source })?;
-    // gRPC の ASCII のメタデータの値は、印字できる ASCII に限られる。tonic の変換はタブと 0x80 以上も通すので、先に確かめる。
-    if !token.bytes().all(|byte| (0x20..=0x7e).contains(&byte)) {
-      return Err(EventStoreError::Storage {
-        operation,
-        source: Box::new(std::io::Error::other(
-          "the access token contains characters that cannot be sent as gRPC metadata",
-        )),
-      });
-    }
-    let mut value =
-      AsciiMetadataValue::try_from(format!("Bearer {token}")).map_err(|error| EventStoreError::Storage {
-        operation,
-        source: Box::new(error),
-      })?;
-    value.set_sensitive(true);
+    let value = bearer_value(&token, operation)?;
     let mut request = tonic::Request::new(message);
     request.metadata_mut().insert(AUTHORIZATION, value);
     Ok(request)

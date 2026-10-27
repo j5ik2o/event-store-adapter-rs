@@ -14,3 +14,8 @@ tokio = { workspace = true, features = ["full"] }
 tonic = { version = "0.14.6", default-features = false, features = ["channel"] }
 googleapis-tonic-google-bigtable-admin-v2 = "0.45.0"
 prost-types = "0.14.4"
+# Spanner のエミュレーターの接続・インスタンスとデータベースの作成・生の SQL に使う。ライブラリ本体の機能 `spanner` が使う版と同じにする。
+googleapis-tonic-google-spanner-v1 = "0.45.0"
+googleapis-tonic-google-spanner-admin-database-v1 = "0.40.0"
+googleapis-tonic-google-spanner-admin-instance-v1 = "0.40.0"
+base64 = "0.22.1"

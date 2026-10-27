@@ -40,17 +40,18 @@ pub struct PreparedCase {
 pub type CaseExecutor = fn(&Case, PreparedCase) -> CaseOutcome;
 
 /// この言語が提供する保存先。
-pub const PROVIDED_BACKENDS: [&str; 4] = ["memory", "dynamodb", "sqlite", "bigtable"];
+pub const PROVIDED_BACKENDS: [&str; 5] = ["memory", "dynamodb", "sqlite", "spanner", "bigtable"];
 
-/// FNV-1a 64 の値の表の操作。ハッシュを使う保存先（この言語では Bigtable）だけが実行する（K-1）。
+/// FNV-1a 64 の値の表の操作。ハッシュを使う保存先（この言語では Bigtable と Spanner）だけが実行する（K-1）。
 const HASH_OPERATION: &str = "fnv1a64";
 
-/// 特定の保存先に属する値の表の操作と、その保存先。
-const VALUE_OPERATION_BACKENDS: [(&str, &str); 4] = [
+/// 特定の保存先に属する値の表の操作と、その保存先。同じ操作が複数の保存先に属してよい。
+const VALUE_OPERATION_BACKENDS: [(&str, &str); 5] = [
   ("encodeBigtableEventEnvelope", "bigtable"),
   ("encodeBigtableSnapshotEnvelope", "bigtable"),
   ("decodeBigtableEnvelope", "bigtable"),
   (HASH_OPERATION, "bigtable"),
+  (HASH_OPERATION, "spanner"),
 ];
 
 /// 実行器が解釈する `store` の設定。
@@ -94,10 +95,12 @@ fn declared_backends(case: &Case) -> Option<Vec<&str>> {
     ),
     CaseKind::ValueTable => {
       let operation = case.body.get("operation").and_then(Value::as_str)?;
-      VALUE_OPERATION_BACKENDS
+      let backends: Vec<&str> = VALUE_OPERATION_BACKENDS
         .iter()
-        .find(|(name, _)| *name == operation)
-        .map(|(_, backend)| vec![*backend])
+        .filter(|(name, _)| *name == operation)
+        .map(|(_, backend)| *backend)
+        .collect();
+      (!backends.is_empty()).then_some(backends)
     }
   }
 }
@@ -159,7 +162,7 @@ fn not_targeted_reason(case: &Case, target: &Target) -> NotApplicableReason {
     && case.body.get("operation").and_then(Value::as_str) == Some(HASH_OPERATION)
   {
     return NotApplicableReason::HashBackendOnly {
-      detail: "ハッシュを使う保存先（Bigtable）だけが実行する".to_string(),
+      detail: "ハッシュを使う保存先（Bigtable・Spanner）だけが実行する".to_string(),
     };
   }
   if let Some(backends) = declared_backends(case) {

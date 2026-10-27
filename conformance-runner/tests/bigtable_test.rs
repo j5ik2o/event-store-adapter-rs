@@ -258,22 +258,33 @@ fn should_run_bigtable_fail_an_fnv1a64_case_whose_expected_value_differs_from_th
 }
 
 #[test]
-fn should_run_bigtable_keep_spanner_cases_as_not_provided() {
+fn should_run_bigtable_mark_spanner_cases_as_not_targeted_instead_of_not_provided() {
   let data = real_data();
   let reports = run_bigtable(&data);
 
+  let spanner_only: Vec<&CaseReport> = reports
+    .iter()
+    .filter(|report| report.id.starts_with("spanner-"))
+    .collect();
   let not_provided: Vec<&CaseReport> = reports
     .iter()
     .filter(|report| kind_of_not_applicable(&report.outcome).as_deref() == Some("backend-not-provided"))
     .collect();
 
-  assert_eq!(
-    not_provided.len(),
-    14,
+  assert_eq!(spanner_only.len(), 14, "Spanner の場面 14 件");
+  for report in spanner_only {
+    assert_eq!(
+      kind_of_not_applicable(&report.outcome).as_deref(),
+      Some("backend-not-targeted"),
+      "Spanner は提供する保存先なので、「提供しない」ではなく「今回の保存先でない」: {}",
+      report.id
+    );
+  }
+  assert!(
+    not_provided.is_empty(),
     "{:?}",
     not_provided.iter().map(|r| &r.id).collect::<Vec<_>>()
   );
-  assert!(not_provided.iter().all(|report| report.id.starts_with("spanner-")));
 }
 
 // ---------------------------------------------------------------------------

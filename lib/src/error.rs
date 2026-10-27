@@ -143,6 +143,22 @@ pub enum ConfigurationReason {
   BigtableAlreadyInitialized,
   /// journal と head に同じテーブルの ID が指定されている（2 章）。
   BigtableDuplicateTableIds,
+  /// Spanner の保存先は最初の版で変更フィードを提供しない。フィードを求める設定と、記録した `change_feed_enabled` が true のストアを開く操作は、この理由になる（SPN-D8・SPN-17）。
+  SpannerChangeFeedUnsupported,
+  /// 期限切れ方式の猶予の日数が 0 か、config の INT64 に収まらない（SPN-16）。
+  SpannerTtlGraceDaysOutOfRange,
+  /// 保持件数が Spanner の符号付き 64bit の整数に収まらない（2 章の config の形）。
+  SpannerKeepSnapshotCountOutOfRange,
+  /// テーブル名の接頭辞から導いた名前が、SQL の識別子でないか 128 文字を超える（SPN-D1b）。
+  SpannerInvalidTablePrefix,
+  /// データベースの方言、テーブルの列の名前と型、主キーの順が、プロファイルの配置と一致しない（SPN-2）。
+  SpannerLayoutMismatch,
+  /// config の行が欠けているか、形が壊れている（store_id が小文字の UUID でないなど）（SPN-2）。
+  SpannerConfigurationInvalid,
+  /// 読み取れた設定が、クライアントの設定（保持件数・方式・猶予）や行削除ポリシーと食い違う。配置の版が 1 でない場合もこの理由になる（SPN-2・SPN-16）。
+  SpannerConfigurationMismatch,
+  /// 初期化の対象が、既に config の行を持つか、空でないテーブルを持つ（SPN-D5）。
+  SpannerAlreadyInitialized,
 }
 
 impl fmt::Display for ConfigurationReason {
@@ -215,6 +231,30 @@ impl fmt::Display for ConfigurationReason {
       }
       ConfigurationReason::BigtableDuplicateTableIds => {
         formatter.write_str("the bigtable journal and head table ids must be distinct")
+      }
+      ConfigurationReason::SpannerChangeFeedUnsupported => {
+        formatter.write_str("the spanner store does not provide a change feed in this version")
+      }
+      ConfigurationReason::SpannerTtlGraceDaysOutOfRange => {
+        formatter.write_str("the spanner ttl grace days must be a positive integer that fits in INT64")
+      }
+      ConfigurationReason::SpannerKeepSnapshotCountOutOfRange => {
+        formatter.write_str("the spanner snapshot retention count does not fit in INT64")
+      }
+      ConfigurationReason::SpannerInvalidTablePrefix => {
+        formatter.write_str("the spanner table prefix does not derive valid table names")
+      }
+      ConfigurationReason::SpannerLayoutMismatch => {
+        formatter.write_str("the spanner database layout does not match the profile")
+      }
+      ConfigurationReason::SpannerConfigurationInvalid => {
+        formatter.write_str("the spanner configuration row is missing or malformed")
+      }
+      ConfigurationReason::SpannerConfigurationMismatch => {
+        formatter.write_str("the spanner configuration does not match the client settings or the row deletion policy")
+      }
+      ConfigurationReason::SpannerAlreadyInitialized => {
+        formatter.write_str("the spanner tables are already initialized or not empty")
       }
     }
   }

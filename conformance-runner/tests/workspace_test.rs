@@ -331,3 +331,93 @@ fn should_bigtable_tests_require_the_opt_in_bigtable_feature() {
     .expect("bigtable_test がある");
   assert_eq!(target["required-features"], json!(["bigtable"]));
 }
+
+/// 機能 `spanner` だけが有効にする gRPC の crate。版は検査しない（理由は `BIGTABLE_GRPC_CRATES` と同じ）。
+const SPANNER_GRPC_CRATES: [&str; 3] = [
+  "tonic",
+  "googleapis-tonic-google-spanner-v1",
+  "googleapis-tonic-google-spanner-admin-database-v1",
+];
+
+#[test]
+fn should_library_keep_the_spanner_grpc_dependencies_optional_behind_the_spanner_feature() {
+  let library = library_package(&workspace_metadata());
+
+  let defaults = library["features"]["default"].as_array().unwrap();
+  assert!(
+    !defaults.iter().any(|feature| feature == "spanner"),
+    "Spanner は既定の機能に入れない: {defaults:?}"
+  );
+  let spanner = library["features"]["spanner"]
+    .as_array()
+    .expect("ライブラリに機能 spanner がある");
+  for name in SPANNER_GRPC_CRATES {
+    assert!(
+      spanner.contains(&json!(format!("dep:{name}"))),
+      "機能 spanner が {name} を有効にする: {spanner:?}"
+    );
+    let dependency = library["dependencies"]
+      .as_array()
+      .unwrap()
+      .iter()
+      .find(|dependency| dependency["name"] == name && dependency["kind"].is_null())
+      .unwrap_or_else(|| panic!("{name} は通常の依存として宣言される"));
+    assert_eq!(
+      dependency["optional"], true,
+      "機能 spanner を付けないビルドに {name} を入れない"
+    );
+  }
+}
+
+#[test]
+fn should_library_spanner_feature_not_pull_in_the_other_backends_or_the_test_hooks() {
+  let library = library_package(&workspace_metadata());
+
+  let spanner = library["features"]["spanner"]
+    .as_array()
+    .expect("ライブラリに機能 spanner がある");
+
+  for other in [
+    "dynamodb",
+    "sqlite",
+    "bigtable",
+    "migration",
+    "sqlite-migration",
+    "bigtable-migration",
+    "test-hooks",
+    "dep:aws-sdk-dynamodb",
+    "dep:rusqlite",
+    "dep:googleapis-tonic-google-bigtable-v2",
+    "dep:googleapis-tonic-google-bigtable-admin-v2",
+  ] {
+    assert!(
+      !spanner.contains(&json!(other)),
+      "機能 spanner は {other} を有効にしない（フックや設定の上書きは機能 test-hooks の外で公開しない）: {spanner:?}"
+    );
+  }
+}
+
+#[test]
+fn should_spanner_tests_require_the_opt_in_spanner_feature() {
+  let package = runner_package(&workspace_metadata());
+
+  assert_eq!(package["features"]["default"], json!([]));
+  let spanner = package["features"]["spanner"]
+    .as_array()
+    .expect("実行器に機能 spanner がある");
+  assert!(
+    spanner.contains(&json!("event-store-adapter-rs/spanner")),
+    "実行器の機能 spanner がライブラリの機能 spanner を有効にする: {spanner:?}"
+  );
+  assert!(
+    !requested_features(&package, "event-store-adapter-rs").contains(&"spanner".to_string()),
+    "ライブラリの機能 spanner を常には有効にしない"
+  );
+  let target = package["targets"]
+    .as_array()
+    .unwrap()
+    .iter()
+    .find(|target| target["name"] == "spanner_test")
+    .expect("spanner_test がある");
+  assert_eq!(target["required-features"], json!(["spanner"]));
+}
