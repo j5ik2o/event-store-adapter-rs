@@ -95,6 +95,21 @@ fn should_schema_set_reports_the_violating_location() {
 }
 
 #[test]
+fn should_schema_set_reports_every_violation_not_only_the_first() {
+  let schemas = shipped_schemas();
+  let mut coverage = valid_coverage();
+  coverage["required_rules"] = json!([]);
+  coverage["notes"] = json!(2);
+
+  let message = schemas
+    .validate("coverage", &coverage)
+    .expect_err("独立した 2 つの違反");
+
+  assert!(message.contains("/required_rules"), "{message}");
+  assert!(message.contains("/notes"), "{message}");
+}
+
+#[test]
 fn should_schema_set_reports_at_most_five_distinct_violations() {
   let schemas = shipped_schemas();
   let coverage = json!({

@@ -116,7 +116,7 @@ fn should_runner_pins_the_schema_crate_and_leaves_its_network_features_off() {
     .iter()
     .find(|dependency| dependency["name"] == "jsonschema")
     .expect("jsonschema に依存する");
-  assert_eq!(dependency["req"], "=0.20.0", "版を固定する");
+  assert_eq!(dependency["req"], "=0.60.2", "版を固定する");
   assert_eq!(
     dependency["uses_default_features"], false,
     "HTTP・ファイルでの取得の既定の機能を有効にしない"
