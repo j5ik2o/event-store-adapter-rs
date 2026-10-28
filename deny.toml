@@ -23,7 +23,10 @@ allow = [
   "BSD-2-Clause",
   "BSD-3-Clause",
   "ISC",
+  "MIT-0",
   "Unicode-3.0",
+  # jsonschema 0.60 (conformance-runner only) brings foldhash (Zlib).
+  "Zlib",
 ]
 # Workspace-internal crates that are not published by lib-release.yml
 # (only event-store-adapter-rs is) and carry no `license` field of their
