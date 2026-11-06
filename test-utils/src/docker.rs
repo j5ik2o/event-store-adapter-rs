@@ -51,6 +51,7 @@ fn gate_path() -> PathBuf {
 fn open_gate() -> File {
   OpenOptions::new()
     .create(true)
+    .truncate(false)
     .read(true)
     .write(true)
     .open(gate_path())
@@ -223,8 +224,7 @@ fn run_held<S, P, F>(
 where
   S: FnOnce(String) -> TestBodySpecification + Send + 'static,
   P: FnOnce(DockerOperations) -> F + Send + 'static,
-  F: Future<Output = anyhow::Result<u16>> + Send,
-{
+  F: Future<Output = anyhow::Result<u16>> + Send, {
   let (port_sender, port_receiver) = channel::<anyhow::Result<(u16, String)>>();
   let (commands, mut command_receiver) = mpsc::unbounded_channel();
   let thread = std::thread::Builder::new()
