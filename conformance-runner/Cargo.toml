@@ -6,7 +6,7 @@ publish = false
 
 [features]
 default = []
-dynamodb = ["event-store-adapter-rs/dynamodb", "dep:event-store-adapter-test-utils-rs", "dep:testcontainers", "dep:aws-smithy-http-client"]
+dynamodb = ["event-store-adapter-rs/dynamodb", "dep:event-store-adapter-test-utils-rs", "dep:dockertest", "dep:aws-smithy-http-client"]
 sqlite = ["event-store-adapter-rs/sqlite", "dep:rusqlite"]
 bigtable = ["event-store-adapter-rs/bigtable", "dep:event-store-adapter-test-utils-rs", "tokio/rt-multi-thread"]
 spanner = ["event-store-adapter-rs/spanner", "dep:event-store-adapter-test-utils-rs", "tokio/rt-multi-thread"]
@@ -41,7 +41,7 @@ thiserror = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true, features = ["rt"] }
 event-store-adapter-test-utils-rs = { path = "../test-utils", optional = true }
-testcontainers = { workspace = true, optional = true }
+dockertest = { workspace = true, optional = true }
 aws-smithy-http-client = { version = "1.5.0", features = ["default-client", "rt-tokio"], optional = true }
 rusqlite = { workspace = true, optional = true, features = ["bundled"] }
 tracing = { workspace = true }
@@ -54,5 +54,5 @@ jsonschema = { version = "=0.60.2", default-features = false }
 
 [dev-dependencies]
 event-store-adapter-test-utils-rs = { path = "../test-utils" }
-testcontainers = { workspace = true }
+dockertest = { workspace = true }
 aws-smithy-http-client = { version = "1.5.0", features = ["default-client", "rt-tokio"] }

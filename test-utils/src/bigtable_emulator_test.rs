@@ -1,23 +1,17 @@
 use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::bigtable_table_admin_client::BigtableTableAdminClient;
 use googleapis_tonic_google_bigtable_admin_v2::google::bigtable::admin::v2::{gc_rule, table, GetTableRequest};
-use testcontainers::{ContainerAsync, GenericImage, Image};
 use tonic::transport::Channel;
 
 use crate::bigtable::{
   connect, create_table, create_tables, FamilySpec, GarbageCollection, HEAD_FAMILIES, JOURNAL_FAMILIES,
 };
-use crate::docker::{bigtable_emulator, BIGTABLE_EMULATOR_PORT};
+use crate::docker::{bigtable_emulator, bigtable_emulator_image, LocalContainer};
 
 /// Bigtable エミュレーターを起動し、コンテナ・公開ポート・管理 API の接続を返す。
 /// コンテナは呼び出し側が保持する（drop で削除される）。
-async fn start() -> (ContainerAsync<GenericImage>, Channel) {
-  let container = bigtable_emulator()
-    .await
-    .expect("failed to start the Bigtable emulator");
-  let port = container
-    .get_host_port_ipv4(BIGTABLE_EMULATOR_PORT)
-    .await
-    .expect("failed to resolve the mapped port");
+async fn start() -> (LocalContainer, Channel) {
+  let container = bigtable_emulator().expect("failed to start the Bigtable emulator");
+  let port = container.port();
   let channel = connect(port).await.expect("failed to connect to the Bigtable emulator");
   (container, channel)
 }
@@ -43,13 +37,13 @@ async fn schema_of(channel: &Channel, table_id: &str) -> Vec<(String, Option<gc_
 // 起動したコンテナは、digest で固定した google-cloud-cli 587.0.0-emulators のイメージから作られる。
 #[tokio::test]
 async fn test_bigtable_emulator_starts_from_the_digest_pinned_image() {
-  let (container, _channel) = start().await;
+  let (_container, _channel) = start().await;
 
-  let image = container.image();
+  let (name, digest) = bigtable_emulator_image();
 
-  assert_eq!(image.name(), "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256");
+  assert_eq!(name, "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256");
   assert_eq!(
-    image.tag(),
+    digest,
     "8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54"
   );
 }
@@ -57,22 +51,14 @@ async fn test_bigtable_emulator_starts_from_the_digest_pinned_image() {
 // 動くタグ（`emulators` や `latest`）で起動しない。参照の末尾は 64 桁の 16 進数の digest だけである。
 #[tokio::test]
 async fn test_bigtable_emulator_never_starts_from_a_moving_tag() {
-  let (container, _channel) = start().await;
+  let (_container, _channel) = start().await;
 
-  let image = container.image();
+  let (name, digest) = bigtable_emulator_image();
 
-  assert!(
-    image.name().ends_with("@sha256"),
-    "イメージ名は digest 参照の形: {}",
-    image.name()
-  );
-  assert_eq!(image.tag().len(), 64, "tag は digest の 16 進数 64 桁: {}", image.tag());
-  assert!(
-    image.tag().chars().all(|c| c.is_ascii_hexdigit()),
-    "tag は digest の 16 進数だけ: {}",
-    image.tag()
-  );
-  assert!(!matches!(image.tag(), "emulators" | "latest"));
+  assert!(name.ends_with("@sha256"), "イメージ名は digest 参照の形: {name}");
+  assert_eq!(digest.len(), 64, "tag は digest の 16 進数 64 桁: {digest}");
+  assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "tag は digest の 16 進数だけ: {digest}");
+  assert!(!matches!(digest, "emulators" | "latest"));
 }
 
 // `create_tables` は BT-2 のとおり、6 つの列ファミリを版数の GC（最大 1）だけで作り、

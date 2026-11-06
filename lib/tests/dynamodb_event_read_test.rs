@@ -30,7 +30,6 @@ use event_store_adapter_rs::{EventSerializer, SnapshotSerializer};
 use event_store_adapter_rs::{SeqNr, SEQ_NR_MAX};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 
 type Item = HashMap<String, AttributeValue>;
 type Traces = Arc<Mutex<Vec<Value>>>;
@@ -264,7 +263,7 @@ impl Observed {
 }
 
 struct Fixture {
-  container: ContainerAsync<GenericImage>,
+  _container: docker::LocalContainer,
   raw: Observed,
   endpoint: String,
   tables: DynamoDbTables,
@@ -273,8 +272,8 @@ struct Fixture {
 
 impl Fixture {
   async fn new() -> Self {
-    let container = docker::dynamodb_local().await.unwrap();
-    let port = container.get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT).await.unwrap();
+    let container = docker::dynamodb_local().unwrap();
+    let port = container.port();
     let endpoint = format!("http://127.0.0.1:{port}");
     let raw = Observed::new(&endpoint);
     let names = dynamodb::TableNames {
@@ -285,7 +284,7 @@ impl Fixture {
     };
     dynamodb::create_tables(&raw.client, &names, false).await.unwrap();
     let fixture = Self {
-      container,
+      _container: container,
       raw,
       endpoint,
       record_number: AtomicUsize::new(0),
@@ -370,9 +369,7 @@ impl Fixture {
     }
   }
 
-  async fn close(self) {
-    self.container.rm().await.unwrap();
-  }
+  async fn close(self) {}
 }
 
 fn metadata(seq_nr: SeqNr) -> (i64, &'static str) {
@@ -868,7 +865,7 @@ async fn should_preserve_the_original_sdk_cause_on_real_communication_failure() 
     &observed.take(),
     &json!({"returned_count": 3}),
   );
-  fixture.container.stop().await.unwrap();
+  fixture._container.stop().await;
   // 同じopen済みストアとClientを保持して、実サーバ停止後の送信を観測する。
   let result = store.get_events_by_id_since_seq_nr(&id, 0).await;
   let error = failure(&result);

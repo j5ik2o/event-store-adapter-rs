@@ -4,19 +4,15 @@ use aws_sdk_dynamodb::types::{
   TimeToLiveStatus,
 };
 use aws_sdk_dynamodb::Client;
-use testcontainers::{ContainerAsync, GenericImage};
 
-use crate::docker::{dynamodb_local, DYNAMODB_LOCAL_PORT};
+use crate::docker::{dynamodb_local, LocalContainer};
 use crate::dynamodb::{create_dynamodb_local_client, create_tables, TableNames};
 
 /// DynamoDB Local を起動し、コンテナ・公開ポート・クライアントを返す。
 /// コンテナは呼び出し側が保持する（drop で削除される）。
-async fn connect() -> (ContainerAsync<GenericImage>, u16, Client) {
-  let container = dynamodb_local().await.expect("failed to start DynamoDB Local");
-  let port = container
-    .get_host_port_ipv4(DYNAMODB_LOCAL_PORT)
-    .await
-    .expect("failed to resolve the mapped port");
+async fn connect() -> (LocalContainer, u16, Client) {
+  let container = dynamodb_local().expect("failed to start DynamoDB Local");
+  let port = container.port();
   let client = create_dynamodb_local_client(port);
   (container, port, client)
 }

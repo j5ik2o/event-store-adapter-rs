@@ -146,7 +146,7 @@ fn should_dynamodb_local_tests_require_the_opt_in_dynamodb_feature() {
     json!([
       "event-store-adapter-rs/dynamodb",
       "dep:event-store-adapter-test-utils-rs",
-      "dep:testcontainers",
+      "dep:dockertest",
       "dep:aws-smithy-http-client"
     ])
   );

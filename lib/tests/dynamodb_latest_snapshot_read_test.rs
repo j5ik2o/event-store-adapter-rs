@@ -29,7 +29,6 @@ use event_store_adapter_rs::{EventEnvelope, SnapshotEnvelope, SnapshotRead};
 use event_store_adapter_rs::{JsonEventSerializer, SnapshotSerializer};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 
 type Item = HashMap<String, AttributeValue>;
 type Traces = Arc<Mutex<Vec<Value>>>;
@@ -357,7 +356,7 @@ impl Observed {
 }
 
 struct Fixture {
-  container: ContainerAsync<GenericImage>,
+  _container: docker::LocalContainer,
   raw: Observed,
   endpoint: String,
   tables: DynamoDbTables,
@@ -366,8 +365,8 @@ struct Fixture {
 
 impl Fixture {
   async fn new() -> Self {
-    let container = docker::dynamodb_local().await.unwrap();
-    let port = container.get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT).await.unwrap();
+    let container = docker::dynamodb_local().unwrap();
+    let port = container.port();
     let endpoint = format!("http://127.0.0.1:{port}");
     let raw = Observed::new(&endpoint);
     let names = dynamodb::TableNames {
@@ -378,7 +377,7 @@ impl Fixture {
     };
     dynamodb::create_tables(&raw.client, &names, false).await.unwrap();
     let fixture = Self {
-      container,
+      _container: container,
       raw,
       endpoint,
       record_number: AtomicUsize::new(0),
@@ -458,7 +457,7 @@ impl Fixture {
     if let Some(directory) = std::env::var_os("DYNAMODB_SNAPSHOT_READ_EVIDENCE_DIR") {
       let directory = std::path::PathBuf::from(directory);
       std::fs::create_dir_all(&directory).unwrap();
-      let record = json!({"container_id": self.container.id(), "tables": {"journal": self.tables.journal_table_name,
+      let record = json!({"container_id": self._container.id(), "tables": {"journal": self.tables.journal_table_name,
         "snapshot": self.tables.snapshot_table_name, "head": self.tables.head_table_name},
         "operation": observation, "observer": observer, "extra": extra});
       let number = self.record_number.fetch_add(1, Ordering::SeqCst);
@@ -471,9 +470,7 @@ impl Fixture {
     }
   }
 
-  async fn close(self) {
-    self.container.rm().await.unwrap();
-  }
+  async fn close(self) {}
 }
 
 fn head_key(aid: &str) -> Item {
@@ -1284,7 +1281,7 @@ async fn should_preserve_the_original_sdk_cause_after_real_communication_stops()
     &observed.take(),
     &json!({"result": result_json(&read)}),
   );
-  fixture.container.stop().await.unwrap();
+  fixture._container.stop().await;
   let id = Id::new("Account", "communication");
   let result = store.get_latest_snapshot_by_id(&id).await;
   assert_id_fixed(&id);

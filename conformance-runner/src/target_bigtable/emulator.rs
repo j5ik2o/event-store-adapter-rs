@@ -1,6 +1,6 @@
 //! プロセスの中で共有する Bigtable エミュレーター。
 //!
-//! 適合ケースは全て同じエミュレーターを使い、場面ごとに新しいテーブルを作る。コンテナは専用のスレッドと実行基盤が持ち、
+//! 適合ケースは全て同じエミュレーターを使い、場面ごとに新しいテーブルを作る。コンテナは専用のスレッドが持ち、
 //! 使うスレッドが全ていなくなったときに削除する。スレッドごとに共有を保持するので、同じスレッドで続けて実行するケースは
 //! 起動し直さない。実行器のコマンドは、メインスレッドの共有を [`release_emulator`] で明示的に放す。
 
@@ -11,7 +11,7 @@ use std::thread::JoinHandle;
 
 use event_store_adapter_test_utils_rs::docker;
 
-/// 専用のスレッドと実行基盤でコンテナを持つ。落とすとコンテナを削除する。
+/// 専用のスレッドでコンテナを持つ。落とすとコンテナを削除する。
 struct EmulatorHost {
   port: u16,
   stop: Option<Sender<()>>,
@@ -25,41 +25,17 @@ impl EmulatorHost {
     let thread = std::thread::Builder::new()
       .name("bigtable-emulator".to_owned())
       .spawn(move || {
-        let runtime = match tokio::runtime::Builder::new_multi_thread()
-          .worker_threads(2)
-          .enable_all()
-          .build()
-        {
-          Ok(runtime) => runtime,
+        match docker::bigtable_emulator() {
+          Ok(container) => {
+            let _ = ready_sender.send(Ok(container.port()));
+            // 使う側が全ていなくなる（送信側が落ちる）まで、コンテナを持ち続ける。
+            let _ = stop_receiver.recv();
+            drop(container);
+          }
           Err(error) => {
-            let _ = ready_sender.send(Err(format!("エミュレーター用の実行基盤を作れない: {error}")));
-            return;
+            let _ = ready_sender.send(Err(format!("{error:#}")));
           }
-        };
-        runtime.block_on(async move {
-          let started = async {
-            let container = docker::bigtable_emulator()
-              .await
-              .map_err(|error| format!("{error:#}"))?;
-            let port = container
-              .get_host_port_ipv4(docker::BIGTABLE_EMULATOR_PORT)
-              .await
-              .map_err(|error| error.to_string())?;
-            Ok::<_, String>((container, port))
-          }
-          .await;
-          match started {
-            Ok((container, port)) => {
-              let _ = ready_sender.send(Ok(port));
-              // 使う側が全ていなくなる（送信側が落ちる）まで、コンテナを持ち続ける。
-              let _ = tokio::task::spawn_blocking(move || stop_receiver.recv()).await;
-              drop(container);
-            }
-            Err(error) => {
-              let _ = ready_sender.send(Err(error));
-            }
-          }
-        });
+        }
       })
       .map_err(|error| format!("エミュレーターのスレッドを起動できない: {error}"))?;
     match ready_receiver.recv() {
