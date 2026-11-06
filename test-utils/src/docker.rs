@@ -207,13 +207,18 @@ async fn ensure_image(repository: &str, digest: &str) -> anyhow::Result<String> 
   if !image_exists(&digest_reference).await? {
     let output = run_docker(&["pull", &digest_reference]).await?;
     if !output.status.success() {
-      anyhow::bail!("{digest_reference} を pull できない: {}", stderr(&output));
+      anyhow::bail!(
+        "{digest_reference} を pull できない (status {}): {}",
+        output.status,
+        stderr(&output)
+      );
     }
   }
   let output = run_docker(&["tag", &digest_reference, &alias_reference]).await?;
   if !output.status.success() {
     anyhow::bail!(
-      "{digest_reference} に {alias_reference} を付けられない: {}",
+      "{digest_reference} に {alias_reference} を付けられない (status {}): {}",
+      output.status,
       stderr(&output)
     );
   }
