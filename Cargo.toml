@@ -26,3 +26,12 @@ googleapis-tonic-google-spanner-admin-database-v1 = "0.40.0"
 
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+# RUSTSEC-2026-0440 と Issue #349 への対応。testcontainers 0.28.0 は未保守の
+# astral-tokio-tar を依存に持ち、公開版に修正が無いため、astral-tokio-tar を
+# tar へ置き換える上流 PR #1006 のコミットへ固定して依存グラフから取り除く。
+# https://github.com/testcontainers/testcontainers-rs/pull/1006
+# 解除条件: astral-tokio-tar 非依存の最初の公開版（0.29.0 が有力）へ上げる際に
+# この patch を削除する。
+[patch.crates-io]
+testcontainers = { git = "https://github.com/testcontainers/testcontainers-rs", rev = "dba4383d9bdbaed68d499f6e3ba933a289ba0a4a" }
