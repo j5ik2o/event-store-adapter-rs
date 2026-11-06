@@ -9,7 +9,7 @@ aws-sdk-dynamodb = { workspace = true }
 ulid-generator-rs = { workspace = true, features = ["serde", "uuid"] }
 dockertest = { workspace = true }
 # dockertest が使うのと同じ版の Docker クライアント。digest 参照の pull と alias 付けにだけ使う。
-bollard = "0.17.1"
+bollard = "0.21.0"
 # bollard の pull のストリームを進める。
 futures = "0.3"
 once_cell = { workspace = true }
