@@ -21,7 +21,6 @@ use aws_smithy_types::timeout::TimeoutConfig;
 use aws_smithy_types::{body::SdkBody, byte_stream::ByteStream};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 use tokio::sync::Notify;
 
 use super::{DynamoDbOptions, DynamoDbTables, EventStoreForDynamoDB};
@@ -227,7 +226,7 @@ impl HttpConnector for ObservedConnector {
 }
 
 struct Fixture {
-  container: ContainerAsync<GenericImage>,
+  _container: docker::LocalContainer,
   raw: Client,
   endpoint: String,
   tables: DynamoDbTables,
@@ -235,8 +234,8 @@ struct Fixture {
 
 impl Fixture {
   async fn new() -> Self {
-    let container = docker::dynamodb_local().await.unwrap();
-    let port = container.get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT).await.unwrap();
+    let container = docker::dynamodb_local().unwrap();
+    let port = container.port();
     let raw = dynamodb::create_dynamodb_local_client(port);
     let names = dynamodb::TableNames {
       journal: "open-first".into(),
@@ -246,7 +245,7 @@ impl Fixture {
     };
     dynamodb::create_tables(&raw, &names, false).await.unwrap();
     Self {
-      container,
+      _container: container,
       raw,
       endpoint: format!("http://127.0.0.1:{port}"),
       tables: DynamoDbTables {
@@ -387,7 +386,6 @@ impl Fixture {
     for table in self.names() {
       self.raw.delete_table().table_name(table).send().await.unwrap();
     }
-    self.container.rm().await.unwrap();
   }
 }
 

@@ -3,7 +3,7 @@ use std::env;
 use aws_sdk_dynamodb::config::{AsyncSleep, Sleep};
 use chrono::Utc;
 use event_store_adapter_rs::{DynamoDbOptions, DynamoDbTables, EventEnvelope, EventStoreForDynamoDB, SnapshotEnvelope};
-use event_store_adapter_test_utils_rs::docker::{dynamodb_local, DYNAMODB_LOCAL_PORT};
+use event_store_adapter_test_utils_rs::docker::dynamodb_local;
 use event_store_adapter_test_utils_rs::dynamodb::{create_dynamodb_local_client, create_tables, TableNames};
 use event_store_adapter_test_utils_rs::id_generator::id_generate;
 
@@ -32,8 +32,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     .finish();
   tracing::subscriber::set_global_default(subscriber)?;
 
-  let _container = dynamodb_local().await?;
-  let port = _container.get_host_port_ipv4(DYNAMODB_LOCAL_PORT).await?;
+  let _container = dynamodb_local()?;
+  let port = _container.port();
   let client = aws_sdk_dynamodb::Client::from_conf(
     create_dynamodb_local_client(port)
       .config()

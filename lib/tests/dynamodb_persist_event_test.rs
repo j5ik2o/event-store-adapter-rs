@@ -33,7 +33,6 @@ use event_store_adapter_rs::{EventSerializer, SnapshotSerializer};
 use event_store_adapter_rs::{RetentionMode, RetentionSettings};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 
 type Item = HashMap<String, AttributeValue>;
 type Traces = Arc<Mutex<Vec<Value>>>;
@@ -370,7 +369,7 @@ impl Observed {
 }
 
 struct Fixture {
-  container: ContainerAsync<GenericImage>,
+  _container: docker::LocalContainer,
   raw: Observed,
   endpoint: String,
   tables: DynamoDbTables,
@@ -378,8 +377,8 @@ struct Fixture {
 
 impl Fixture {
   async fn new() -> Self {
-    let container = docker::dynamodb_local().await.unwrap();
-    let port = container.get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT).await.unwrap();
+    let container = docker::dynamodb_local().unwrap();
+    let port = container.port();
     let endpoint = format!("http://127.0.0.1:{port}");
     let raw = Observed::new(&endpoint);
     let names = dynamodb::TableNames {
@@ -391,7 +390,7 @@ impl Fixture {
     dynamodb::create_tables(&raw.client, &names, true).await.unwrap();
     raw.take();
     Self {
-      container,
+      _container: container,
       raw,
       endpoint,
       tables: DynamoDbTables {
@@ -541,7 +540,6 @@ impl Fixture {
     ] {
       self.raw.client.delete_table().table_name(table).send().await.unwrap();
     }
-    self.container.rm().await.unwrap();
   }
 }
 

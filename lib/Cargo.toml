@@ -66,7 +66,7 @@ tracing = { workspace = true }
 aws-smithy-runtime-api = { version = "1.19.0", features = ["client"] }
 aws-smithy-types = "1.8.1"
 aws-smithy-http-client = { version = "1.5.0", features = ["default-client", "rt-tokio"] }
-testcontainers = { workspace = true }
+dockertest = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 event-store-adapter-test-utils-rs = { path = "../test-utils" }
 tracing-subscriber = { workspace = true, features = [ "std", "env-filter" ] }

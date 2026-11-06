@@ -10,22 +10,18 @@ use googleapis_tonic_google_spanner_v1::google::spanner::v1::{
   transaction_selector, BeginTransactionRequest, CreateSessionRequest, ExecuteSqlRequest, Session, TransactionOptions,
   TransactionSelector,
 };
-use testcontainers::{ContainerAsync, GenericImage, Image};
 use tonic::transport::Channel;
 
-use crate::docker::{spanner_emulator, SPANNER_EMULATOR_PORT};
+use crate::docker::{spanner_emulator, spanner_emulator_image, LocalContainer};
 use crate::spanner::{
   connect, create_database, database_path, drop_database, insert_configuration, store_ddl, Cell, Param, RawSql,
   SeedConfiguration,
 };
 
 /// Spanner エミュレーターを起動し、コンテナと接続を返す。コンテナは呼び出し側が保持する（drop で削除される）。
-async fn start() -> (ContainerAsync<GenericImage>, Channel) {
-  let container = spanner_emulator().await.expect("failed to start the Spanner emulator");
-  let port = container
-    .get_host_port_ipv4(SPANNER_EMULATOR_PORT)
-    .await
-    .expect("failed to resolve the mapped port");
+async fn start() -> (LocalContainer, Channel) {
+  let container = spanner_emulator().expect("failed to start the Spanner emulator");
+  let port = container.port();
   let channel = connect(port).await.expect("failed to connect to the Spanner emulator");
   (container, channel)
 }
@@ -47,21 +43,18 @@ async fn insert_current(raw: &RawSql, seq: i64) -> anyhow::Result<i64> {
 // 起動したコンテナは、digest で固定した 1.5.58 のイメージから作られる。動くタグ（`latest` など）で起動しない。
 #[tokio::test]
 async fn should_spanner_emulator_starts_from_the_digest_pinned_image() {
-  let (container, _channel) = start().await;
+  let (_container, _channel) = start().await;
 
-  let image = container.image();
+  let (repository, digest) = spanner_emulator_image();
 
-  assert_eq!(image.name(), "gcr.io/cloud-spanner-emulator/emulator@sha256");
+  // helper はこの digest で pull し、`repository:eswa-<先頭 12 桁>` にタグ付けして起動する。
+  assert_eq!(repository, "gcr.io/cloud-spanner-emulator/emulator");
   assert_eq!(
-    image.tag(),
+    digest,
     "c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"
   );
-  assert_eq!(
-    image.tag().len(),
-    64,
-    "参照の末尾は 64 桁の 16 進数の digest だけである"
-  );
-  assert!(image.tag().chars().all(|c| c.is_ascii_hexdigit()));
+  assert_eq!(digest.len(), 64, "参照の末尾は 64 桁の 16 進数の digest だけである");
+  assert!(digest.chars().all(|c| c.is_ascii_hexdigit()));
 }
 
 // プロファイル 3 章の 5 テーブルを作り、config の 1 行を書いて、列の型どおりに読み戻せる。INT64 は符号付き 64 ビットの全域を失わない。

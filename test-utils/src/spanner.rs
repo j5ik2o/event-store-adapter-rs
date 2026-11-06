@@ -90,7 +90,7 @@ pub(crate) async fn wait_until_list_instance_configs_succeeds(port: u16) -> Resu
 // エミュレーター（プロセスの中で共有する）
 // ---------------------------------------------------------------------------
 
-/// 専用のスレッドと実行基盤でコンテナを持つ。落とすとコンテナを削除する。
+/// 専用のスレッドでコンテナを持つ。落とすとコンテナを削除する。
 pub struct EmulatorHost {
   port: u16,
   stop: Option<Sender<()>>,
@@ -112,37 +112,17 @@ impl EmulatorHost {
     let (port_sender, port_receiver) = channel::<std::result::Result<u16, String>>();
     let (stop, stop_receiver) = channel::<()>();
     let thread = std::thread::spawn(move || {
-      let runtime = match tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-      {
-        Ok(runtime) => runtime,
-        Err(error) => {
-          let _ = port_sender.send(Err(format!("エミュレーター用の実行基盤を作れない: {error}")));
-          return;
+      match crate::docker::spanner_emulator() {
+        Ok(container) => {
+          let _ = port_sender.send(Ok(container.port()));
+          // 使う側が全ていなくなる（送信側が落ちる）まで、コンテナを持ち続ける。
+          let _ = stop_receiver.recv();
+          drop(container);
         }
-      };
-      runtime.block_on(async move {
-        let container = match crate::docker::spanner_emulator().await {
-          Ok(container) => container,
-          Err(error) => {
-            let _ = port_sender.send(Err(format!("エミュレーターを起動できない: {error:?}")));
-            return;
-          }
-        };
-        let port = match container.get_host_port_ipv4(crate::docker::SPANNER_EMULATOR_PORT).await {
-          Ok(port) => port,
-          Err(error) => {
-            let _ = port_sender.send(Err(format!("公開ポートを得られない: {error:?}")));
-            return;
-          }
-        };
-        let _ = port_sender.send(Ok(port));
-        // 使う側が全ていなくなる（送信側が落ちる）まで、コンテナを持ち続ける。
-        let _ = tokio::task::spawn_blocking(move || stop_receiver.recv()).await;
-        drop(container);
-      });
+        Err(error) => {
+          let _ = port_sender.send(Err(format!("エミュレーターを起動できない: {error:?}")));
+        }
+      }
     });
     let port = port_receiver
       .recv()

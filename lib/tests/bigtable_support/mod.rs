@@ -36,7 +36,7 @@ pub const RECORDED_STORE_ID: &str = "5f0c8b8e-3c1a-4d7e-9a4b-2f6d1c0e7a11";
 // エミュレーター（プロセスの中で共有する）
 // ---------------------------------------------------------------------------
 
-/// 専用のスレッドと実行基盤でコンテナを持つ。落とすとコンテナを削除する。
+/// 専用のスレッドでコンテナを持つ。落とすとコンテナを削除する。
 struct EmulatorHost {
   port: u16,
   stop: Option<Sender<()>>,
@@ -48,22 +48,11 @@ impl EmulatorHost {
     let (port_sender, port_receiver) = channel::<u16>();
     let (stop, stop_receiver) = channel::<()>();
     let thread = std::thread::spawn(move || {
-      let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
-        .enable_all()
-        .build()
-        .expect("エミュレーター用の実行基盤を作れる");
-      runtime.block_on(async move {
-        let container = docker::bigtable_emulator().await.expect("エミュレーターを起動できる");
-        let port = container
-          .get_host_port_ipv4(docker::BIGTABLE_EMULATOR_PORT)
-          .await
-          .expect("公開ポートを得られる");
-        port_sender.send(port).expect("ポートを渡せる");
-        // 使う側が全ていなくなる（送信側が落ちる）まで、コンテナを持ち続ける。
-        let _ = tokio::task::spawn_blocking(move || stop_receiver.recv()).await;
-        drop(container);
-      });
+      let container = docker::bigtable_emulator().expect("エミュレーターを起動できる");
+      port_sender.send(container.port()).expect("ポートを渡せる");
+      // 使う側が全ていなくなる（送信側が落ちる）まで、コンテナを持ち続ける。
+      let _ = stop_receiver.recv();
+      drop(container);
     });
     let port = port_receiver.recv().expect("エミュレーターのポートを受け取れる");
     Self {

@@ -23,7 +23,6 @@ use event_store_adapter_rs::{DynamoDbOptions, DynamoDbTables, EventStoreForDynam
 use event_store_adapter_rs::{EventSerializer, SnapshotSerializer};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 
 pub type Item = HashMap<String, A>;
 pub type Traces = Arc<Mutex<Vec<Value>>>;
@@ -178,7 +177,7 @@ impl Observed {
 }
 
 pub struct Fixture {
-  pub _container: ContainerAsync<GenericImage>,
+  pub _container: docker::LocalContainer,
   pub raw: Client,
   pub endpoint: String,
   pub tables: DynamoDbTables,
@@ -187,8 +186,8 @@ pub struct Fixture {
 impl Fixture {
   pub async fn new() -> Self {
     static NEXT: AtomicUsize = AtomicUsize::new(0);
-    let container = docker::dynamodb_local().await.unwrap();
-    let port = container.get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT).await.unwrap();
+    let container = docker::dynamodb_local().unwrap();
+    let port = container.port();
     let endpoint = format!("http://127.0.0.1:{port}");
     let raw = Client::from_conf(
       dynamodb::create_dynamodb_local_client(port)

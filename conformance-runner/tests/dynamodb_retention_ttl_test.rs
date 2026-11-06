@@ -20,7 +20,6 @@ use event_store_adapter_rs::retention::{RetentionMode, RetentionSettings};
 use event_store_adapter_rs::serializer::{JsonEventSerializer, JsonSnapshotSerializer};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 use tracing::field::{Field, Visit};
 use tracing::span::{Attributes, Id};
 use tracing::{Event, Instrument, Subscriber};
@@ -293,7 +292,7 @@ fn assert_item(declaration: &Value, item: &Item) {
 }
 
 struct Fixture {
-  container: ContainerAsync<GenericImage>,
+  _container: docker::LocalContainer,
   raw: Client,
   client: Client,
   transport: FaultTransport,
@@ -303,8 +302,8 @@ struct Fixture {
 
 impl Fixture {
   async fn new(case_id: &str) -> Self {
-    let container = docker::dynamodb_local().await.unwrap();
-    let port = container.get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT).await.unwrap();
+    let container = docker::dynamodb_local().unwrap();
+    let port = container.port();
     let raw = dynamodb::create_dynamodb_local_client(port);
     let names = dynamodb::TableNames {
       journal: "ttl-first".into(),
@@ -340,7 +339,7 @@ impl Fixture {
       upstream,
     );
     let fixture = Self {
-      container,
+      _container: container,
       raw,
       client,
       transport,
@@ -465,7 +464,7 @@ impl Fixture {
     }
     self.record(
       "layout",
-      json!({"container_id": self.container.id(), "declaration": declaration, "observations": observations}),
+      json!({"container_id": self._container.id(), "declaration": declaration, "observations": observations}),
     );
   }
 
@@ -594,7 +593,6 @@ impl Fixture {
         .await
         .unwrap();
     }
-    self.container.rm().await.unwrap();
   }
 }
 

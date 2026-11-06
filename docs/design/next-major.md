@@ -1610,7 +1610,7 @@ docker run --rm -p 127.0.0.1:8000:8000 \
 - `-sharedDb` uses one database regardless of the credentials or the region.
 - `-disableTelemetry` stops sending usage data.
 
-As a proposal, tests start it with a function in `test-utils` (`testcontainers`). Match the `GenericImage` name and tag to the reference above. Whether a digest can be passed in the tag will be confirmed at implementation time with `testcontainers 0.28.0` (the specification in `Cargo.toml`).
+Tests start it with a function in `test-utils` (`dockertest`). The helper pulls the image by its full digest reference (`name@sha256:<digest>`), tags a deterministic local alias (`name:eswa-<first 12 hex>`), and starts the container from that alias with `Source::Local` and `PullPolicy::Never`. This keeps the digest pinned without relying on dockertest's split pull reference.
 
 <a id="62-クライアントの設定"></a>
 

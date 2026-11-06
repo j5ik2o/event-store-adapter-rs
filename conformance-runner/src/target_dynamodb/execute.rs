@@ -20,7 +20,6 @@ use event_store_adapter_rs::{
 };
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 use tracing::Instrument;
 
 use super::{
@@ -104,7 +103,7 @@ impl SnapshotSerializer<Value> for FaultSerializer {
 /// 実行全体のLocalとruntimeを保持し、各ケースへ独立した3表を割り当てる。
 pub struct Execution {
   runtime: tokio::runtime::Runtime,
-  container: Option<ContainerAsync<GenericImage>>,
+  container: Option<docker::LocalContainer>,
   raw: Client,
   endpoint: String,
   run_id: String,
@@ -129,14 +128,8 @@ impl Execution {
         .map_err(|e| e.to_string())?
         .as_nanos()
     );
-    let (container, port) = runtime.block_on(async {
-      let container = docker::dynamodb_local().await.map_err(|e| e.to_string())?;
-      let port = container
-        .get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT)
-        .await
-        .map_err(|e| e.to_string())?;
-      Ok::<_, String>((container, port))
-    })?;
+    let container = docker::dynamodb_local().map_err(|e| e.to_string())?;
+    let port = container.port();
     Ok(Self {
       runtime,
       container: Some(container),
@@ -594,7 +587,6 @@ impl Execution {
 
 impl Drop for Execution {
   fn drop(&mut self) {
-    let _entered = self.runtime.enter();
     drop(self.container.take());
   }
 }

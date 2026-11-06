@@ -23,7 +23,6 @@ use event_store_adapter_rs::error::{ConfigurationReason, EventStoreError, Storag
 use event_store_adapter_rs::retention::{RetentionMode, RetentionSettings};
 use event_store_adapter_test_utils_rs::{docker, dynamodb};
 use serde_json::{json, Value};
-use testcontainers::{ContainerAsync, GenericImage};
 
 type Item = HashMap<String, AttributeValue>;
 
@@ -78,7 +77,7 @@ impl HttpConnector for ObservedConnector {
 }
 
 struct Fixture {
-  container: ContainerAsync<GenericImage>,
+  _container: docker::LocalContainer,
   raw: Client,
   client: Client,
   transport: FaultTransport,
@@ -102,8 +101,8 @@ fn client_builder(endpoint: &str) -> aws_sdk_dynamodb::config::Builder {
 
 impl Fixture {
   async fn new(stored_sleeper: bool) -> Self {
-    let container = docker::dynamodb_local().await.unwrap();
-    let port = container.get_host_port_ipv4(docker::DYNAMODB_LOCAL_PORT).await.unwrap();
+    let container = docker::dynamodb_local().unwrap();
+    let port = container.port();
     let endpoint = format!("http://127.0.0.1:{port}");
     let raw = dynamodb::create_dynamodb_local_client(port);
     let names = dynamodb::TableNames {
@@ -129,7 +128,7 @@ impl Fixture {
     let client = transport.client(builder, observed_http(transfers.clone()));
     assert_eq!(client.config().sleep_impl().is_some(), stored_sleeper);
     Self {
-      container,
+      _container: container,
       raw,
       client,
       transport,
@@ -223,7 +222,6 @@ impl Fixture {
     for table in self.names() {
       self.raw.delete_table().table_name(table).send().await.unwrap();
     }
-    self.container.rm().await.unwrap();
   }
 }
 
