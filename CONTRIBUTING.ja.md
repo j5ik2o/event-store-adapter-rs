@@ -43,7 +43,7 @@
 - Rust のツールチェーン: ツールチェーンを固定するファイルはありません。CI は stable でビルドと試験をします。最小サポートの Rust の版は 1.94.1 です（`lib/Cargo.toml` の `rust-version`）。
 - 整形: nightly の rustfmt を使います。設定は `rustfmt.toml` にあります（`tab_spaces = 2`、`max_width = 120`）。nightly が入っていなければ入れてください。
 - 公開 API の形の照合: `cargo test -p event-store-adapter-api-surface-rs` と `cargo test --workspace` には、日付を固定した nightly が要ります。照合が、その nightly で rustdoc の JSON を作るためです。
-- Docker: DynamoDB・Spanner・Bigtable の保存先の試験、移行、利用例、DynamoDB・Spanner・Bigtable に対する適合試験は、dockertest でコンテナを起動するので、Docker が起動している必要があります。使うのは、digest で固定した DynamoDB Local 3.3.1、Spanner エミュレーター 1.5.58（`gcr.io/cloud-spanner-emulator/emulator`）、Bigtable エミュレーター（google-cloud-cli 587.0.0-emulators）です。試験は、DynamoDB Local にはダミーの region と資格情報で、2 つのエミュレーターには資格情報なしで接続します。Spanner の試験は、試験ごとに新しいデータベースを作り、Spanner の適合試験の実行は、場面が終わるたびにその場面のデータベースを削除します。メモリと SQLite の試験に Docker は要りません。
+- Docker: DynamoDB・Spanner・Bigtable の保存先の試験、移行、利用例、DynamoDB・Spanner・Bigtable に対する適合試験は、dockertest でコンテナを起動するので、Docker が起動している必要があります。使うのは、digest で固定した DynamoDB Local 3.3.1、Spanner エミュレーター 1.5.58（`gcr.io/cloud-spanner-emulator/emulator`）、Bigtable エミュレーター（google-cloud-cli 587.0.0-emulators）です。試験は、DynamoDB Local にはダミーの region と資格情報で、2 つのエミュレーターには資格情報なしで接続します。Spanner の試験は、試験ごとに新しいデータベースを作り、Spanner の適合試験の実行は、場面が終わるたびにその場面のデータベースを削除します。メモリと SQLite の試験に Docker は要りません。試験用の補助は、digest 固定のイメージを初回に完全な digest 参照で pull し、ローカルの alias を付けます。初回はレジストリへの接続が必要です。
 - Python 3: `tools/user-docs/check.py` と `tools/conformance/manifest.py` は標準ライブラリだけを使います。`.github/test_*.py` の試験には `semver` のパッケージが要ります。CI は Python 3.15 を使います。 `tools/user-docs/check.py` は Python 3.10 以上が必要です。
 - actionlint: CI は `go install`（Go 1.27）で入れ、workflow のファイルに実行します。
 - cargo-deny: `deny.toml` の設定で依存を監査します。

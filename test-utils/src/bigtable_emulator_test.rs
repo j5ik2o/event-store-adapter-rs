@@ -39,9 +39,9 @@ async fn schema_of(channel: &Channel, table_id: &str) -> Vec<(String, Option<gc_
 async fn test_bigtable_emulator_starts_from_the_digest_pinned_image() {
   let (_container, _channel) = start().await;
 
-  let (name, digest) = bigtable_emulator_image();
+  let (repository, digest) = bigtable_emulator_image();
 
-  assert_eq!(name, "gcr.io/google.com/cloudsdktool/google-cloud-cli@sha256");
+  assert_eq!(repository, "gcr.io/google.com/cloudsdktool/google-cloud-cli");
   assert_eq!(
     digest,
     "8d8573471c489a409f03891d2c24d177fa531276184f7002b9a2d853d1b3ed54"
@@ -53,11 +53,15 @@ async fn test_bigtable_emulator_starts_from_the_digest_pinned_image() {
 async fn test_bigtable_emulator_never_starts_from_a_moving_tag() {
   let (_container, _channel) = start().await;
 
-  let (name, digest) = bigtable_emulator_image();
+  let (repository, digest) = bigtable_emulator_image();
 
-  assert!(name.ends_with("@sha256"), "イメージ名は digest 参照の形: {name}");
+  // helper はこの digest で pull し、`repository:eswa-<先頭 12 桁>` にタグ付けして起動する。
+  assert_eq!(repository, "gcr.io/google.com/cloudsdktool/google-cloud-cli");
   assert_eq!(digest.len(), 64, "tag は digest の 16 進数 64 桁: {digest}");
-  assert!(digest.chars().all(|c| c.is_ascii_hexdigit()), "tag は digest の 16 進数だけ: {digest}");
+  assert!(
+    digest.chars().all(|c| c.is_ascii_hexdigit()),
+    "tag は digest の 16 進数だけ: {digest}"
+  );
   assert!(!matches!(digest, "emulators" | "latest"));
 }
 

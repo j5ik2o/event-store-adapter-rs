@@ -45,9 +45,10 @@ async fn insert_current(raw: &RawSql, seq: i64) -> anyhow::Result<i64> {
 async fn should_spanner_emulator_starts_from_the_digest_pinned_image() {
   let (_container, _channel) = start().await;
 
-  let (name, digest) = spanner_emulator_image();
+  let (repository, digest) = spanner_emulator_image();
 
-  assert_eq!(name, "gcr.io/cloud-spanner-emulator/emulator@sha256");
+  // helper はこの digest で pull し、`repository:eswa-<先頭 12 桁>` にタグ付けして起動する。
+  assert_eq!(repository, "gcr.io/cloud-spanner-emulator/emulator");
   assert_eq!(
     digest,
     "c6f3402f2599684f295a0fdefb6fbbbfb18a0e43e309ff5456ccb452a4570a79"

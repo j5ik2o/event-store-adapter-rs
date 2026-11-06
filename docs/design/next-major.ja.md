@@ -1464,7 +1464,7 @@ docker run --rm -p 127.0.0.1:8000:8000 \
 - `-sharedDb` は、資格情報やリージョンに関わらず 1 つのデータベースを使う。
 - `-disableTelemetry` は、利用状況の送信を止める。
 
-試験からの起動は、`test-utils` の関数（`testcontainers`）で行う案。`GenericImage` の名前と tag を、上の参照に合わせる。tag に digest を含めて渡せるかは、`testcontainers 0.28.0`（`Cargo.toml` の指定）で、実装時に確かめる。
+試験からの起動は、`test-utils` の関数（`dockertest`）で行う。補助は完全な digest 参照（`name@sha256:<digest>`）でイメージを pull し、決定的なローカル alias（`name:eswa-<先頭 12 桁>`）を付けてから、`Source::Local` と `PullPolicy::Never` でその alias からコンテナを起動する。dockertest の分割された pull 参照に頼らず、digest 固定を保つ。
 
 ### 6.2 クライアントの設定
 

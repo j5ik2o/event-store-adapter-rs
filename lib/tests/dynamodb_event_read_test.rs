@@ -865,7 +865,7 @@ async fn should_preserve_the_original_sdk_cause_on_real_communication_failure() 
     &observed.take(),
     &json!({"returned_count": 3}),
   );
-  fixture._container.stop().await;
+  let _stopped = fixture._container.stop().await;
   // 同じopen済みストアとClientを保持して、実サーバ停止後の送信を観測する。
   let result = store.get_events_by_id_since_seq_nr(&id, 0).await;
   let error = failure(&result);

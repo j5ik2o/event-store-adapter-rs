@@ -1281,7 +1281,7 @@ async fn should_preserve_the_original_sdk_cause_after_real_communication_stops()
     &observed.take(),
     &json!({"result": result_json(&read)}),
   );
-  fixture._container.stop().await;
+  let _stopped = fixture._container.stop().await;
   let id = Id::new("Account", "communication");
   let result = store.get_latest_snapshot_by_id(&id).await;
   assert_id_fixed(&id);
