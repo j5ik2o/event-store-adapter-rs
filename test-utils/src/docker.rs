@@ -4,10 +4,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::channel;
 use std::thread::JoinHandle;
 
-use bollard::image::{CreateImageOptions, TagImageOptions};
-use bollard::Docker;
 use dockertest::{DockerOperations, DockerTest, Image, PullPolicy, TestBodySpecification};
-use futures::StreamExt;
 use tokio::sync::{mpsc, oneshot};
 
 /// `DockerTest` の中で DynamoDB Local を指すハンドル名。
@@ -169,47 +166,62 @@ impl Drop for LocalContainer {
   }
 }
 
+/// `docker` CLI を引数付きで実行し、終了状態と出力を返す。
+async fn run_docker(args: &[&str]) -> anyhow::Result<std::process::Output> {
+  tokio::process::Command::new("docker")
+    .args(args)
+    .output()
+    .await
+    .map_err(|error| anyhow::anyhow!("docker {} を実行できない: {error}", args.join(" ")))
+}
+
+/// 参照がローカルにあれば true を返す。無い場合の `docker image inspect` は終了状態 1 で返る。
+async fn image_exists(reference: &str) -> anyhow::Result<bool> {
+  Ok(run_docker(&["image", "inspect", reference]).await?.status.success())
+}
+
+/// 失敗したコマンドの標準エラーを、前後の空白を落として返す。
+fn stderr(output: &std::process::Output) -> String {
+  String::from_utf8_lossy(&output.stderr).trim().to_owned()
+}
+
 /// digest 参照のイメージをローカルに用意し、dockertest に渡す決定的な alias タグを返す。
 ///
 /// dockertest 0.5.0 は pull のときに repository と tag を分けて渡すため、`name@sha256` の
 /// 参照を正しく組み立てられない。ここで完全な digest 参照を pull し、`name:eswa-<先頭 12 桁>`
 /// にタグ付けしてから、dockertest にはその alias を `Source::Local` で渡す。
+///
+/// pull とタグ付けは Docker CLI で行う。bollard を直接依存に取ると、dockertest が内部で使う
+/// bollard と同じ 1.x 系の `bollard-stubs` を Cargo が 1 つに統合しようとし、両者の完全一致
+/// ピンが衝突して依存解決そのものが失敗する。CLI なら dockertest の依存の版に縛られない。
 async fn ensure_image(repository: &str, digest: &str) -> anyhow::Result<String> {
   let prefix = digest
     .get(..12)
     .ok_or_else(|| anyhow::anyhow!("digest が 12 桁より短い: {digest}"))?;
   let alias = format!("eswa-{prefix}");
+  let alias_reference = format!("{repository}:{alias}");
   let digest_reference = format!("{repository}@sha256:{digest}");
-  let docker = Docker::connect_with_local_defaults()?;
-  if docker.inspect_image(&format!("{repository}:{alias}")).await.is_ok() {
+  if image_exists(&alias_reference).await? {
     return Ok(alias);
   }
-  if docker.inspect_image(&digest_reference).await.is_err() {
-    let options = CreateImageOptions::<&str> {
-      from_image: &digest_reference,
-      ..Default::default()
-    };
-    let mut stream = docker.create_image(Some(options), None, None);
-    while let Some(item) = stream.next().await {
-      let info = item?;
-      if let Some(error) = info.error {
-        anyhow::bail!("{digest_reference} を pull できない: {error}");
-      }
+  if !image_exists(&digest_reference).await? {
+    let output = run_docker(&["pull", &digest_reference]).await?;
+    if !output.status.success() {
+      anyhow::bail!(
+        "{digest_reference} を pull できない (status {}): {}",
+        output.status,
+        stderr(&output)
+      );
     }
   }
-  let image = docker.inspect_image(&digest_reference).await?;
-  let id = image
-    .id
-    .ok_or_else(|| anyhow::anyhow!("{digest_reference} のイメージ ID が無い"))?;
-  docker
-    .tag_image(
-      &id,
-      Some(TagImageOptions {
-        repo: repository,
-        tag: alias.as_str(),
-      }),
-    )
-    .await?;
+  let output = run_docker(&["tag", &digest_reference, &alias_reference]).await?;
+  if !output.status.success() {
+    anyhow::bail!(
+      "{digest_reference} に {alias_reference} を付けられない (status {}): {}",
+      output.status,
+      stderr(&output)
+    );
+  }
   Ok(alias)
 }
 
