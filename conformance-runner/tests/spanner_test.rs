@@ -148,8 +148,8 @@ fn should_run_reports_every_spanner_targeted_case_as_passed() {
 
   // (passed, failed, not-applicable, unverified)。成功 77 は、値の表の buildAid 9 件と、Spanner が対象の場面と値の表の
   // 実行 68 件（場面 57 から表現できない 5 件を除いた 52 と、FNV-1a 64・validateSeqNr・validateOccurredAt の値の表
-  // 21 から表現できない 5 件を除いた 16）。対象外 92 の内訳は、runner_test の分類の試験が持つ。
-  assert_eq!(counts(&reports), (77, 0, 92, 0));
+  // 21 から表現できない 5 件を除いた 16）。対象外 96 の内訳は、runner_test の分類の試験が持つ。
+  assert_eq!(counts(&reports), (77, 0, 96, 0));
   let mut targeted = 0;
   for case in data.cases.iter().filter(|case| targets_spanner(case)) {
     targeted += 1;

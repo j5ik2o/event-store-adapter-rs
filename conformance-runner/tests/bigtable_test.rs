@@ -164,9 +164,9 @@ fn should_run_reports_every_bigtable_targeted_case_as_passed() {
   let reports = run_bigtable(&data);
 
   // (passed, failed, not-applicable, unverified)。成功 85 は、Bigtable が対象の場面 50 と値の表 35
-  // （封筒の 10 件と、FNV-1a 64 の 4 件と、全ての保存先で実行する値の表 21）。対象外 84 の内訳は、runner_test の
+  // （封筒の 10 件と、FNV-1a 64 の 4 件と、全ての保存先で実行する値の表 21）。対象外 88 の内訳は、runner_test の
   // 分類の試験が持つ。
-  assert_eq!(counts(&reports), (85, 0, 84, 0));
+  assert_eq!(counts(&reports), (85, 0, 88, 0));
   let mut targeted = 0;
   for case in data.cases.iter().filter(|case| targets_bigtable(case)) {
     targeted += 1;

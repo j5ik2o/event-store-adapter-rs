@@ -14,7 +14,7 @@ use event_store_adapter_conformance_rs::runner::run;
 use event_store_adapter_conformance_rs::target_memory;
 use serde_json::{json, Value};
 
-const FIXED_MANIFEST_SHA256: &str = "0157c012042afa9a19f0bff509a433a4bd5ddc5b674de864a41bec453c460691";
+const FIXED_MANIFEST_SHA256: &str = "abc120f80fc300195f61bd831b0139957e73bb45f8de57c0cb0590c44ee567da";
 
 fn conformance_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")
@@ -22,7 +22,7 @@ fn conformance_dir() -> PathBuf {
 
 fn data_set(problems: Vec<ManifestProblem>, required: &[&str], exclusions: Vec<CoverageExclusion>) -> DataSet {
   DataSet {
-    manifest_version: Some("1.3.0".to_string()),
+    manifest_version: Some("1.4.0".to_string()),
     manifest_files: 35,
     manifest_sha256: FIXED_MANIFEST_SHA256.to_string(),
     manifest: ManifestVerification { problems },
@@ -133,7 +133,7 @@ fn should_report_exposes_data_version_and_manifest_verification_result() {
 
   let json = to_json(&report);
 
-  assert_eq!(json["data"]["version"], "1.3.0");
+  assert_eq!(json["data"]["version"], "1.4.0");
   assert_eq!(json["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(json["data"]["manifest"]["verification"], "passed");
 }
@@ -438,7 +438,7 @@ fn should_report_of_real_data_counts_every_case_in_every_rule_and_lists_each_cas
       passed + failed + not_applicable + unverified
     })
     .sum();
-  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(json["cases"].as_array().expect("cases は配列").len(), 173);
   assert_eq!(
     counted as usize, memberships,
     "複数の規則を持つケースを、最初の規則だけで数えない"

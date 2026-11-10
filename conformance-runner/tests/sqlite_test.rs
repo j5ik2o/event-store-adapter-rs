@@ -128,7 +128,7 @@ fn should_run_reports_every_sqlite_targeted_case_as_passed() {
   let reports = run_sqlite(&data);
 
   // (passed, failed, not-applicable, unverified)。成功 66 は、SQLite が対象の場面 45 と値の表 21。
-  assert_eq!(counts(&reports), (66, 0, 103, 0));
+  assert_eq!(counts(&reports), (66, 0, 107, 0));
   let mut targeted = 0;
   for case in data.cases.iter().filter(|case| {
     case.kind == CaseKind::Scenario

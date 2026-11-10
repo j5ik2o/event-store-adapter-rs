@@ -10,7 +10,7 @@ use std::process::{Command, Output};
 use serde_json::Value;
 use support::{conformance_dir, copy_dir_all, TempDir};
 
-const FIXED_MANIFEST_SHA256: &str = "0157c012042afa9a19f0bff509a433a4bd5ddc5b674de864a41bec453c460691";
+const FIXED_MANIFEST_SHA256: &str = "abc120f80fc300195f61bd831b0139957e73bb45f8de57c0cb0590c44ee567da";
 
 /// メモリだけが対象の、2 つ目のストア（MEM-2）とペイロードの隔離（MEM-6）の場面。
 const MEMORY_STORE_AND_PAYLOAD_CASES: [&str; 5] = [
@@ -136,14 +136,14 @@ fn should_cli_reports_every_case_of_memory_backend_with_64_successes() {
   let execution = execute_on_real_data("cli-memory-counts", &["--backend", "memory"]);
 
   let report = execution.report();
-  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 173);
   assert_eq!(count_status(&report, "passed"), 64);
   assert_eq!(count_status(&report, "failed"), 0);
-  assert_eq!(count_status(&report, "not-applicable"), 105);
+  assert_eq!(count_status(&report, "not-applicable"), 109);
   assert_eq!(count_status(&report, "unverified"), 0);
   assert_eq!(
     count_status(&report, "passed") + count_status(&report, "not-applicable") + count_status(&report, "unverified"),
-    169
+    173
   );
 }
 
@@ -212,7 +212,7 @@ fn should_cli_report_names_backend_data_version_and_implementation() {
 
   let report = execution.report();
   assert_eq!(report["backend"], "memory");
-  assert_eq!(report["data"]["version"], "1.3.0");
+  assert_eq!(report["data"]["version"], "1.4.0");
   assert_eq!(report["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(report["implementation"]["language"], "rust");
   assert_eq!(report["implementation"]["crate"], "event-store-adapter-rs");
@@ -233,11 +233,11 @@ fn should_cli_selects_dynamodb_and_reports_actual_or_explicitly_disabled_executi
   assert_eq!(report["backend"], "dynamodb");
   assert_eq!(
     count_status(&report, "passed"),
-    if cfg!(feature = "dynamodb") { 104 } else { 9 }
+    if cfg!(feature = "dynamodb") { 108 } else { 9 }
   );
   assert_eq!(
     count_status(&report, "passed") + count_status(&report, "not-applicable") + count_status(&report, "unverified"),
-    169
+    173
   );
 }
 
@@ -370,7 +370,7 @@ fn should_cli_with_require_all_preserves_dynamodb_execution_failures() {
   assert_eq!(execution.code(), Some(if cfg!(feature = "dynamodb") { 0 } else { 1 }));
   assert_eq!(
     count_status(&execution.report(), "passed"),
-    if cfg!(feature = "dynamodb") { 104 } else { 9 }
+    if cfg!(feature = "dynamodb") { 108 } else { 9 }
   );
   assert_eq!(count_status(&execution.report(), "failed"), 0);
   assert_eq!(count_status(&execution.report(), "not-applicable"), 65);
@@ -429,12 +429,12 @@ fn should_cli_with_require_all_runs_the_sqlite_cases() {
     if cfg!(feature = "sqlite") { 66 } else { 9 }
   );
   assert_eq!(count_status(&report, "failed"), 0);
-  assert_eq!(count_status(&report, "not-applicable"), 103);
+  assert_eq!(count_status(&report, "not-applicable"), 107);
   assert_eq!(
     count_status(&report, "unverified"),
     if cfg!(feature = "sqlite") { 0 } else { 57 }
   );
-  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 173);
   // SQLite の場面は、feature があれば実 SQLite で成功し、なければ未検証と報告される。
   for id in SQLITE_ONLY_CASES {
     assert_eq!(
@@ -488,13 +488,13 @@ fn should_cli_with_require_all_runs_the_spanner_cases() {
     "stderr: {}",
     String::from_utf8_lossy(&execution.output.stderr)
   );
-  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 173);
   assert_eq!(
     count_status(&report, "passed"),
     if cfg!(feature = "spanner") { 77 } else { 9 }
   );
   assert_eq!(count_status(&report, "failed"), 0);
-  assert_eq!(count_status(&report, "not-applicable"), 92);
+  assert_eq!(count_status(&report, "not-applicable"), 96);
   assert_eq!(
     count_status(&report, "unverified"),
     if cfg!(feature = "spanner") { 0 } else { 68 }
@@ -592,12 +592,12 @@ fn should_cli_with_require_all_runs_the_bigtable_cases() {
     if cfg!(feature = "bigtable") { 85 } else { 9 }
   );
   assert_eq!(count_status(&report, "failed"), 0);
-  assert_eq!(count_status(&report, "not-applicable"), 84);
+  assert_eq!(count_status(&report, "not-applicable"), 88);
   assert_eq!(
     count_status(&report, "unverified"),
     if cfg!(feature = "bigtable") { 0 } else { 76 }
   );
-  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 173);
   // FNV-1a 64 の値の表は、feature があれば行キーと同じ関数で実行して成功し、なければ未検証と報告される。
   for id in FNV1A64_CASES {
     assert_eq!(
@@ -824,21 +824,21 @@ fn should_cli_reports_unknown_manifest_field_as_a_failed_verification() {
 
   assert_eq!(execution.code(), Some(1), "照合の失敗は報告を書いて終了コード 1");
   let report = execution.report();
-  assert_eq!(report["data"]["version"], "1.3.0");
+  assert_eq!(report["data"]["version"], "1.4.0");
   assert_eq!(report["data"]["manifest"]["verification"], "failed");
   let problems = report["data"]["manifest"]["problems"].to_string();
   assert!(
     problems.contains("未知のフィールド") && problems.contains("extra"),
     "{problems}"
   );
-  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 173);
 }
 
 // ---------------------------------------------------------------------------
 // 一覧に正しい形で載っていないファイルは、読まずに照合の不一致として報告する
 // ---------------------------------------------------------------------------
 
-/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、169 ケースのうちメモリの対象 64 件が成功していることを確かめる。
+/// 報告が書かれ、照合が失敗し、`problem_path` が問題に載り、173 ケースのうちメモリの対象 64 件が成功していることを確かめる。
 fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &str) {
   let stderr = String::from_utf8_lossy(&execution.output.stderr);
   assert_eq!(
@@ -851,7 +851,7 @@ fn assert_reported_as_failed_verification(execution: &Execution, problem_path: &
   assert_eq!(report["data"]["manifest"]["verification"], "failed");
   let problems = report["data"]["manifest"]["problems"].to_string();
   assert!(problems.contains(problem_path), "{problems}");
-  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 169);
+  assert_eq!(report["cases"].as_array().expect("cases は配列").len(), 173);
   assert_eq!(count_status(&report, "passed"), 64);
 }
 
