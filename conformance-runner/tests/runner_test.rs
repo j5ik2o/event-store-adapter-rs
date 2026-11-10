@@ -837,7 +837,7 @@ fn should_run_marks_dynamodb_only_cases_and_layout_as_not_applicable_on_memory()
     .filter(|case| case.body.get("backends") == Some(&json!(["dynamodb"])) || matches!(case.kind, CaseKind::Layout))
     .map(|case| case.id.as_str())
     .collect();
-  assert_eq!(dynamodb_only.len(), 46, "DynamoDB だけが対象の場面 45 件と、配置 1 件");
+  assert_eq!(dynamodb_only.len(), 50, "DynamoDB だけが対象の場面 49 件と、配置 1 件");
 
   for id in dynamodb_only {
     let outcome = outcome_of(&reports, id);
@@ -924,9 +924,9 @@ fn should_run_reports_memory_writes_reads_retention_and_notifications() {
   let reports = run(&data, &target_memory::TARGET, target_memory::run_case);
 
   // (passed, failed, not-applicable, unverified)。保持・通知の4件と、期限切れ方式の設定エラーに加え、
-  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 105 のうち 14 は Spanner の場面
+  // 2 つ目のストアの 3 件とペイロードの隔離の 2 件も実操作で成功する。対象外 109 のうち 14 は Spanner の場面
   // （今回の保存先でない）で、22 は Bigtable の場面 12 件と封筒の値の表 10 件（今回の保存先でない）。
-  assert_eq!(counts(&reports), (64, 0, 105, 0));
+  assert_eq!(counts(&reports), (64, 0, 109, 0));
 }
 
 #[test]
@@ -938,7 +938,7 @@ fn should_run_classification_preserves_explicit_not_executed_dynamodb_results() 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。対象外 65 のうち 7 は、
   // メモリだけが対象の場面、8 は SQLite だけが対象の場面、14 は Spanner の場面（今回の保存先でない）、
   // 22 は Bigtable の場面と封筒の値の表。
-  assert_eq!(counts(&reports), (9, 0, 65, 95));
+  assert_eq!(counts(&reports), (9, 0, 65, 99));
 }
 
 #[test]
@@ -949,8 +949,8 @@ fn should_run_classifies_the_sqlite_leg_without_running_a_store() {
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 57 は、SQLite が対象で
   // 保存先の実行に回る場面 45 と値の表 12 で、SQLite だけの場面の `store`・`seed` の要素を未知の要素にしない。
-  // 対象外 103 のうち 14 は Spanner の場面（今回の保存先でない）、22 は Bigtable の場面と封筒の値の表。
-  assert_eq!(counts(&reports), (9, 0, 103, 57));
+  // 対象外 107 のうち 14 は Spanner の場面（今回の保存先でない）、22 は Bigtable の場面と封筒の値の表。
+  assert_eq!(counts(&reports), (9, 0, 107, 57));
 }
 
 #[test]
@@ -960,10 +960,10 @@ fn should_run_classifies_the_bigtable_leg_without_running_a_store() {
   let reports = run(&data, &target_bigtable::TARGET, classification_executor);
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 76 は、Bigtable が対象で
-  // 保存先の実行に回る場面と値の表（FNV-1a 64 の 4 件を含む）。対象外 84 のうち、Spanner の場面 14 件を含め、
-  // ほかの保存先だけが対象の場面と配置の 74 件は「今回の保存先でない」、残りの 10 件は表現能力の違い
+  // 保存先の実行に回る場面と値の表（FNV-1a 64 の 4 件を含む）。対象外 88 のうち、Spanner の場面 14 件を含め、
+  // ほかの保存先だけが対象の場面と配置の 78 件は「今回の保存先でない」、残りの 10 件は表現能力の違い
   // （負の SeqNr 2 件とミリ秒精度 8 件）。この言語が提供する保存先だけなので、「提供しない」になる場面はない。
-  assert_eq!(counts(&reports), (9, 0, 84, 76));
+  assert_eq!(counts(&reports), (9, 0, 88, 76));
   let not_provided: Vec<&str> = reports
     .iter()
     .filter(|report| is_backend_not_provided(&report.outcome))
@@ -986,9 +986,9 @@ fn should_run_classifies_the_spanner_leg_without_running_a_store() {
 
   // (passed, failed, not-applicable, unverified)。passed 9 は値の表の buildAid。未検証 68 は、Spanner が対象で
   // 保存先の実行に回る場面（共通 42 件・共有 1 件・Spanner だけ 14 件）と値の表（FNV-1a 64 の 4 件を含む 11 件）から、
-  // 表現能力の違いの 10 件を除いたもの。対象外 92 は、ほかの保存先だけが対象の場面と配置・値の表の 82 件
+  // 表現能力の違いの 10 件を除いたもの。対象外 96 は、ほかの保存先だけが対象の場面と配置・値の表の 86 件
   // （「今回の保存先でない」）と、表現能力の違いの 10 件（負の SeqNr 2 件とミリ秒精度 8 件）。
-  assert_eq!(counts(&reports), (9, 0, 92, 68));
+  assert_eq!(counts(&reports), (9, 0, 96, 68));
   let not_provided: Vec<&str> = reports
     .iter()
     .filter(|report| is_backend_not_provided(&report.outcome))
@@ -1002,7 +1002,7 @@ fn should_run_classifies_the_spanner_leg_without_running_a_store() {
     .iter()
     .filter(|report| is_backend_not_targeted(&report.outcome))
     .count();
-  assert_eq!(not_targeted, 82, "ほかの保存先だけが対象の場面と配置・値の表");
+  assert_eq!(not_targeted, 86, "ほかの保存先だけが対象の場面と配置・値の表");
 }
 
 #[test]

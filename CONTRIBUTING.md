@@ -31,7 +31,7 @@ Some files in this repository are pinned copies or data from the hub. CI compare
 
 | Path | Content | Rule |
 |:--|:--|:--|
-| `conformance/` | Conformance test data, data version 1.3.0 | Check it with `python3 tools/conformance/manifest.py verify`. CI also compares the SHA-256 of `conformance/manifest.json` |
+| `conformance/` | Conformance test data, data version 1.4.0 | Check it with `python3 tools/conformance/manifest.py verify`. CI also compares the SHA-256 of `conformance/manifest.json` |
 | `api-surface/surface.json` | The hub's shape definition for the public API, version 0.1.0 | Do not edit it by hand. CI compares its SHA-256 |
 | `user-docs/template.json` and `tools/user-docs/check.py` | The hub's template for the user documentation and its checker, version 1.0.0 | Do not edit them by hand. CI compares their SHA-256 values |
 | `api-surface/rs.json` and `user-docs/repo.json` | This repository's own mapping to the public API and its own settings for the checker | Edit them for this repository |

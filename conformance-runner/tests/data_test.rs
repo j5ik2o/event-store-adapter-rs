@@ -14,7 +14,7 @@ use serde_json::{json, Value};
 use support::{conformance_dir, copy_dir_all, TempDir};
 
 /// `ci.yml` が固定している、配布中の `manifest.json` の SHA-256。
-const FIXED_MANIFEST_SHA256: &str = "0157c012042afa9a19f0bff509a433a4bd5ddc5b674de864a41bec453c460691";
+const FIXED_MANIFEST_SHA256: &str = "abc120f80fc300195f61bd831b0139957e73bb45f8de57c0cb0590c44ee567da";
 const SHA256_OF_ABC: &str = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
 const SHA256_OF_EMPTY: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 
@@ -103,8 +103,8 @@ fn should_load_reads_every_case_of_real_data_once() {
   let data = load(&conformance_dir()).expect("実データを読める");
 
   let ids: HashSet<&str> = data.cases.iter().map(|case| case.id.as_str()).collect();
-  assert_eq!(data.cases.len(), 169);
-  assert_eq!(ids.len(), 169, "ID に重複がない");
+  assert_eq!(data.cases.len(), 173);
+  assert_eq!(ids.len(), 173, "ID に重複がない");
 }
 
 #[test]
@@ -113,7 +113,7 @@ fn should_load_reads_value_tables_scenarios_and_layout() {
 
   let count = |wanted: fn(&CaseKind) -> bool| data.cases.iter().filter(|case| wanted(&case.kind)).count();
   assert_eq!(count(|kind| matches!(kind, CaseKind::ValueTable)), 40);
-  assert_eq!(count(|kind| matches!(kind, CaseKind::Scenario)), 128);
+  assert_eq!(count(|kind| matches!(kind, CaseKind::Scenario)), 132);
   assert_eq!(count(|kind| matches!(kind, CaseKind::Layout)), 1);
 }
 
@@ -132,6 +132,7 @@ fn should_load_reads_coverage_rules_and_exclusions() {
     exclusions,
     vec![
       ("W-5", "deleted"),
+      ("W-10", "api-surface"),
       ("R-7", "caller-obligation"),
       ("T-5", "api-surface"),
       ("T-6", "api-surface"),
@@ -306,7 +307,7 @@ fn should_load_verifies_real_manifest_and_exposes_its_fixed_sha256() {
   assert!(data.manifest.passed(), "problems: {:?}", data.manifest.problems);
   assert_eq!(data.manifest_files, 35);
   assert_eq!(data.manifest_sha256, FIXED_MANIFEST_SHA256);
-  assert_eq!(data.manifest_version.as_deref(), Some("1.3.0"));
+  assert_eq!(data.manifest_version.as_deref(), Some("1.4.0"));
 }
 
 #[test]
@@ -317,7 +318,7 @@ fn should_load_skips_an_unlisted_case_file_and_reports_it_as_unlisted() {
 
   let data = load(dir.path()).expect("一覧にないファイルが壊れていても、ケースの読み込みは続ける");
 
-  assert_eq!(data.cases.len(), 169);
+  assert_eq!(data.cases.len(), 173);
   assert!(
     data
       .manifest
@@ -340,7 +341,7 @@ fn should_load_does_not_register_an_unlisted_schema_file_and_reports_it_as_unlis
 
     let data = load(copy.path()).unwrap_or_else(|error| panic!("{content}: 一覧にないスキーマは読まない: {error}"));
 
-    assert_eq!(data.cases.len(), 169, "{content}");
+    assert_eq!(data.cases.len(), 173, "{content}");
     assert!(
       data
         .manifest
@@ -373,7 +374,7 @@ fn should_load_does_not_read_cases_of_an_entry_without_a_string_sha256() {
     // 載っていれば読まれて、ケースの数が増える（ID は実データと重ならない）
     fs::write(
       copy.path().join("values").join("extra.json"),
-      values_file("values", "1.3.0"),
+      values_file("values", "1.4.0"),
     )
     .expect("ケースのファイルを書ける");
     push_manifest_entry(copy.path(), entry.clone());
@@ -381,7 +382,7 @@ fn should_load_does_not_read_cases_of_an_entry_without_a_string_sha256() {
     let data =
       load(copy.path()).unwrap_or_else(|error| panic!("{entry}: 形の誤った項目は読み込みを失敗にしない: {error}"));
 
-    assert_eq!(data.cases.len(), 169, "{entry}");
+    assert_eq!(data.cases.len(), 173, "{entry}");
     assert!(
       data.cases.iter().all(|case| case.file != "values/extra.json"),
       "{entry}"
@@ -424,7 +425,7 @@ fn should_load_does_not_register_a_schema_of_an_entry_without_a_string_sha256() 
     let data =
       load(copy.path()).unwrap_or_else(|error| panic!("{entry}: 形の誤った項目は読み込みを失敗にしない: {error}"));
 
-    assert_eq!(data.cases.len(), 169, "{entry}");
+    assert_eq!(data.cases.len(), 173, "{entry}");
     assert!(
       data
         .manifest
@@ -451,7 +452,7 @@ fn should_load_does_not_register_a_schema_of_an_entry_without_a_string_sha256() 
 // ---------------------------------------------------------------------------
 
 const COVERAGE_JSON: &str =
-  r#"{"format":"coverage","version":"1.3.0","required_rules":["T-1"],"exclusions":[],"notes":[]}"#;
+  r#"{"format":"coverage","version":"1.4.0","required_rules":["T-1"],"exclusions":[],"notes":[]}"#;
 
 fn values_file(format: &str, version: &str) -> String {
   json!({
@@ -490,13 +491,13 @@ fn write_dataset(root: &Path, coverage: &str, values: &str) {
     .iter()
     .map(|(path, sha256)| (path.as_str(), sha256.as_str()))
     .collect();
-  write_file(root, "manifest.json", &manifest_value("1.3.0", &files).to_string());
+  write_file(root, "manifest.json", &manifest_value("1.4.0", &files).to_string());
 }
 
 #[test]
 fn should_load_accepts_case_file_with_expected_format_and_version() {
   let dir = TempDir::new("data-load-valid");
-  write_dataset(dir.path(), COVERAGE_JSON, &values_file("values", "1.3.0"));
+  write_dataset(dir.path(), COVERAGE_JSON, &values_file("values", "1.4.0"));
 
   let data = load(dir.path()).expect("format と version が正しければ読める");
 
@@ -524,7 +525,7 @@ fn should_load_rejects_case_file_with_other_version() {
 #[test]
 fn should_load_rejects_case_file_with_unknown_format() {
   let dir = TempDir::new("data-load-format");
-  write_dataset(dir.path(), COVERAGE_JSON, &values_file("tables", "1.3.0"));
+  write_dataset(dir.path(), COVERAGE_JSON, &values_file("tables", "1.4.0"));
 
   let Err(error) = load(dir.path()) else {
     panic!("format が違えば読み込みを失敗にする");
@@ -541,7 +542,7 @@ fn should_load_rejects_coverage_file_with_other_version() {
   let dir = TempDir::new("data-load-coverage-version");
   // `notes` もない（スキーマの違反でもある）。版の確認がスキーマの検査より先なので、誤りは `Invalid`。
   let coverage = r#"{"format":"coverage","version":"2.0.0","required_rules":["T-1"],"exclusions":[]}"#;
-  write_dataset(dir.path(), coverage, &values_file("values", "1.3.0"));
+  write_dataset(dir.path(), coverage, &values_file("values", "1.4.0"));
 
   let Err(error) = load(dir.path()) else {
     panic!("coverage.json の version が違えば読み込みを失敗にする");
@@ -565,7 +566,7 @@ fn should_sha256_hex_matches_known_vectors() {
 
 #[test]
 fn should_verify_manifest_accepts_consistent_inventory_in_any_order() {
-  let manifest = manifest_value("1.3.0", &[("b.json", SHA256_OF_EMPTY), ("a.json", SHA256_OF_ABC)]);
+  let manifest = manifest_value("1.4.0", &[("b.json", SHA256_OF_EMPTY), ("a.json", SHA256_OF_ABC)]);
   let inventory = [entry("a.json", b"abc"), entry("b.json", b"")];
 
   let verification = verify_manifest(&manifest, &inventory);
@@ -591,7 +592,7 @@ fn should_verify_manifest_reports_version_mismatch() {
 
 #[test]
 fn should_verify_manifest_reports_unlisted_file() {
-  let manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_ABC)]);
+  let manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_ABC)]);
   let inventory = [entry("a.json", b"abc"), entry("b.json", b"")];
 
   let verification = verify_manifest(&manifest, &inventory);
@@ -605,7 +606,7 @@ fn should_verify_manifest_reports_unlisted_file() {
 
 #[test]
 fn should_verify_manifest_reports_missing_file() {
-  let manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_ABC), ("b.json", SHA256_OF_EMPTY)]);
+  let manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_ABC), ("b.json", SHA256_OF_EMPTY)]);
   let inventory = [entry("a.json", b"abc")];
 
   let verification = verify_manifest(&manifest, &inventory);
@@ -619,7 +620,7 @@ fn should_verify_manifest_reports_missing_file() {
 
 #[test]
 fn should_verify_manifest_reports_modified_file() {
-  let manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_EMPTY)]);
+  let manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_EMPTY)]);
   let inventory = [entry("a.json", b"abc")];
 
   let verification = verify_manifest(&manifest, &inventory);
@@ -633,7 +634,7 @@ fn should_verify_manifest_reports_modified_file() {
 
 #[test]
 fn should_verify_manifest_reports_duplicate_entry() {
-  let manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_ABC), ("a.json", SHA256_OF_ABC)]);
+  let manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_ABC), ("a.json", SHA256_OF_ABC)]);
   let inventory = [entry("a.json", b"abc")];
 
   let verification = verify_manifest(&manifest, &inventory);
@@ -809,7 +810,7 @@ fn should_expand_generators_fills_every_declared_target_of_real_data_to_its_byte
     .iter()
     .filter(|case| case.body.get("generators").is_some())
     .collect();
-  assert_eq!(with_generators.len(), 6, "generators を持つケースは 6 件");
+  assert_eq!(with_generators.len(), 10, "generators を持つケースは 10 件");
 
   for case in with_generators {
     let mut body = case.body.clone();
@@ -943,7 +944,7 @@ fn should_load_names_the_violating_location_in_the_schema_error() {
 #[test]
 fn should_load_rejects_synthetic_case_that_violates_the_values_schema() {
   let dir = TempDir::new("data-schema-synthetic");
-  let violating = values_file("values", "1.3.0").replace("validateSeqNr", "notAnOperation");
+  let violating = values_file("values", "1.4.0").replace("validateSeqNr", "notAnOperation");
   write_dataset(dir.path(), COVERAGE_JSON, &violating);
 
   let error = load_error(dir.path());
@@ -1226,7 +1227,7 @@ fn should_load_has_no_manifest_version_when_manifest_json_version_is_not_a_strin
 
 #[test]
 fn should_verify_manifest_reports_unknown_top_level_field() {
-  let mut manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_ABC)]);
+  let mut manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_ABC)]);
   manifest["extra"] = json!(true);
   let inventory = [entry("a.json", b"abc")];
 
@@ -1241,7 +1242,7 @@ fn should_verify_manifest_reports_unknown_top_level_field() {
 
 #[test]
 fn should_verify_manifest_reports_unknown_field_of_a_file_entry_and_keeps_verifying_it() {
-  let mut manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_ABC), ("b.json", SHA256_OF_EMPTY)]);
+  let mut manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_ABC), ("b.json", SHA256_OF_EMPTY)]);
   manifest["files"][1]["note"] = json!("x");
   let inventory = [entry("a.json", b"abc"), entry("b.json", b"")];
 
@@ -1256,7 +1257,7 @@ fn should_verify_manifest_reports_unknown_field_of_a_file_entry_and_keeps_verify
 
 #[test]
 fn should_verify_manifest_still_reports_a_modified_file_whose_entry_has_an_unknown_field() {
-  let mut manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_EMPTY)]);
+  let mut manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_EMPTY)]);
   manifest["files"][0]["note"] = json!("x");
   let inventory = [entry("a.json", b"abc")];
 
@@ -1273,7 +1274,7 @@ fn should_verify_manifest_still_reports_a_modified_file_whose_entry_has_an_unkno
 
 #[test]
 fn should_verify_manifest_reports_every_unknown_field() {
-  let mut manifest = manifest_value("1.3.0", &[("a.json", SHA256_OF_ABC)]);
+  let mut manifest = manifest_value("1.4.0", &[("a.json", SHA256_OF_ABC)]);
   manifest["alpha"] = json!(1);
   manifest["beta"] = json!(2);
   manifest["files"][0]["gamma"] = json!(3);
