@@ -10,7 +10,7 @@ use std::process::{Command, Output};
 use serde_json::Value;
 use support::{conformance_dir, copy_dir_all, TempDir};
 
-const FIXED_MANIFEST_SHA256: &str = "abc120f80fc300195f61bd831b0139957e73bb45f8de57c0cb0590c44ee567da";
+const FIXED_MANIFEST_SHA256: &str = "a5ec3e5cc659329891eb4f995fbdbd68cde2fe90b9166d4f103bdf7341b263ad";
 
 /// メモリだけが対象の、2 つ目のストア（MEM-2）とペイロードの隔離（MEM-6）の場面。
 const MEMORY_STORE_AND_PAYLOAD_CASES: [&str; 5] = [
@@ -212,7 +212,7 @@ fn should_cli_report_names_backend_data_version_and_implementation() {
 
   let report = execution.report();
   assert_eq!(report["backend"], "memory");
-  assert_eq!(report["data"]["version"], "1.4.0");
+  assert_eq!(report["data"]["version"], "1.5.0");
   assert_eq!(report["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(report["implementation"]["language"], "rust");
   assert_eq!(report["implementation"]["crate"], "event-store-adapter-rs");
@@ -824,7 +824,7 @@ fn should_cli_reports_unknown_manifest_field_as_a_failed_verification() {
 
   assert_eq!(execution.code(), Some(1), "照合の失敗は報告を書いて終了コード 1");
   let report = execution.report();
-  assert_eq!(report["data"]["version"], "1.4.0");
+  assert_eq!(report["data"]["version"], "1.5.0");
   assert_eq!(report["data"]["manifest"]["verification"], "failed");
   let problems = report["data"]["manifest"]["problems"].to_string();
   assert!(
