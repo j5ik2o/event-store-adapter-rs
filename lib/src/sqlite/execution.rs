@@ -142,7 +142,8 @@ impl BlockingExecution {
   /// 操作を待ち行列に入れ、その結果を待つ Future を返す。満杯か閉じているときは、操作を実行せずに拒否を返す。
   ///
   /// 操作は、受け付けたときの `tracing` の購読者と span の中で動く。保持の失敗の通知（S-4）は、呼び出した側の
-  /// 文脈に届く。操作の中の panic は、返した Future を poll した側で再び起こす。
+  /// 文脈に届く。購読者が 1 度も設定されていないプロセスでは、何も設定せずに動かし、`tracing` の `log` への出力を
+  /// 止めない（購読者の設定は、`Dispatch::none()` でもプロセス全体の印を立てるため）。操作の中の panic は、返した Future を poll した側で再び起こす。
   pub(crate) fn submit<T, F>(&self, operation: StorageOperation, job: F) -> Result<Reply<T>, EventStoreError>
   where
     T: Send + 'static,
@@ -152,12 +153,14 @@ impl BlockingExecution {
       waker: None,
     }));
     let completer = state.clone();
-    let dispatch = tracing::dispatcher::get_default(Dispatch::clone);
-    let span = Span::current();
+    let context =
+      tracing::dispatcher::has_been_set().then(|| (tracing::dispatcher::get_default(Dispatch::clone), Span::current()));
     let job: Job = Box::new(move || {
-      let outcome = tracing::dispatcher::with_default(&dispatch, || {
-        span.in_scope(|| panic::catch_unwind(AssertUnwindSafe(job)))
-      });
+      let run = || panic::catch_unwind(AssertUnwindSafe(job));
+      let outcome = match context {
+        Some((dispatch, span)) => tracing::dispatcher::with_default(&dispatch, || span.in_scope(run)),
+        None => run(),
+      };
       let waker = {
         let mut state = lock(&completer);
         state.outcome = Some(outcome);
@@ -203,6 +206,7 @@ impl fmt::Debug for BlockingExecution {
 
 /// [`BlockingExecution::drained`] が返す Future。
 #[derive(Debug)]
+#[must_use = "futures do nothing unless you `.await` or poll them"]
 pub struct Drained {
   state: Arc<Mutex<DrainState>>,
 }

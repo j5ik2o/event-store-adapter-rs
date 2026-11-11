@@ -57,7 +57,9 @@ pub use spanner::{
   SpannerTokenSource,
 };
 #[cfg(feature = "sqlite")]
-pub use sqlite::{initialize_sqlite_store, BlockingExecution, EventStoreForSqlite, ExecutionRejected, SqliteOptions};
+pub use sqlite::{
+  initialize_sqlite_store, BlockingExecution, Drained, EventStoreForSqlite, ExecutionRejected, SqliteOptions,
+};
 
 #[cfg(test)]
 mod aggregate_id_test;

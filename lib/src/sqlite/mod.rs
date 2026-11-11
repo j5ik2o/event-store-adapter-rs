@@ -109,10 +109,12 @@ impl<AID, A, P> Clone for EventStoreForSqlite<AID, A, P> {
 
 impl<AID, A, P> std::fmt::Debug for EventStoreForSqlite<AID, A, P> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("EventStoreForSqlite")
-      .field("inner", &self.inner)
-      .field("execution", &self.execution)
-      .finish()
+    let mut debug = f.debug_struct("EventStoreForSqlite");
+    debug.field("inner", &self.inner);
+    if let Some(execution) = &self.execution {
+      debug.field("execution", execution);
+    }
+    debug.finish()
   }
 }
 
