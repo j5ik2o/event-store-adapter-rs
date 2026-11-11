@@ -35,7 +35,7 @@
 |:--------|:-------------|
 | （なし） | `EventStoreForMemory`、`MemoryStorage`。常時利用可能 |
 | `dynamodb` | `aws-sdk-dynamodb`を使用する`EventStoreForDynamoDB` |
-| `sqlite` | 同梱のSQLiteを持つ`rusqlite`を使用する`EventStoreForSqlite`、`initialize_sqlite_store`、`SqliteOptions` |
+| `sqlite` | 同梱のSQLiteを持つ`rusqlite`を使用する`EventStoreForSqlite`、`initialize_sqlite_store`、`SqliteOptions`、`BlockingExecution` |
 | `spanner` | `tonic`と生成されたSpannerのgRPCクライアントを使用する`EventStoreForSpanner`、`initialize_spanner_store`、`SpannerOptions`、`SpannerRetention`、`SpannerConnection`、`SpannerTables`、`SpannerTokenSource` |
 | `bigtable` | `tonic`と生成されたBigtableのgRPCクライアントを使用する`EventStoreForBigtable`、`initialize_bigtable_store`、`BigtableOptions`、`BigtableConnection`、`BigtableTables`、`BigtableTokenSource` |
 | `migration` | `migrate_v3_dynamodb`。`dynamodb`も有効になる |
@@ -203,6 +203,28 @@ async fn main() -> Result<(), EventStoreError> {
   assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
   Ok(())
 }
+```
+
+`open`で開いたstoreは、各操作を、そのfutureをpollしたスレッドの上で同期に実行します。別の接続の書込ロックの待ち（`lock_wait`）も含みます。非同期ランタイムでは、操作が終わるまで、ランタイムのワーカーのスレッドを塞ぎます。呼び出したスレッドを塞がないようにするには、`BlockingExecution`を作り、`open_offloaded`（または`open_offloaded_with_serializers`）でstoreを開きます。
+
+- `BlockingExecution::single_worker(queue_capacity)`は、1つのワーカーのスレッドと、`queue_capacity`件まで待たせる待ち行列を作ります。標準ライブラリだけを使うので、どの非同期ランタイムでも動きます。利用者が作って所有します。同じ実行資源を使うstoreは、1つのワーカーを共有します。
+- ワーカーは、各操作を最後まで、1つずつ、受け付けた順に実行します。入口の検査、直列化、transaction、保持、保持の失敗の通知を含みます。通知は、呼び出した側の`tracing`の購読者とspanに届きます。操作は、futureを初めてpollしたときに受け付けられます。結果、エラーの分類、確定点は`open`と同じです。
+- 待ち行列が満杯か、実行資源が閉じているときは、操作を実行しません。`EventStoreError::Storage`を返し、その`source`は`ExecutionRejected::QueueFull`または`ExecutionRejected::Closed`です。
+- 受け付けたあとにfutureを破棄しても、操作は動き続け、追記は確定することがあります。取り消した追記は、確定したかもしれないものとして扱ってください。
+- `close()`は新しい操作の受け付けを止め、すぐに戻ります。`drained().await`は、受け付け済みの操作がすべて終わるまで待ちます。直列化の中で、同じ実行資源の操作や`drained()`を待たないでください。
+
+```rust
+use std::num::NonZeroUsize;
+
+use event_store_adapter_rs::{BlockingExecution, EventStoreForSqlite};
+
+let execution = BlockingExecution::single_worker(NonZeroUsize::new(64).unwrap())
+  .expect("start the worker thread");
+let store: EventStoreForSqlite<AccountId, Value, Value> =
+  EventStoreForSqlite::open_offloaded(path, options, &execution)?;
+// Use `store` as in the example above.
+execution.close();
+execution.drained().await;
 ```
 
 storeのインスタンスとそのcloneは、1つの接続を共有します。表・接続の設定・手作業での初期化・transaction・保持の詳細は[SQLite schema](docs/SQLITE_DATABASE_SCHEMA.ja.md)を参照してください。v3のSQLiteファイルからデータを移す場合は、[移行](#移行)を参照してください。
