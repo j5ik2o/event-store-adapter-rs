@@ -14,7 +14,7 @@ use event_store_adapter_conformance_rs::runner::run;
 use event_store_adapter_conformance_rs::target_memory;
 use serde_json::{json, Value};
 
-const FIXED_MANIFEST_SHA256: &str = "abc120f80fc300195f61bd831b0139957e73bb45f8de57c0cb0590c44ee567da";
+const FIXED_MANIFEST_SHA256: &str = "a5ec3e5cc659329891eb4f995fbdbd68cde2fe90b9166d4f103bdf7341b263ad";
 
 fn conformance_dir() -> PathBuf {
   Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance")
@@ -22,7 +22,7 @@ fn conformance_dir() -> PathBuf {
 
 fn data_set(problems: Vec<ManifestProblem>, required: &[&str], exclusions: Vec<CoverageExclusion>) -> DataSet {
   DataSet {
-    manifest_version: Some("1.4.0".to_string()),
+    manifest_version: Some("1.5.0".to_string()),
     manifest_files: 35,
     manifest_sha256: FIXED_MANIFEST_SHA256.to_string(),
     manifest: ManifestVerification { problems },
@@ -133,7 +133,7 @@ fn should_report_exposes_data_version_and_manifest_verification_result() {
 
   let json = to_json(&report);
 
-  assert_eq!(json["data"]["version"], "1.4.0");
+  assert_eq!(json["data"]["version"], "1.5.0");
   assert_eq!(json["data"]["manifest"]["sha256"], FIXED_MANIFEST_SHA256);
   assert_eq!(json["data"]["manifest"]["verification"], "passed");
 }
