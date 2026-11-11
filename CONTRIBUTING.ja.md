@@ -33,7 +33,7 @@
 
 | パス | 内容 | 規則 |
 |:--|:--|:--|
-| `conformance/` | 適合テストデータ。データの版は 1.4.0 | `python3 tools/conformance/manifest.py verify` で確かめる。CI は `conformance/manifest.json` の SHA-256 も照合する |
+| `conformance/` | 適合テストデータ。データの版は 1.5.0 | `python3 tools/conformance/manifest.py verify` で確かめる。CI は `conformance/manifest.json` の SHA-256 も照合する |
 | `api-surface/surface.json` | 公開 API の形についてのハブの定義。版は 0.1.0 | 手で直さない。CI が SHA-256 を照合する |
 | `user-docs/template.json` と `tools/user-docs/check.py` | 利用者向け文書についてのハブの型と、その照合の道具。版は 1.0.0 | 手で直さない。CI が SHA-256 を照合する |
 | `api-surface/rs.json` と `user-docs/repo.json` | このリポジトリの公開 API との対応表と、照合の道具へのこのリポジトリの設定 | このリポジトリのために直してよい |
