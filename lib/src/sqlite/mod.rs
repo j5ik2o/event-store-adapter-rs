@@ -4,11 +4,16 @@
 //! [`initialize_sqlite_store`] で未初期化のデータベースを明示的に初期化する。
 //! [`EventStoreForSqlite::open`] は、初期化済みのストアを開くだけで、欠けた定義を補わない。
 //! 最初の版は、変更フィードと期限切れ方式を提供しない。
+//!
+//! [`EventStoreForSqlite::open`] で開いたストアの操作は、呼び出したスレッド（非同期ランタイムのワーカー）の上で、
+//! 書き込みのロックの待ち（`lock_wait`）を含めて同期で動き、その間そのスレッドを塞ぐ。
+//! [`EventStoreForSqlite::open_offloaded`] で開いたストアは、操作を [`BlockingExecution`] のワーカーで実行する（L-1）。
 mod backend;
 pub(crate) mod configuration;
 pub(crate) mod connection;
 #[cfg(test)]
 mod connection_test;
+mod execution;
 pub(crate) mod layout;
 
 use std::path::Path;
@@ -20,11 +25,13 @@ use backend::{SqliteBackend, SqliteShared};
 pub use configuration::initialize_sqlite_store;
 #[cfg(feature = "test-hooks")]
 pub use configuration::{overwrite_sqlite_configuration_for_test, SqliteConfigurationRecord};
+use execution::block_on;
+pub use execution::{BlockingExecution, Drained, ExecutionRejected};
 use serde::{de::DeserializeOwned, Serialize};
 
 use crate::{
   aggregate_id::AggregateId,
-  error::EventStoreError,
+  error::{EventStoreError, StorageOperation},
   event_envelope::{EventEnvelope, SnapshotEnvelope, SnapshotRead},
   event_store::EventStore,
   generic_event_store::GenericEventStore,
@@ -83,6 +90,8 @@ impl Default for SqliteOptions {
 /// SQLite の保存先に委譲するイベントストア。
 pub struct EventStoreForSqlite<AID, A, P> {
   inner: GenericEventStore<AID, A, P, SqliteBackend<A, P>>,
+  /// `Some` なら、操作をこの実行資源のワーカーで実行する。`None` なら、呼び出したスレッドで実行する。
+  execution: Option<BlockingExecution>,
   #[cfg(feature = "test-hooks")]
   shared: Arc<SqliteShared>,
 }
@@ -91,6 +100,7 @@ impl<AID, A, P> Clone for EventStoreForSqlite<AID, A, P> {
   fn clone(&self) -> Self {
     Self {
       inner: self.inner.clone(),
+      execution: self.execution.clone(),
       #[cfg(feature = "test-hooks")]
       shared: self.shared.clone(),
     }
@@ -99,9 +109,12 @@ impl<AID, A, P> Clone for EventStoreForSqlite<AID, A, P> {
 
 impl<AID, A, P> std::fmt::Debug for EventStoreForSqlite<AID, A, P> {
   fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-    f.debug_struct("EventStoreForSqlite")
-      .field("inner", &self.inner)
-      .finish()
+    let mut debug = f.debug_struct("EventStoreForSqlite");
+    debug.field("inner", &self.inner);
+    if let Some(execution) = &self.execution {
+      debug.field("execution", execution);
+    }
+    debug.finish()
   }
 }
 
@@ -118,6 +131,28 @@ impl<AID, A, P> EventStoreForSqlite<AID, A, P> {
       &options,
       event_serializer,
       snapshot_serializer,
+      None,
+      #[cfg(feature = "test-hooks")]
+      None,
+    )
+  }
+
+  /// 初期化済みのストアを、与えた直列化で開き、操作を `execution` のワーカーで実行する。
+  ///
+  /// 説明は [`open_offloaded`](Self::open_offloaded) を見る。
+  pub fn open_offloaded_with_serializers(
+    path: impl AsRef<Path>,
+    options: SqliteOptions,
+    event_serializer: Arc<dyn EventSerializer<P>>,
+    snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+    execution: &BlockingExecution,
+  ) -> Result<Self, EventStoreError> {
+    Self::build(
+      path.as_ref(),
+      &options,
+      event_serializer,
+      snapshot_serializer,
+      Some(execution.clone()),
       #[cfg(feature = "test-hooks")]
       None,
     )
@@ -138,6 +173,28 @@ impl<AID, A, P> EventStoreForSqlite<AID, A, P> {
       &options,
       event_serializer,
       snapshot_serializer,
+      None,
+      Some(hooks),
+    )
+  }
+
+  /// 初期化済みのストアを、障害を差し込むフック付きで開き、操作を `execution` のワーカーで実行する。
+  #[cfg(feature = "test-hooks")]
+  #[doc(hidden)]
+  pub fn open_offloaded_with_hooks(
+    path: impl AsRef<Path>,
+    options: SqliteOptions,
+    event_serializer: Arc<dyn EventSerializer<P>>,
+    snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+    hooks: Arc<dyn SqliteTestHooks>,
+    execution: &BlockingExecution,
+  ) -> Result<Self, EventStoreError> {
+    Self::build(
+      path.as_ref(),
+      &options,
+      event_serializer,
+      snapshot_serializer,
+      Some(execution.clone()),
       Some(hooks),
     )
   }
@@ -147,6 +204,7 @@ impl<AID, A, P> EventStoreForSqlite<AID, A, P> {
     options: &SqliteOptions,
     event_serializer: Arc<dyn EventSerializer<P>>,
     snapshot_serializer: Arc<dyn SnapshotSerializer<A>>,
+    execution: Option<BlockingExecution>,
     #[cfg(feature = "test-hooks")] hooks: Option<Arc<dyn SqliteTestHooks>>,
   ) -> Result<Self, EventStoreError> {
     let opened = configuration::open_checked(path, options)?;
@@ -163,6 +221,7 @@ impl<AID, A, P> EventStoreForSqlite<AID, A, P> {
         events: event_serializer,
         snapshots: snapshot_serializer,
       }),
+      execution,
       #[cfg(feature = "test-hooks")]
       shared,
     })
@@ -190,6 +249,31 @@ where
       Arc::new(JsonSnapshotSerializer::new()),
     )
   }
+
+  /// 初期化済みのストアを、既定の JSON 直列化で開き、操作を `execution` のワーカーで実行する。
+  ///
+  /// 4 つの操作は、返した Future を初めて poll したときに `execution` の待ち行列へ入る。呼び出したスレッドは、
+  /// SQLite を呼ばず、書き込みのロックの待ち（`lock_wait`）でも塞がれない。ワーカーは、受け付けた操作を受け付けた順に
+  /// 1 つずつ、入口の検査から保持と通知まで最後まで実行する。結果、エラーの分類、確定点は [`open`](Self::open) と同じである（L-2）。
+  ///
+  /// - 待ち行列が満杯か `execution` が閉じているときは、操作を実行せずに `EventStoreError::Storage` を返す。
+  ///   その `source` は [`ExecutionRejected`] である。
+  /// - 受け付けたあとに Future を破棄しても、操作は止まらず、追記は確定し得る。
+  /// - 直列化やフックの中で、同じ `execution` の別の操作や [`BlockingExecution::drained`] を待ってはならない（終わらない）。
+  /// - 開く処理（ファイルの照合）は、この関数を呼んだスレッドで同期に行う。
+  pub fn open_offloaded(
+    path: impl AsRef<Path>,
+    options: SqliteOptions,
+    execution: &BlockingExecution,
+  ) -> Result<Self, EventStoreError> {
+    Self::open_offloaded_with_serializers(
+      path,
+      options,
+      Arc::new(JsonEventSerializer::new()),
+      Arc::new(JsonSnapshotSerializer::new()),
+      execution,
+    )
+  }
 }
 
 #[async_trait]
@@ -201,7 +285,13 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
   type P = P;
 
   async fn persist_event(&self, event: EventEnvelope<AID, P>) -> Result<(), EventStoreError> {
-    self.inner.persist_event(event).await
+    let Some(execution) = &self.execution else {
+      return self.inner.persist_event(event).await;
+    };
+    let inner = self.inner.clone();
+    execution
+      .submit(StorageOperation::Append, move || block_on(inner.persist_event(event)))?
+      .await
   }
 
   async fn persist_event_and_snapshot(
@@ -209,11 +299,28 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
     event: EventEnvelope<AID, P>,
     snapshot: SnapshotEnvelope<A>,
   ) -> Result<(), EventStoreError> {
-    self.inner.persist_event_and_snapshot(event, snapshot).await
+    let Some(execution) = &self.execution else {
+      return self.inner.persist_event_and_snapshot(event, snapshot).await;
+    };
+    let inner = self.inner.clone();
+    execution
+      .submit(StorageOperation::Append, move || {
+        block_on(inner.persist_event_and_snapshot(event, snapshot))
+      })?
+      .await
   }
 
   async fn get_latest_snapshot_by_id(&self, aid: &AID) -> Result<Option<SnapshotRead<A>>, EventStoreError> {
-    self.inner.get_latest_snapshot_by_id(aid).await
+    let Some(execution) = &self.execution else {
+      return self.inner.get_latest_snapshot_by_id(aid).await;
+    };
+    let inner = self.inner.clone();
+    let aid = aid.clone();
+    execution
+      .submit(StorageOperation::LoadSnapshot, move || {
+        block_on(inner.get_latest_snapshot_by_id(&aid))
+      })?
+      .await
   }
 
   async fn get_events_by_id_since_seq_nr(
@@ -221,6 +328,15 @@ impl<AID: AggregateId, A: Send + Sync + 'static, P: Send + Sync + 'static> Event
     aid: &AID,
     seq_nr: SeqNr,
   ) -> Result<Vec<EventEnvelope<AID, P>>, EventStoreError> {
-    self.inner.get_events_by_id_since_seq_nr(aid, seq_nr).await
+    let Some(execution) = &self.execution else {
+      return self.inner.get_events_by_id_since_seq_nr(aid, seq_nr).await;
+    };
+    let inner = self.inner.clone();
+    let aid = aid.clone();
+    execution
+      .submit(StorageOperation::LoadEvents, move || {
+        block_on(inner.get_events_by_id_since_seq_nr(&aid, seq_nr))
+      })?
+      .await
   }
 }

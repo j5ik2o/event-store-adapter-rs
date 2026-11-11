@@ -33,7 +33,7 @@ The public API is exported from the crate root; there is no `next` namespace or 
 |:--------|:-------------|
 | (none) | `EventStoreForMemory` and `MemoryStorage`, always available |
 | `dynamodb` | `EventStoreForDynamoDB`, using `aws-sdk-dynamodb` |
-| `sqlite` | `EventStoreForSqlite`, `initialize_sqlite_store`, and `SqliteOptions`, using `rusqlite` with a bundled SQLite |
+| `sqlite` | `EventStoreForSqlite`, `initialize_sqlite_store`, `SqliteOptions`, `BlockingExecution`, `Drained`, and `ExecutionRejected`, using `rusqlite` with a bundled SQLite |
 | `spanner` | `EventStoreForSpanner`, `initialize_spanner_store`, `SpannerOptions`, `SpannerRetention`, `SpannerConnection`, `SpannerTables`, and `SpannerTokenSource`, using `tonic` and the generated Spanner gRPC clients |
 | `bigtable` | `EventStoreForBigtable`, `initialize_bigtable_store`, `BigtableOptions`, `BigtableConnection`, `BigtableTables`, and `BigtableTokenSource`, using `tonic` and the generated Bigtable gRPC clients |
 | `migration` | `migrate_v3_dynamodb`; also enables `dynamodb` |
@@ -201,6 +201,28 @@ async fn main() -> Result<(), EventStoreError> {
   assert_eq!(latest.snapshot().unwrap().aggregate(), &json!({"name": "Bob"}));
   Ok(())
 }
+```
+
+A store opened with `open` runs each operation synchronously on the thread that polls its future. This includes the wait for another connection's write lock (`lock_wait`). On an async runtime, the operation blocks the runtime's worker thread until it ends. To keep the calling thread free, create a `BlockingExecution` and open the store with `open_offloaded` (or `open_offloaded_with_serializers`):
+
+- `BlockingExecution::single_worker(queue_capacity)` starts one worker thread with a queue of `queue_capacity` waiting operations. It uses only the standard library, so it works with any async runtime. You create and own it. Stores that use the same execution share its worker.
+- The worker runs each operation completely, one at a time, in the order the operations were accepted. This includes validation, serialization, the transaction, retention, and the retention-failure notification, which goes to the caller's `tracing` subscriber and span. An operation is accepted when its future is polled for the first time. Results, error categories, and commit points are the same as with `open`.
+- When the queue is full or the execution is closed, the operation does not run. It returns `EventStoreError::Storage`, and its `source` is `ExecutionRejected::QueueFull` or `ExecutionRejected::Closed`.
+- If you drop the future after the operation was accepted, the operation still runs, and an append can still commit. Treat a cancelled append as possibly committed.
+- `close()` stops new operations and returns immediately. After `close()`, `drained().await` waits until every accepted operation has finished. It does not complete before `close()` is called, or before the execution and every store that uses it are dropped. Do not wait for an operation of the same execution, or for `drained()`, inside a serializer.
+
+```rust
+use std::num::NonZeroUsize;
+
+use event_store_adapter_rs::{BlockingExecution, EventStoreForSqlite};
+
+let execution = BlockingExecution::single_worker(NonZeroUsize::new(64).unwrap())
+  .expect("start the worker thread");
+let store: EventStoreForSqlite<AccountId, Value, Value> =
+  EventStoreForSqlite::open_offloaded(path, options, &execution)?;
+// Use `store` as in the example above.
+execution.close();
+execution.drained().await;
 ```
 
 A store instance and its clones share one connection. See [the SQLite schema](docs/SQLITE_DATABASE_SCHEMA.md) for the tables, the connection settings, how to initialize a file by hand, transactions, and retention. To move data from a v3 SQLite file, see [Migration](#migration).
