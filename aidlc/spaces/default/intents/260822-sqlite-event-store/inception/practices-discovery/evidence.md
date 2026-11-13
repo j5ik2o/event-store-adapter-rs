@@ -14,7 +14,7 @@
   ではなく通常のマージコミット。リモートブランチに未マージのfeature/patch
   ブランチが複数残存（`feature/fix-cargo-toml`, `j5ik2o-patch-1〜3` 等）。
 - 推論: マージ方式は「マージコミット」であり、org.md既定の「squash-merge」
-  とは異なる実運用。人間インタビュー（Q1）で継続を確認済み。
+  とは異なる実運用。加藤へのインタビュー（Q1）で継続を確認済み。
 
 ### CI設定 `.github/workflows/ci.yml`
 - 観察: `lint`（nightly rustfmt fmt --check）→ `test-lib`（stable、
@@ -162,7 +162,7 @@
 既に優先度Should（IN）として確定済みのため、本インタビューの8問には
 含めなかった。
 
-全回答の統合サマリーは人間により "Looks correct" で確認済み
+全回答の統合サマリーは加藤により "Looks correct" で確認済み
 （`practices-discovery-questions.md` Consolidated Summary Confirmation）。
 
 ## 残存する未確定事項（今回のスコープ外・バックログ）

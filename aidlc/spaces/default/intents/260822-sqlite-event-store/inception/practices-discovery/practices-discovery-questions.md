@@ -1,6 +1,6 @@
 # プラクティス発見 インタビュー質問票 (practices-discovery-questions)
 
-リードのドラフト（team-practices.md / evidence.md）と3件の独立検分（contributions/）で確定できなかった項目のみを確認する。証拠が示唆する答えはデフォルトとして提示するが、チームの意思は人間の判断に委ねる。
+リードのドラフト（team-practices.md / evidence.md）と3件の独立検分（contributions/）で確定できなかった項目のみを確認する。証拠が示唆する答えはデフォルトとして提示するが、チームの意思は加藤の判断に委ねる。
 
 ## Q1. [Way of Working] main へのマージ方式はどうしますか？（現状の履歴はマージコミット方式。この開発フローの既定は squash-merge）
 

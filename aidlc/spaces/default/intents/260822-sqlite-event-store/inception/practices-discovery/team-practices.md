@@ -5,7 +5,7 @@
 > （`aidlc/spaces/default/codekb/sqlite/code-structure.md`,
 > `technology-stack.md`, `dependencies.md`, `code-quality-assessment.md`,
 > `architecture.md`, `business-overview.md`）から推定した実務慣行に、
-> quality/developer/devsecops 3エージェントの検分と人間インタビュー
+> quality/developer/devsecops 3エージェントの検分と加藤へのインタビュー
 > （Q1〜Q8）の回答を統合した最終版。
 
 ## Way of Working

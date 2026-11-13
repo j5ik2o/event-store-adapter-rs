@@ -6,7 +6,7 @@
 
 | Bolt | 実装担当 | レビュー | 承認 |
 |---|---|---|---|
-| bolt-skeleton | aidlc-developer-agent（AI） | 各工程の担当レビュアー（AI） | メンテナ（人間・ゲート承認） |
+| bolt-skeleton | aidlc-developer-agent（AI） | 各工程の担当レビュアー（AI） | メンテナ（加藤・ゲート承認） |
 | bolt-full-implementation | aidlc-developer-agent（AI） | 同上 | メンテナ |
 | bolt-ci-and-docs | aidlc-developer-agent（AI） | 同上 | メンテナ |
 

@@ -9,7 +9,7 @@
 <!-- example: 2026-05-29T10:14:32Z — skipped the optional caching layer the stage prose suggested; the dataset is small enough that it adds risk -->
 
 ## Tradeoffs
-- 2026-08-22T13:09:41Z — 検分3件の異議はすべて事実ベース（依存順序・テスト可能性・サッドパス欠落）と判断し、人間への裁定質問なしで統合した; 判断が割れる論点はなかった。
+- 2026-08-22T13:09:41Z — 検分3件の異議はすべて事実ベース（依存順序・テスト可能性・サッドパス欠落）と判断し、加藤への裁定質問なしで統合した; 判断が割れる論点はなかった。
 <!-- example: 2026-05-29T10:14:32Z — picked TDD over BDD this run; the team is unit-first and the domain is well-understood -->
 
 ## Open questions
