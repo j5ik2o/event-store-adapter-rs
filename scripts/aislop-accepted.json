@@ -1,0 +1,3776 @@
+{
+  "engines": [
+    "format",
+    "lint",
+    "code-quality",
+    "ai-slop",
+    "security"
+  ],
+  "missingToolsAllowed": {
+    "ruff": "このリポジトリは Rust のプロジェクトで Python のツールを導入していない。format と lint は ruff が無くても Rust 以外の対象を検査でき、実際に指摘を出しているため、ruff の欠落を許可する。"
+  },
+  "accepted": [
+    {
+      "reason": "既存の .claude 配下のツールにある `as unknown as X` の型検査回避。導入前からあるコードで、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-documentkb-schema.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-documentkb-schema.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-sensor-schema.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-sensor-schema.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-stage-schema.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/double-type-assertion",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Double type assertion (as unknown as X) bypasses type checking"
+        }
+      ]
+    },
+    {
+      "reason": "既存の .claude 配下のツールで node:path を二重に import している。既存コードの指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/duplicate-import",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "\"node:path\" is also imported on line 79. Merge into a single import statement."
+        }
+      ]
+    },
+    {
+      "reason": "既存コードにある、計画や作業工程を参照するメタコメント。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Meta/plan comment (before/after state narration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Meta/plan comment (before/after state narration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Meta/plan comment (before/after state narration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Meta/plan comment (before/after state narration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Meta/plan comment (plan/process reference)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/meta-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Meta/plan comment (before/after state narration)"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードにある、装飾的な区切りや経緯を説明するコメント。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Narrative comment block (justification prose)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-plan-approval-guard.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-plan-approval-guard.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-plan-approval-guard.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-reviewer-scope.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-reviewer-scope.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/hooks/aidlc-session-start.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Narrative comment block (multi-line preamble before declaration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-documentkb-schema.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-documentkb-schema.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-documentkb-schema.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (multi-line preamble before declaration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Narrative comment block (multi-line preamble before declaration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runner-gen.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runner-gen.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runner-gen.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-linter.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-linter.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-linter.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-linter.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-linter.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-type-check.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-type-check.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-type-check.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-type-check.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor-type-check.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-stage-schema.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-stage-schema.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-stage-schema.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-stage-schema.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (multi-line preamble before declaration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (phase/section header)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (phase/section header)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (phase/section header)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Narrative comment block (phase/section header)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (multi-line narrative prose)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (multi-line preamble before declaration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Narrative comment block (multi-line preamble before declaration)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-validate.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-workspace-doctor.ts",
+          "message": "Narrative comment block (cross-reference commentary)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".github/create-release-note-body.py",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".github/create-release-note-header.py",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": ".github/next-semver.py",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "api-surface/check/src/check.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "conformance-runner/src/hook_faults_test.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "conformance-runner/src/target_dynamodb/check_requests_test.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/configuration.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/configuration.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/configuration.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/configuration_test.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/configuration_test.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/rows.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/rows.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/rows.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/rows.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/bigtable/rows.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/generic_event_store_test.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/spanner/configuration.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "lib/src/spanner/configuration.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "test-utils/src/spanner.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "test-utils/src/spanner.rs",
+          "message": "Narrative comment block (decorative separator)"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/narrative-comment",
+          "file": "test-utils/src/spanner.rs",
+          "message": "Narrative comment block (decorative separator)"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの空の catch が例外を握りつぶしている。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/swallowed-exception",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Empty catch block swallows errors silently"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの、別の関数を呼ぶだけの薄いラッパー関数。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Function 'documentDir' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function 'humanActedSinceLastAnswer' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function 'isClaudeCodeHookInput' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function 'isPackageJson' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function 'repoDir' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Function 'isFirstConstructionStage' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Function 'isPerUnit' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-runner-gen.ts",
+          "message": "Function 'leadingFrontmatter' is a thin wrapper that only calls another function"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/thin-wrapper",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function 'expectedEnabledBySelection' is a thin wrapper that only calls another function"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの、コードの内容を言い換えるだけのコメント。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/trivial-comment",
+          "file": ".claude/hooks/aidlc-validate-state.ts",
+          "message": "Trivial comment that restates the code"
+        },
+        {
+          "engine": "ai-slop",
+          "rule": "ai-slop/trivial-comment",
+          "file": ".claude/hooks/aidlc-validate-state.ts",
+          "message": "Trivial comment that restates the code"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードにある重複したコードブロック。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-includes.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "code-quality/duplicate-block",
+          "file": ".claude/tools/aidlc.ts",
+          "message": "Duplicate code block — extract a shared helper"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの入れ子が深い関数。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "code-quality",
+          "rule": "complexity/deep-nesting",
+          "file": ".claude/hooks/aidlc-session-start.ts",
+          "message": "Function nested too deeply (max: 5)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/deep-nesting",
+          "file": ".claude/hooks/aidlc-state-transition-guard.ts",
+          "message": "Function nested too deeply (max: 5)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/deep-nesting",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Function nested too deeply (max: 5)"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの 400 行を超えるファイル。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/hooks/aidlc-reviewer-scope.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/hooks/aidlc-state-transition-guard.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-documentkb-schema.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-runner-gen.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-sensor-claim-sources.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-sensor-traceability.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-stage-schema.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-testing-posture.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-usage.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-workspace-sync.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": ".claude/tools/aidlc.ts",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/file-too-large",
+          "file": "tools/user-docs/check.py",
+          "message": "File too large (limit: 400, flagged above 441 lines)"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの 80 行を超える関数。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-plan-approval-guard.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-rebuild-stage-graph.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-reviewer-scope.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-session-start.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-state-transition-guard.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-sync-workflow-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/hooks/aidlc-write-audit-log.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-audit.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-bolt.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-directive.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-includes.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-jump.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-knowledge.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-learnings.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-log.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-runtime.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-sensor-required-sections.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-sensor-traceability.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-sensor-upstream-coverage.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-sensor.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-state.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-testing-posture.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-workspace-doctor.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": ".claude/tools/aidlc-worktree.ts",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": "conformance-runner/src/target_dynamodb/transport.rs",
+          "message": "Function too long (limit: 120, flagged above 132 lines)"
+        },
+        {
+          "engine": "code-quality",
+          "rule": "complexity/function-too-long",
+          "file": "tools/user-docs/check.py",
+          "message": "Function too long (limit: 80, flagged above 88 lines)"
+        }
+      ]
+    },
+    {
+      "reason": "誤検出。.claude 配下のスクリプトが Bun のグローバル（Bun.*）を使っているが、ESLint の環境設定に Bun が無いため 'Bun' is not defined. と報告される。既存コードは実行時に Bun で動く。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-continue-workflow.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-deliver-stage-rules.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-fold-usage.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-log-subagent.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-plan-approval-guard.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-rebuild-stage-graph.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-record-human-turn.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-review-freeze.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-reviewer-scope.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-reviewer-scope.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-run-sensors.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-session-end.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-session-start.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-state-transition-guard.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-statusline.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-sync-workflow-state.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-sync-workflow-state.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-validate-state.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/hooks/aidlc-write-audit-log.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-doctor-bundle.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-metrics.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-orchestrate.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc-workspace-doctor.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc.ts",
+          "message": "'Bun' is not defined."
+        },
+        {
+          "engine": "lint",
+          "rule": "eslint/no-undef",
+          "file": ".claude/tools/aidlc.ts",
+          "message": "'Bun' is not defined."
+        }
+      ]
+    },
+    {
+      "reason": "既存コードにある使われない式。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "eslint/no-unused-expressions",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Expected expression to be used"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードで node:path を二重に import している。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "import/no-duplicates",
+          "file": ".claude/tools/aidlc-swarm.ts",
+          "message": "Module 'node:path' is imported more than once in this file"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの `new Array(単一引数)`。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "unicorn/no-new-array",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Do not use `new Array(singleArgument)`."
+        }
+      ]
+    },
+    {
+      "reason": "既存コードのスプレッド内の不要な空フォールバック。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "unicorn/no-useless-fallback-in-spread",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Empty fallbacks in spreads are unnecessary"
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/no-useless-fallback-in-spread",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Empty fallbacks in spreads are unnecessary"
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの不要なスプレッド。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "unicorn/no-useless-spread",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Using a spread operator here creates a new array unnecessarily."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/no-useless-spread",
+          "file": ".claude/tools/aidlc-utility.ts",
+          "message": "Using a spread operator here creates a new array unnecessarily."
+        }
+      ]
+    },
+    {
+      "reason": "既存コードの正規表現による前方一致。既存の指摘で、修正は範囲外。",
+      "findings": [
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-graph.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-lib.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-runner-gen.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-sensor-claim-sources.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        },
+        {
+          "engine": "lint",
+          "rule": "unicorn/prefer-string-starts-ends-with",
+          "file": ".claude/tools/aidlc-testing-posture.ts",
+          "message": "Prefer String#startsWith over a regex with a caret."
+        }
+      ]
+    }
+  ]
+}
