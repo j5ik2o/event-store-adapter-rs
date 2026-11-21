@@ -4,6 +4,7 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
+    types: [ opened, synchronize, reopened, edited ]
   schedule:
     - cron: '0 0 * * *'
 env:
@@ -13,7 +14,37 @@ jobs:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - &checkout
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.event.action == 'edited' && github.event.pull_request.base.sha || '' }}
+          fetch-depth: ${{ github.event.action == 'edited' && '0' || '1' }}
+      - &merge-for-edit
+        name: Check out the test merge for a PR edit
+        if: github.event.action == 'edited'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The event's default test merge may still have the previous base as its first parent.
+          echo "Event checkout SHA: $GITHUB_SHA; expected parents: $BASE_SHA $HEAD_SHA"
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          git fetch --no-tags origin "$HEAD_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+
+          # Compute a deterministic test merge from the event's exact commits.
+          if ! tree=$(git merge-tree --write-tree "$BASE_SHA" "$HEAD_SHA"); then
+            echo '::error::Could not merge the event base and head for CI'
+            exit 1
+          fi
+          export GIT_AUTHOR_DATE="$(git show -s --format=%cI "$BASE_SHA")"
+          export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+          merge=$(git -c user.name='CI Test Merge' -c user.email=ci-test-merge@users.noreply.github.com \
+            commit-tree "$tree" -p "$BASE_SHA" -p "$HEAD_SHA" -m "CI test merge")
+          git checkout --detach "$merge"
+          test "$(git show -s --format=%P HEAD)" = "$BASE_SHA $HEAD_SHA"
+          git show -s --format='CI checkout %H parents %P' HEAD
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
@@ -29,7 +60,8 @@ jobs:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - name: Verify conformance data v1.5.0
         run: |
           python3 tools/conformance/manifest.py verify
@@ -51,7 +83,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -61,7 +94,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -71,7 +105,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: lint
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -115,7 +150,8 @@ jobs:
             mode: build
     name: feature-matrix (${{ matrix.name }})
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -194,7 +230,8 @@ jobs:
             flags: --all-features
     name: clippy (${{ matrix.name }})
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -204,7 +241,8 @@ jobs:
     timeout-minutes: 5
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses
@@ -234,7 +272,8 @@ jobs:
             features: --features bigtable
     name: conformance (${{ matrix.backend }})
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -276,7 +315,8 @@ jobs:
     timeout-minutes: 30
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
+      - *checkout
+      - *merge-for-edit
       - uses: actions/setup-node@v7
         with:
           node-version: '24.22.3'

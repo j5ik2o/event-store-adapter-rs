@@ -55,7 +55,7 @@ go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 ## Checks
 
-CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on pull requests to `main`, and on a daily schedule. Run the checks that match your change before you open a pull request.
+CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on a daily schedule, and when a pull request targeting `main` is opened, updated with commits, reopened, or edited. For a PR edit, CI builds a test merge from the base and head recorded in the event. Run the checks that match your change before you open a pull request.
 
 | Job | What it checks | Docker |
 |:--|:--|:--|

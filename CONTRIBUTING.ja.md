@@ -57,7 +57,7 @@ go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 ## 検査
 
-CI（`.github/workflows/ci.yml`）は、`main` への push、`main` への pull request、日次の定期実行で動きます。pull request を出す前に、変更に合う検査を実行してください。
+CI（`.github/workflows/ci.yml`）は、`main` への push と日次の定期実行に加え、`main` 向けの pull request を開いたとき、コミットを追加したとき、開き直したとき、編集したときに動きます。編集時は、イベントに記録されたベースと HEAD から検査用のマージコミットを作ります。pull request を出す前に、変更に合う検査を実行してください。
 
 | ジョブ | 確かめること | Docker |
 |:--|:--|:--|
