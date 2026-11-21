@@ -18,8 +18,6 @@ all-features = true
 # deliberately not listed, so a future dependency introducing one fails
 # this check and surfaces for review.
 allow = [
-  "MIT",
-  "Apache-2.0",
   "BSD-2-Clause",
   "BSD-3-Clause",
   "ISC",

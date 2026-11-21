@@ -1,0 +1,68 @@
+name: CI gate fixture
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  successful-control:
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+  skipped:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: 'true'
+  gate-skipped:
+    name: CI Success (fixture skipped)
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [skipped]
+    steps:
+      - name: Check CI results
+        env:
+          RELEASE_CONTROL_RESULT: ${{ 'success' }}
+          LINT_RESULT: ${{ 'success' }}
+          TEST_LIB_RESULT: ${{ 'success' }}
+          TEST_CONFORMANCE_MIGRATION_RESULT: ${{ 'success' }}
+          API_SURFACE_RESULT: ${{ 'success' }}
+          FEATURE_MATRIX_RESULT: ${{ 'success' }}
+          CLIPPY_RESULT: ${{ 'success' }}
+          CONFORMANCE_RESULT: ${{ 'success' }}
+          AISLOP_RESULT: ${{ 'success' }}
+          AUDIT_RESULT: ${{ needs.skipped.result }}
+        run: |
+          if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
+                "$TEST_CONFORMANCE_MIGRATION_RESULT" != "success" || "$API_SURFACE_RESULT" != "success" || \
+                "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" || \
+                "$RELEASE_CONTROL_RESULT" != "success" || "$CONFORMANCE_RESULT" != "success" || \
+                "$AISLOP_RESULT" != "success" || "$AUDIT_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, test-conformance-migration=$TEST_CONFORMANCE_MIGRATION_RESULT, api-surface=$API_SURFACE_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT, aislop=$AISLOP_RESULT, audit=$AUDIT_RESULT"
+            exit 1
+          fi
+  gate-undefined:
+    name: CI Success (fixture undefined)
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [successful-control]
+    steps:
+      - name: Check CI results
+        env:
+          RELEASE_CONTROL_RESULT: ${{ 'success' }}
+          LINT_RESULT: ${{ 'success' }}
+          TEST_LIB_RESULT: ${{ 'success' }}
+          TEST_CONFORMANCE_MIGRATION_RESULT: ${{ 'success' }}
+          API_SURFACE_RESULT: ${{ 'success' }}
+          FEATURE_MATRIX_RESULT: ${{ 'success' }}
+          CLIPPY_RESULT: ${{ 'success' }}
+          CONFORMANCE_RESULT: ${{ 'success' }}
+          AISLOP_RESULT: ${{ 'success' }}
+          AUDIT_RESULT: ${{ needs.successful-control.outputs.missing }}
+        run: |
+          if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
+                "$TEST_CONFORMANCE_MIGRATION_RESULT" != "success" || "$API_SURFACE_RESULT" != "success" || \
+                "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" || \
+                "$RELEASE_CONTROL_RESULT" != "success" || "$CONFORMANCE_RESULT" != "success" || \
+                "$AISLOP_RESULT" != "success" || "$AUDIT_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, test-conformance-migration=$TEST_CONFORMANCE_MIGRATION_RESULT, api-surface=$API_SURFACE_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT, aislop=$AISLOP_RESULT, audit=$AUDIT_RESULT"
+            exit 1
+          fi

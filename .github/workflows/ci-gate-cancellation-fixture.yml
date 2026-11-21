@@ -1,0 +1,36 @@
+name: CI gate cancellation fixture
+on:
+  pull_request:
+    branches: [main]
+jobs:
+  long-running:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 300
+  gate-cancelled:
+    name: CI Success (fixture cancelled)
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [long-running]
+    steps:
+      - name: Check CI results
+        env:
+          RELEASE_CONTROL_RESULT: ${{ 'success' }}
+          LINT_RESULT: ${{ 'success' }}
+          TEST_LIB_RESULT: ${{ 'success' }}
+          TEST_CONFORMANCE_MIGRATION_RESULT: ${{ 'success' }}
+          API_SURFACE_RESULT: ${{ 'success' }}
+          FEATURE_MATRIX_RESULT: ${{ 'success' }}
+          CLIPPY_RESULT: ${{ 'success' }}
+          CONFORMANCE_RESULT: ${{ 'success' }}
+          AISLOP_RESULT: ${{ 'success' }}
+          AUDIT_RESULT: ${{ needs.long-running.result }}
+        run: |
+          if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
+                "$TEST_CONFORMANCE_MIGRATION_RESULT" != "success" || "$API_SURFACE_RESULT" != "success" || \
+                "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" || \
+                "$RELEASE_CONTROL_RESULT" != "success" || "$CONFORMANCE_RESULT" != "success" || \
+                "$AISLOP_RESULT" != "success" || "$AUDIT_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, test-conformance-migration=$TEST_CONFORMANCE_MIGRATION_RESULT, api-surface=$API_SURFACE_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT, aislop=$AISLOP_RESULT, audit=$AUDIT_RESULT"
+            exit 1
+          fi
