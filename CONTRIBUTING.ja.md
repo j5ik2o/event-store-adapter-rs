@@ -61,6 +61,7 @@ CI（`.github/workflows/ci.yml`）は、`main` への push と日次の定期実
 
 | ジョブ | 確かめること | Docker |
 |:--|:--|:--|
+| `resolve-ci-ref` | PR の編集時に、テスト用マージコミットの親がイベントのベースと HEAD に一致することを確かめ、そのコミットをすべての検査で使う | 要らない |
 | `lint` | 適合テストデータ、固定したファイルの SHA-256、`tools/user-docs/check.py`、nightly の rustfmt | 要らない |
 | `release-control` | `.github/` にあるリリース用スクリプトの試験と actionlint | 要らない |
 | `test-lib` | すべての feature を有効にしたライブラリの全試験 | 要る |

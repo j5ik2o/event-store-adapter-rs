@@ -59,6 +59,7 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on a daily schedule, a
 
 | Job | What it checks | Docker |
 |:--|:--|:--|
+| `resolve-ci-ref` | For PR edits, verifies the test merge commit has the event's base and head as its parents and pins it for all checks | No |
 | `lint` | The conformance data, the SHA-256 values of the pinned files, `tools/user-docs/check.py`, and nightly rustfmt | No |
 | `release-control` | The tests of the release scripts in `.github/` and actionlint | No |
 | `test-lib` | All tests of the library with all features | Yes |
