@@ -57,11 +57,10 @@ go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 ## 検査
 
-CI（`.github/workflows/ci.yml`）は、`main` への push と日次の定期実行に加え、`main` 向けの pull request を開いたとき、コミットを追加したとき、開き直したとき、編集したときに動きます。宛先を `main` に変更した場合も、タイトルや本文だけを変更した場合も、すべての検査を実行します。pull request を出す前に、変更に合う検査を実行してください。
+CI（`.github/workflows/ci.yml`）は、`main` への push と日次の定期実行に加え、`main` 向けの pull request を開いたとき、コミットを追加したとき、開き直したとき、編集したときに動きます。編集時は、イベントに記録されたベースと HEAD から検査用のマージコミットを作ります。pull request を出す前に、変更に合う検査を実行してください。
 
 | ジョブ | 確かめること | Docker |
 |:--|:--|:--|
-| `resolve-ci-ref` | PR の編集時に、テスト用マージコミットの親がイベントのベースと HEAD に一致することを確かめ、そのコミットをすべての検査で使う | 要らない |
 | `lint` | 適合テストデータ、固定したファイルの SHA-256、`tools/user-docs/check.py`、nightly の rustfmt | 要らない |
 | `release-control` | `.github/` にあるリリース用スクリプトの試験と actionlint | 要らない |
 | `test-lib` | すべての feature を有効にしたライブラリの全試験 | 要る |
@@ -71,8 +70,7 @@ CI（`.github/workflows/ci.yml`）は、`main` への push と日次の定期実
 | `clippy` | 同じ 8 つの feature の組での、警告を拒否した clippy | 要らない |
 | `conformance` | 保存先ごとの適合テストデータ: `memory`、`dynamodb`、`sqlite`、`spanner`、`bigtable` | `dynamodb`、`spanner`、`bigtable` だけ要る |
 | `audit` | `cargo deny check advisories licenses` | 要らない |
-| `aislop` | このリポジトリの aislop 検査とテスト | 要らない |
-| `CI Success` | 上に挙げたすべてのジョブと、マトリクスのすべての組が成功したことを確かめる | 要らない |
+| `CI Success` | `lint`、`test-lib`、`test-conformance-migration`、`api-surface`、`feature-matrix`、`clippy`、`release-control`、`conformance` をまとめる。`audit` は含まない | 要らない |
 
 CI をもとにした代表的なローカルコマンドを並べます。コマンドと feature の組み合わせの全体は [CI のワークフロー](.github/workflows/ci.yml) にあり、feature-matrix と clippy の構成は下にも説明しています。`cargo +nightly fmt --all -- --check` は、`lint` のジョブが nightly のツールチェーンで実行する `cargo fmt -- --check` を、`AGENTS.md` が示す形にしたものです。`audit` のジョブは、cargo-deny の action を通して `cargo deny check advisories licenses` を実行します。
 

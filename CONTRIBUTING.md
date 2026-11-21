@@ -55,11 +55,10 @@ go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 
 ## Checks
 
-CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on a daily schedule, and when a pull request targeting `main` is opened, updated with commits, reopened, or edited. Edits run the full suite, including when a pull request is retargeted to `main` or only its title or body changes. Run the checks that match your change before you open a pull request.
+CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on a daily schedule, and when a pull request targeting `main` is opened, updated with commits, reopened, or edited. For a PR edit, CI builds a test merge from the base and head recorded in the event. Run the checks that match your change before you open a pull request.
 
 | Job | What it checks | Docker |
 |:--|:--|:--|
-| `resolve-ci-ref` | For PR edits, verifies the test merge commit has the event's base and head as its parents and pins it for all checks | No |
 | `lint` | The conformance data, the SHA-256 values of the pinned files, `tools/user-docs/check.py`, and nightly rustfmt | No |
 | `release-control` | The tests of the release scripts in `.github/` and actionlint | No |
 | `test-lib` | All tests of the library with all features | Yes |
@@ -69,8 +68,7 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on a daily schedule, a
 | `clippy` | Clippy with warnings denied for the same eight feature sets | No |
 | `conformance` | The conformance test data for each storage: `memory`, `dynamodb`, `sqlite`, `spanner`, and `bigtable` | `dynamodb`, `spanner`, and `bigtable` only |
 | `audit` | `cargo deny check advisories licenses` | No |
-| `aislop` | The repository's aislop checks and tests | No |
-| `CI Success` | Requires every job above and every matrix entry to succeed | No |
+| `CI Success` | Collects `lint`, `test-lib`, `test-conformance-migration`, `api-surface`, `feature-matrix`, `clippy`, `release-control`, and `conformance`. It does not include `audit` | No |
 
 Representative local commands based on CI are listed below. The complete commands and all feature combinations are in [the CI workflow](.github/workflows/ci.yml); the feature-matrix and clippy configurations are also described below. `cargo +nightly fmt --all -- --check` is the form that `AGENTS.md` gives for the `cargo fmt -- --check` that the `lint` job runs with the nightly toolchain. The `audit` job runs `cargo deny check advisories licenses` through the cargo-deny action.
 

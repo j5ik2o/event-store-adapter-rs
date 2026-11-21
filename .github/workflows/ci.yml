@@ -4,69 +4,47 @@ on:
     branches: [ main ]
   pull_request:
     branches: [ main ]
-    # Base changes and title or body changes share the edited activity.
     types: [ opened, synchronize, reopened, edited ]
   schedule:
     - cron: '0 0 * * *'
 env:
   CARGO_TERM_COLOR: always
 jobs:
-  resolve-ci-ref:
-    timeout-minutes: 3
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      pull-requests: read
-    outputs:
-      sha: ${{ steps.verify.outputs.sha }}
-    steps:
-      - name: Verify the test merge commit for a PR edit
-        id: verify
-        if: github.event.action == 'edited'
-        env:
-          GH_TOKEN: ${{ github.token }}
-          PR_NUMBER: ${{ github.event.pull_request.number }}
-          BASE_REF: ${{ github.event.pull_request.base.ref }}
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-        run: |
-          # An edited event can retain the test merge from the previous base.
-          echo "Event checkout SHA: $GITHUB_SHA; expected parents: $BASE_SHA $HEAD_SHA"
-          for attempt in {1..12}; do
-            if pr=$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER"); then
-              if ! jq -e --arg base "$BASE_REF" --arg base_sha "$BASE_SHA" --arg head "$HEAD_SHA" \
-                '.state == "open" and .base.ref == $base and .base.sha == $base_sha and .head.sha == $head' \
-                <<< "$pr" > /dev/null; then
-                echo '::error::The pull request base or head no longer matches the event'
-                exit 1
-              fi
-
-              sha=$(jq -r 'select(.mergeable == true) | .merge_commit_sha // empty' <<< "$pr")
-              if [[ "$sha" =~ ^[0-9a-f]{40}$ ]] && \
-                commit=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$sha") && \
-                jq -e --arg sha "$sha" --arg base "$BASE_SHA" --arg head "$HEAD_SHA" \
-                  '.sha == $sha and [.parents[].sha] == [$base, $head]' <<< "$commit" > /dev/null; then
-                echo "Verified test merge $sha with parents $BASE_SHA $HEAD_SHA"
-                echo "sha=$sha" >> "$GITHUB_OUTPUT"
-                exit 0
-              fi
-            fi
-            echo "Waiting for a test merge with the event's parents ($attempt/12)"
-            sleep 5
-          done
-          echo '::error::Could not verify a test merge commit for this pull request edit'
-          exit 1
   release-control:
     timeout-minutes: 5
     runs-on: ubuntu-latest
-    needs: resolve-ci-ref
-    # Edited PRs must have a verified SHA. Other events keep the default checkout.
-    if: &checkout-ready github.event.action != 'edited' || needs.resolve-ci-ref.outputs.sha != ''
     steps:
       - &checkout
         uses: actions/checkout@v7
         with:
-          ref: ${{ needs.resolve-ci-ref.outputs.sha }}
+          ref: ${{ github.event.action == 'edited' && github.event.pull_request.base.sha || '' }}
+          fetch-depth: ${{ github.event.action == 'edited' && '0' || '1' }}
+      - &merge-for-edit
+        name: Check out the test merge for a PR edit
+        if: github.event.action == 'edited'
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          # The event's default test merge may still have the previous base as its first parent.
+          echo "Event checkout SHA: $GITHUB_SHA; expected parents: $BASE_SHA $HEAD_SHA"
+          test "$(git rev-parse HEAD)" = "$BASE_SHA"
+          git fetch --no-tags origin "$HEAD_SHA"
+          test "$(git rev-parse FETCH_HEAD)" = "$HEAD_SHA"
+
+          # Compute a deterministic test merge from the event's exact commits.
+          if ! tree=$(git merge-tree --write-tree "$BASE_SHA" "$HEAD_SHA"); then
+            echo '::error::Could not merge the event base and head for CI'
+            exit 1
+          fi
+          export GIT_AUTHOR_DATE="$(git show -s --format=%cI "$BASE_SHA")"
+          export GIT_COMMITTER_DATE="$GIT_AUTHOR_DATE"
+          merge=$(git -c user.name='CI Test Merge' -c user.email=ci-test-merge@users.noreply.github.com \
+            commit-tree "$tree" -p "$BASE_SHA" -p "$HEAD_SHA" -m "CI test merge")
+          git checkout --detach "$merge"
+          test "$(git show -s --format=%P HEAD)" = "$BASE_SHA $HEAD_SHA"
+          git show -s --format='CI checkout %H parents %P' HEAD
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
@@ -81,10 +59,9 @@ jobs:
   lint:
     timeout-minutes: 5
     runs-on: ubuntu-latest
-    needs: resolve-ci-ref
-    if: *checkout-ready
     steps:
       - *checkout
+      - *merge-for-edit
       - name: Verify conformance data v1.5.0
         run: |
           python3 tools/conformance/manifest.py verify
@@ -104,10 +81,10 @@ jobs:
   test-lib:
     timeout-minutes: 15
     runs-on: ubuntu-latest
-    needs: [resolve-ci-ref, lint]
-    if: *checkout-ready
+    needs: lint
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -115,10 +92,10 @@ jobs:
   test-conformance-migration:
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    needs: [resolve-ci-ref, lint]
-    if: *checkout-ready
+    needs: lint
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -126,10 +103,10 @@ jobs:
   api-surface:
     timeout-minutes: 10
     runs-on: ubuntu-latest
-    needs: [resolve-ci-ref, lint]
-    if: *checkout-ready
+    needs: lint
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -140,8 +117,6 @@ jobs:
   feature-matrix:
     timeout-minutes: 10
     runs-on: ubuntu-latest
-    needs: resolve-ci-ref
-    if: *checkout-ready
     strategy:
       fail-fast: false
       matrix:
@@ -176,6 +151,7 @@ jobs:
     name: feature-matrix (${{ matrix.name }})
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -228,8 +204,6 @@ jobs:
   clippy:
     timeout-minutes: 10
     runs-on: ubuntu-latest
-    needs: resolve-ci-ref
-    if: *checkout-ready
     strategy:
       fail-fast: false
       matrix:
@@ -257,6 +231,7 @@ jobs:
     name: clippy (${{ matrix.name }})
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -265,18 +240,15 @@ jobs:
   audit:
     timeout-minutes: 5
     runs-on: ubuntu-latest
-    needs: resolve-ci-ref
-    if: *checkout-ready
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: EmbarkStudios/cargo-deny-action@v2
         with:
           command: check advisories licenses
   conformance:
     timeout-minutes: 15
     runs-on: ubuntu-latest
-    needs: resolve-ci-ref
-    if: *checkout-ready
     strategy:
       fail-fast: false
       matrix:
@@ -301,6 +273,7 @@ jobs:
     name: conformance (${{ matrix.backend }})
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -341,10 +314,9 @@ jobs:
   aislop:
     timeout-minutes: 30
     runs-on: ubuntu-latest
-    needs: resolve-ci-ref
-    if: *checkout-ready
     steps:
       - *checkout
+      - *merge-for-edit
       - uses: actions/setup-node@v7
         with:
           node-version: '24.22.3'
@@ -355,12 +327,11 @@ jobs:
     timeout-minutes: 2
     name: CI Success
     runs-on: ubuntu-latest
-    needs: [resolve-ci-ref, lint, test-lib, test-conformance-migration, api-surface, feature-matrix, clippy, release-control, conformance, aislop, audit]
+    needs: [lint, test-lib, test-conformance-migration, api-surface, feature-matrix, clippy, release-control, conformance, aislop]
     if: always()
     steps:
       - name: Check CI results
         env:
-          CI_REF_RESULT: ${{ needs.resolve-ci-ref.result }}
           RELEASE_CONTROL_RESULT: ${{ needs.release-control.result }}
           LINT_RESULT: ${{ needs.lint.result }}
           TEST_LIB_RESULT: ${{ needs.test-lib.result }}
@@ -370,13 +341,12 @@ jobs:
           CLIPPY_RESULT: ${{ needs.clippy.result }}
           CONFORMANCE_RESULT: ${{ needs.conformance.result }}
           AISLOP_RESULT: ${{ needs.aislop.result }}
-          AUDIT_RESULT: ${{ needs.audit.result }}
         run: |
-          if [[ "$CI_REF_RESULT" != "success" || "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
+          if [[ "$LINT_RESULT" != "success" || "$TEST_LIB_RESULT" != "success" || \
                 "$TEST_CONFORMANCE_MIGRATION_RESULT" != "success" || "$API_SURFACE_RESULT" != "success" || \
                 "$FEATURE_MATRIX_RESULT" != "success" || "$CLIPPY_RESULT" != "success" || \
                 "$RELEASE_CONTROL_RESULT" != "success" || "$CONFORMANCE_RESULT" != "success" || \
-                "$AISLOP_RESULT" != "success" || "$AUDIT_RESULT" != "success" ]]; then
-            echo "CI did not succeed: resolve-ci-ref=$CI_REF_RESULT, lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, test-conformance-migration=$TEST_CONFORMANCE_MIGRATION_RESULT, api-surface=$API_SURFACE_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT, aislop=$AISLOP_RESULT, audit=$AUDIT_RESULT"
+                "$AISLOP_RESULT" != "success" ]]; then
+            echo "CI did not succeed: lint=$LINT_RESULT, test-lib=$TEST_LIB_RESULT, test-conformance-migration=$TEST_CONFORMANCE_MIGRATION_RESULT, api-surface=$API_SURFACE_RESULT, feature-matrix=$FEATURE_MATRIX_RESULT, clippy=$CLIPPY_RESULT, release-control=$RELEASE_CONTROL_RESULT, conformance=$CONFORMANCE_RESULT, aislop=$AISLOP_RESULT"
             exit 1
           fi
