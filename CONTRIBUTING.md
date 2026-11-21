@@ -120,3 +120,4 @@ cargo test --workspace --all-features
 - Release: the `lib-release` workflow starts when a tag of the form `vX.Y.Z` or `vX.Y.Z-*` is pushed. It checks that the tag matches the version in `lib/Cargo.toml`, authenticates with `rust-lang/crates-io-auth-action`, and runs `cargo publish -p event-store-adapter-rs`.
 - Dependency updates: Renovate opens pull requests whose titles start with `chore(deps):`. It merges minor, patch, pin, and digest updates and updates of devDependencies automatically. It does not update `takt` and `rustdoc-types`.
 - When CI fails on `main`, the `main-ci-failure` workflow opens an issue with the label `ci-failure-on-main`, or adds a comment to the open one. A later successful run closes the issue.
+<!-- Temporary documentation-only CI event fixture; do not merge. -->
