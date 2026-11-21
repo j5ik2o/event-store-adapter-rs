@@ -436,3 +436,5 @@ DynamoDB, Spanner, Bigtable, and migration integration tests require Docker.
 ## License
 
 Dual-licensed under MIT or Apache-2.0 (`MIT OR Apache-2.0`), at your option. See [LICENSE-MIT](LICENSE-MIT) and [LICENSE-APACHE](LICENSE-APACHE).
+
+<!-- Temporary post-merge fixture for the pull-request CI check. -->
