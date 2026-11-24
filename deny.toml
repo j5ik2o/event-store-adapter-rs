@@ -11,6 +11,9 @@ all-features = true
 # RUSTSEC advisory matching: any unaddressed advisory fails the check.
 # Entries may only be added here with a reason explaining why the
 # advisory does not apply or what backlog item tracks its resolution.
+ignore = [
+  { id = "RUSTSEC-2026-0543", reason = "chrono is unmaintained: this is a maintenance-status advisory, not a vulnerability, and no safe upgrade exists. chrono types appear in the public API, so compatibility takes priority over replacing the time types (owner decision, 2026-11-24, issue #369). Revisit when chrono maintenance resumes, or when the next major version decides to migrate the time types." },
+]
 
 [licenses]
 # Allow-list policy: only the permissive licenses actually present in the
