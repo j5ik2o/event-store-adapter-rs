@@ -157,6 +157,9 @@ def oracle(candidate, mode, requested):
           and len([p for p in candidate.pulls if p['merged_at'] and p['merge_commit_sha'] == SHA
                    and p['base']['ref'] == 'main' and p['head']['ref'] == f'release/v{after}'
                    and p['head']['repo'] and p['head']['repo']['full_name'] == REPOSITORY]) == 1
+          and all((p.get('changed_files'), p.get('additions'), p.get('deletions')) == (1, 1, 1)
+                  for p in candidate.pulls if p['merge_commit_sha'] == SHA and p['merged_at']
+                  and p['head']['ref'] == f'release/v{after}')
           and all(semver.Version.parse(after) > other for other in others))
     if not ok:
         return 'refuse'
@@ -177,7 +180,7 @@ def candidates(draw):
     pulls = [pull(SHA, ref=f'release/v{target}')]
     tags = {f'v{major - 1}.0.0': 'b' * 40, 'v0.1.0': 'c' * 40}
     on_main, parents = True, 1
-    for change in draw(st.lists(st.integers(0, 11), max_size=3)):
+    for change in draw(st.lists(st.integers(0, 12), max_size=3)):
         if change == 0:
             on_main = False
         elif change == 1:
@@ -201,8 +204,12 @@ def candidates(draw):
             tags[f'v{target}'] = draw(st.sampled_from([SHA, 'e' * 40]))
         elif change == 10:
             current = cargo_toml(draw(st.sampled_from([before, f'{target}-rc.2', f'0.0.{patch}'])))
-        else:
+        elif change == 11:
             pulls = []
+        else:
+            # rebase のマージ：最後のコミットは版だけでも、pull request の全体はほかも変える
+            pulls = [pull(SHA, ref=f'release/v{target}',
+                          size=draw(st.sampled_from([(2, 2, 1), (1, 2, 2), (1, 1, 0), (0, 0, 0)])))]
     candidate = gate.Candidate(REPOSITORY, SHA, parent, current, tuple(changed), tuple(pulls), tags, on_main, parents)
     requested = draw(st.sampled_from([f'v{target}', f'v{target}', 'v0.0.1']))
     return candidate, requested

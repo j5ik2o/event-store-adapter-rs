@@ -19,7 +19,22 @@ RELEASE = (WORKFLOWS / 'lib-release.yml').read_text()
 REPOSITORY = 'o/r'
 CRATE = 'event-store-adapter-rs'
 VERSION_FILE = 'lib/Cargo.toml'
-REAL_CARGO_TOML = (ROOT / VERSION_FILE).read_text()
+# 作業ツリーの lib/Cargo.toml（版上げの pull request のあとは 5.2.0 ではない）
+ON_DISK_CARGO_TOML = (ROOT / VERSION_FILE).read_text()
+FIXTURE_VERSION = '5.2.0'
+
+
+def fixture_manifest(text, version=FIXTURE_VERSION):
+    """lib/Cargo.toml の [package] の版（ファイルの最初の `version = "..."` の行）を version に替える。
+    試験は実物の中身を使いつつ、作業ツリーの版に依存しない（#375 の CodeRabbit の指摘）。関門の locate_version は使わない。"""
+    fixed, count = re.subn(r'(?m)^version = "[^"\n]*"$', f'version = "{version}"', text, count=1)
+    if count != 1:
+        raise AssertionError(f'no version line in {VERSION_FILE}')
+    return fixed
+
+
+# 実物の lib/Cargo.toml の版を 5.2.0 にしたもの
+REAL_CARGO_TOML = fixture_manifest(ON_DISK_CARGO_TOML)
 # 手元の HTTP のスタブ（127.0.0.1）を叩く子プロセスの no_proxy（環境のプロキシへ送らない）
 LOOPBACK = '127.0.0.1,localhost'
 # 試験の偽の秘密の値（本物ではない。作り物の印 Zq24Zq）
@@ -64,16 +79,19 @@ def outputs(path):
     return dict(line.split('=', 1) for line in path.read_text().splitlines() if line)
 
 
-def pull(sha, ref='release/v5.2.1', repo=REPOSITORY, merged=True, base='main'):
+def pull(sha, ref='release/v5.2.1', repo=REPOSITORY, merged=True, base='main', number=1, size=(1, 1, 1)):
+    """GET pulls/<番号> の応答の形。size は pull request の全体の (changed_files, additions, deletions)。"""
+    changed_files, additions, deletions = size
     return {
-        'number': 1, 'merged_at': '2026-11-27T00:00:00Z' if merged else None,
+        'number': number, 'merged_at': '2026-11-27T00:00:00Z' if merged else None,
         'merge_commit_sha': sha, 'base': {'ref': base}, 'head': {'ref': ref, 'repo': {'full_name': repo}},
+        'changed_files': changed_files, 'additions': additions, 'deletions': deletions,
     }
 
 
-def cargo_toml(version='5.2.0', extra=''):
+def cargo_toml(version=FIXTURE_VERSION, extra=''):
     """実物の lib/Cargo.toml の版だけを替えたもの。"""
-    return REAL_CARGO_TOML.replace('version = "5.2.0"', f'version = "{version}"', 1) + extra
+    return fixture_manifest(ON_DISK_CARGO_TOML, version) + extra
 
 
 # ---------------------------------------------------------------- crates.io と sparse index のスタブ
@@ -222,7 +240,12 @@ class History:
 # ---------------------------------------------------------------- 偽の道具（PATH の先頭に置く）
 
 FAKE_CARGO = r'''#!/usr/bin/env python3
-"""偽の cargo。呼び出しを FAKE_LOG に書く。package は lib/ と Cargo.lock から決まった .crate を作る。"""
+"""偽の cargo。呼び出しを FAKE_LOG に書く。package は lib/ と Cargo.lock から決まった .crate を作る。
+
+実物の cargo 1.100.0 と同じく、package はワークスペースの Cargo.lock を書かない（.crate の中にだけ作る）。
+ワークスペースの Cargo.lock は generate-lockfile が作る。--locked で Cargo.lock が無ければ失敗する。
+検証つきの package（--no-verify なし）は「ビルドスクリプト」を動かす：FAKE_BUILD_SCRIPT_WRITES のパスに書く。
+"""
 import hashlib, json, os, sys, tomllib, urllib.request
 from pathlib import Path
 
@@ -237,21 +260,28 @@ if args[:1] == ['--version']:
     print(os.environ.get('FAKE_CARGO_VERSION', 'cargo 1.100.0 (fake)'))
 elif args[:1] == ['metadata']:
     print(json.dumps({'packages': [{'name': 'event-store-adapter-rs', 'version': version}]}))
+elif args[:1] == ['generate-lockfile']:
+    (root / 'Cargo.lock').write_text(os.environ.get('FAKE_LOCK', '# lock 1\n'))
 elif args[:1] in (['package'], ['publish']):
     lock = root / 'Cargo.lock'
-    if not lock.exists():
-        if '--locked' in args:
-            sys.exit('error: the lock file needs to be updated but --locked was passed')
-        lock.write_text(os.environ.get('FAKE_LOCK', '# lock 1\n'))
+    if lock.exists():
+        lock_bytes = lock.read_bytes()
+    elif '--locked' in args:
+        sys.exit('error: the lock file needs to be updated but --locked was passed to prevent this')
+    else:
+        lock_bytes = os.environ.get('FAKE_LOCK', '# lock 1\n').encode()
     digest = hashlib.sha256()
     for path in sorted((root / 'lib').rglob('*')):
         if path.is_file():
             digest.update(str(path.relative_to(root)).encode() + b'\0' + path.read_bytes())
-    digest.update(lock.read_bytes())
+    digest.update(lock_bytes)
     data = b'crate\0' + digest.digest()
     out = root / 'target/package' / f'event-store-adapter-rs-{version}.crate'
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_bytes(data)
+    if '--no-verify' not in args:
+        for target in filter(None, os.environ.get('FAKE_BUILD_SCRIPT_WRITES', '').split(os.pathsep)):
+            Path(target).write_text('# written by a build script\n')
     if args[0] == 'publish':
         if not os.environ.get('CARGO_REGISTRY_TOKEN'):
             sys.exit('error: no token')
@@ -274,13 +304,17 @@ with open(os.environ['FAKE_LOG'], 'a') as log:
 '''
 
 FAKE_GH = r'''#!/usr/bin/env python3
-"""偽の gh。commits/<sha>/pulls は FAKE_PULLS のファイル、releases は FAKE_RELEASES のファイル（1行に1つのタグ）。"""
-import json, os, sys
+"""偽の gh。commits/<sha>/pulls は FAKE_PULLS のファイル、pulls/<番号> はその中の同じ番号の最初の項目、
+releases は FAKE_RELEASES のファイル（1行に1つのタグ）。"""
+import json, os, re, sys
 args = sys.argv[1:]
 with open(os.environ['FAKE_LOG'], 'a') as log:
     log.write(json.dumps({'tool': 'gh', 'args': args}) + '\n')
 if args[:1] == ['api'] and args[-1].endswith('/pulls'):
     print(open(os.environ['FAKE_PULLS']).read())
+elif args[:1] == ['api'] and re.search(r'/pulls/[0-9]+$', args[-1]):
+    number = int(args[-1].rsplit('/', 1)[1])
+    print(json.dumps(next(p for p in json.load(open(os.environ['FAKE_PULLS'])) if p['number'] == number)))
 elif args[:1] == ['api'] and any(a.endswith('/releases') for a in args):
     if os.environ.get('FAKE_RELEASES_FAIL'):
         sys.exit('HTTP 502')

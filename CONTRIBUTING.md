@@ -49,7 +49,7 @@ Some files in this repository are pinned copies or data from the hub. CI compare
 ```sh
 rustup install nightly
 rustup toolchain install nightly-2026-09-27 --profile minimal
-pip install semver
+pip install -r .github/tests/requirements.txt
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 ```
 
@@ -85,7 +85,8 @@ cargo test -p event-store-adapter-conformance-rs -p event-store-adapter-migratio
 cargo test -p event-store-adapter-api-surface-rs
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo run -p event-store-adapter-conformance-rs --release -- --backend memory --data conformance --report conformance-report-memory.json --require-all
-python3 -m unittest discover -s .github -p 'test_*.py' -v
+python3 -m unittest discover -s .github/tests -p 'test_*.py' -v
+bash .github/quint/run-quint.sh ci
 actionlint -shellcheck=''
 cargo deny check advisories licenses
 ```
@@ -119,9 +120,9 @@ cargo test --workspace --all-features
 - In a pull request, describe the summary, the motivation, the test results, and the scope of the impact, link the related issue as `Closes #123`, and add `Steps to verify` that a reviewer can reproduce.
 - Version bump: start the `lib-bump-version` workflow by hand (`workflow_dispatch`). It never pushes to `main`. It creates the branch `release/vX.Y.Z` with one commit `version up to vX.Y.Z` that changes only the version in `lib/Cargo.toml`, opens a pull request from it, and starts `Check unresolved comments` for that pull request. The input `level` is one of `auto`, `patch`, `minor`, and `major`. With `auto`, the level comes from the Conventional Commits since the latest release tag `vX.Y.Z`, as above; when no such commit exists, nothing is released. An explicit `level` bumps even without such commits. When the input `version` is not given and the version in `lib/Cargo.toml` is a pre-release, only `major` is accepted. The optional input `version` (`X.Y.Z`) bumps to that version without using `level` or this restriction; the version must be greater than the greatest existing `v*` tag, and no tag of the same name may exist. In every case the next version must be greater than the version in `lib/Cargo.toml` (a version pull request may be merged and not yet tagged). The input `rehearsal` opens a draft pull request titled `(rehearsal, do not merge)`; close it and delete its branch.
 - Release: merge the version pull request by squash when the release should go out. The push of `lib/Cargo.toml` to `main` starts the job `Tag the merged version`, which runs the release gate (`.github/release-gate.py`) and pushes the tag `vX.Y.Z` only when the merged commit is the squash of a pull request from `release/vX.Y.Z` of this repository, changes only the version in `lib/Cargo.toml` (every other byte of the file stays the same, comments included), and raises the version above every release tag. The tag starts the `lib-release` workflow (the file name and the name stay, because the crates.io trusted publishing is bound to them). Only tags `vX.Y.Z` start it; pre-release tags are not published.
-  1. `package` (no secrets, no OIDC): the release gate again, the four versions (the gate, TOML, `cargo metadata`, the tag) must agree, the precheck on crates.io (`.github/crates-io.py precheck`), and `cargo package` with its verification build. It keeps the `.crate`, `Cargo.lock`, `cargo --version`, and the SHA-256 of the `.crate` in the artifact `verified-crate-<attempt>`.
-  2. `publish` (the only job with `id-token: write`, one at a time): the release gate and the precheck again, then it takes only a regular `Cargo.lock` from the artifact, packages the crate again with `--no-verify --locked` (no build), and checks that its SHA-256 equals the verified one. Then it authenticates with `rust-lang/crates-io-auth-action` and runs `cargo publish --no-verify --locked`. Nothing is built in this job, and every action is pinned by its commit SHA.
-  3. `confirm`: waits up to 30 minutes until the sparse index (`index.crates.io`) serves the version. When this run uploaded the crate, the checksums of the index and of the crates.io API must equal the verified SHA-256.
+  1. `package` (no secrets, no OIDC): the release gate again, the four versions (the gate, TOML, `cargo metadata`, the tag) must agree, and the precheck on crates.io (`.github/crates-io.py precheck`). Then `cargo generate-lockfile` and `cargo package --no-verify --locked`, which resolve the dependencies without running their code, and the step records the SHA-256 of `Cargo.lock` and of the `.crate` before anything is built. Then `cargo package --locked` runs the verification build (the build scripts and procedural macros of the dependencies run here). The `.crate` and `Cargo.lock` go to the artifact `verified-crate-<attempt>`.
+  2. `publish` (the only job with `id-token: write`, one at a time): it takes from the artifact only a regular `Cargo.lock` whose SHA-256 equals the one recorded before the build, packages the crate again with `--no-verify --locked` (no build), and checks that its SHA-256 equals the one recorded before the build. Then the release gate and the precheck run again, right before it authenticates with `rust-lang/crates-io-auth-action` and runs `cargo publish --no-verify --locked`. Nothing is built in this job, and every action is pinned by its commit SHA.
+  3. `confirm`: waits up to 30 minutes until the sparse index (`index.crates.io`) serves the version. When this run uploaded the crate, the checksums of the index and of the crates.io API must equal the verified SHA-256. When the version was already on crates.io (the `published` path), nothing is compared: the precheck identified the upload by its trusted publishing data (this repository and the tag commit), and a crate packaged again later with a newly resolved `Cargo.lock` can differ byte for byte.
   4. `github-release`: creates the GitHub release, with notes from the previous release tag that has a GitHub release. Only the greatest release tag is marked latest.
 - The precheck reads the crates.io API and does not read a failed query as "not there". When the version is already on crates.io, it continues without publishing only when crates.io records that trusted publishing from this repository at the tagged commit published it (`trustpub_data`); otherwise it stops.
 - When a release stops:
@@ -135,7 +136,7 @@ cargo test --workspace --all-features
   | `publish` failed before `cargo publish` (the gate, the precheck, the artifact, the `.crate` check, the cargo version, the authentication) | Re-run the failed jobs. If the artifact cannot be read or the cargo version differs, re-run all jobs |
   | `publish` failed after `cargo publish` was accepted | Re-run the failed jobs. The precheck reads the version as published from this commit and does not publish again |
   | `confirm` timed out | Re-run only `confirm` (and then `github-release`). Do not publish again |
-  | `confirm` found a checksum that differs from the verified crate | Do not create the release. A person decides (for example, yank the version) |
+  | `confirm` found a checksum that differs from the verified crate | Do not create the release, and do not re-run all jobs or push the tag again: that run takes the `published` path, which does not compare checksums, and creates the release. Re-running only the failed jobs compares again. A person decides (for example, yank the version) |
   | `github-release` failed | Re-run only `github-release` |
   | A waiting tag job or publish job was cancelled by a later one in the same concurrency group | Re-run the cancelled run. A version that is no longer the latest tag is not published (it is skipped) |
 

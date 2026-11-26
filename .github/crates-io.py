@@ -14,9 +14,10 @@ confirm --version X.Y.Z [--sha256 HEX] [--interval SECONDS] [--deadline SECONDS]
     API の checksum がその値と同じことも確かめる（違えばすぐに失敗）。締め切りまでに返らなければ時間切れで失敗。
 check-crate --crate <ファイル> --sha256 HEX
     .crate の SHA-256 が HEX と同じか。
-copy-lock --from <取り寄せたディレクトリ> --to <ファイル>
-    取り寄せたディレクトリの Cargo.lock だけを、通常のファイル（シンボリックリンクでない）と確かめて写す。
-    ほかのファイルは使わない（package ジョブの成果物は信用しない入力。設計の再レビュー N1）。
+copy-lock --from <取り寄せたディレクトリ> --to <ファイル> --sha256 HEX
+    取り寄せたディレクトリの Cargo.lock だけを、通常のファイル（シンボリックリンクでない）で、SHA-256 が HEX
+    （package ジョブが、第三者のビルドコードが動く前に記録した値）と同じことを確かめて写す。
+    ほかのファイルは使わない（package ジョブの成果物は信用しない入力。設計の再レビュー N1、#375 の Devin の指摘）。
 
 precheck と confirm は --deadline 秒の締め切りを単調時計で持ち、照会・待ち・git ls-remote の時間をすべて数える。
 環境変数：GITHUB_REPOSITORY、CRATES_IO_API_URL・CRATES_INDEX_URL（テストで差し替える）、GITHUB_OUTPUT。
@@ -38,6 +39,7 @@ from pathlib import Path
 
 CRATE = 'event-store-adapter-rs'
 USER_AGENT = 'event-store-adapter-rs-release (+https://github.com/j5ik2o/event-store-adapter-rs)'
+BODY_CHUNK = 64 * 1024
 RELEASE = re.compile(r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)')
 SEMVER = re.compile(
     r'(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)'
@@ -182,9 +184,23 @@ class Deadline:
         return max(0.0, self.end - self.clock())
 
 
+def read_body(stream, deadline):
+    """本文を少しずつ読み、締め切りを過ぎたら TimeoutError。
+    urlopen の timeout は通信の1回ごとにかかるので、本文が少しずつ届くと、まとめて読む read() は締め切りを超えうる
+    （#375 の Devin と CodeRabbit の指摘）。超えるのは、最後の1回の通信の timeout までに限られる。"""
+    chunks = []
+    while chunk := stream.read(BODY_CHUNK):
+        chunks.append(chunk)
+        if deadline.remaining() <= 0:
+            raise TimeoutError('the deadline passed while reading the body')
+    if deadline.remaining() <= 0:
+        raise TimeoutError('the deadline passed while reading the body')
+    return b''.join(chunks)
+
+
 def http(url, deadline, timeout=60, headers=None):
     """GET して Response を返す。接続の失敗、時間切れ、本文の途中の切断（IncompleteRead）は code=None。
-    締め切りの残りで照会を打ち切り、残りが無ければ照会しない。"""
+    締め切りの残りで照会を打ち切り、残りが無ければ照会しない。締め切りのあとに読み終えた応答は使わない。"""
     left = deadline.remaining()
     if left <= 0:
         return Response(None)
@@ -192,10 +208,10 @@ def http(url, deadline, timeout=60, headers=None):
     try:
         try:
             with urllib.request.urlopen(request, timeout=min(timeout, left)) as response:
-                return Response(response.status, response.read())
+                return Response(response.status, read_body(response, deadline))
         except urllib.error.HTTPError as error:
             with error:
-                return Response(error.code, error.read())
+                return Response(error.code, read_body(error, deadline))
     except (urllib.error.URLError, http_client.HTTPException, TimeoutError, OSError):
         return Response(None)
 
@@ -297,13 +313,16 @@ def copy_lock(args):
         raise Stop(f'{source} is not a regular file')
     with os.fdopen(descriptor, 'rb') as file:
         data = file.read()
+    digest = hashlib.sha256(data).hexdigest()
+    if digest != args.sha256:
+        raise Stop(f'{source} has the SHA-256 {digest}, but the Cargo.lock recorded before the build has {args.sha256}')
     if os.path.lexists(args.to):
         if os.path.islink(args.to) or not os.path.isfile(args.to):
             raise Stop(f'{args.to} exists and is not a regular file')
         os.remove(args.to)
     with open(args.to, 'xb') as file:
         file.write(data)
-    print(f'copied Cargo.lock ({hashlib.sha256(data).hexdigest()}) to {args.to}')
+    print(f'copied Cargo.lock ({digest}) to {args.to}')
     return 0
 
 
@@ -326,6 +345,7 @@ def main(argv, sleep=time.sleep, clock=time.monotonic, git=ls_remote_tags):
     lock = commands.add_parser('copy-lock')
     lock.add_argument('--from', dest='source', required=True)
     lock.add_argument('--to', required=True)
+    lock.add_argument('--sha256', required=True)
     args = parser.parse_args(argv[1:])
     try:
         if args.command == 'precheck':

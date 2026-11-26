@@ -9,7 +9,7 @@ from hypothesis import strategies as st
 
 from release_test_support import BUMP, GITHUB, RELEASE, job, job_names, steps
 from release_workflow_canonical import CANONICAL, release_has_gate
-from workflow_runner import job_steps
+from workflow_runner import compare, job_steps
 
 CI = (GITHUB / 'workflows' / 'ci.yml').read_text()
 PUBLISH = job(RELEASE, 'publish')
@@ -78,16 +78,31 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         self.assertNotRegex((GITHUB / 'release-gate-inputs.sh').read_text(), r'\bpip3?\b')
 
     def test_the_steps_before_the_authentication(self):
+        # 関門と事前の確認は認証の直前（#375 の Devin の指摘：判定から公開までの間を短くする）
         ids = [item['id'] for item in job_steps(RELEASE, 'publish')]
-        self.assertEqual(ids, [None, None, 'release_gate_again', 'precheck_again', 'rust', 'download_verified',
-                               'crate_check', 'auth', 'publish'])
-        for step_id in ids[4:]:
+        self.assertEqual(ids, [None, None, 'rust', 'download_verified', 'crate_check', 'release_gate_again',
+                               'precheck_again', 'auth', 'publish'])
+        for step_id in ids[:7]:
+            self.assertIsNone(job_steps(RELEASE, 'publish')[ids.index(step_id)]['if'], step_id)
+        for step_id in ('auth', 'publish'):
             self.assertEqual(step_by_id(RELEASE, 'publish', step_id)['if'],
                              "steps.precheck_again.outputs.action == 'publish'", step_id)
         package_ids = [item['id'] for item in job_steps(RELEASE, 'package')]
-        self.assertEqual(package_ids, [None, None, 'release_gate', 'rust', 'build_version', 'precheck', 'package',
-                                       'verified', 'upload_verified'])
+        self.assertEqual(package_ids, [None, None, 'release_gate', 'rust', 'build_version', 'precheck', 'lock',
+                                       'verify', 'upload_verified'])
         self.assertNotIn('always()', '\n'.join(steps(RELEASE, 'package') + steps(RELEASE, 'publish')))
+
+    def test_the_hashes_are_recorded_before_any_build_code_runs(self):
+        """#375 の Devin の指摘：Cargo.lock と .crate の SHA-256 は、検証のビルド（verify）の前の手順の出力。"""
+        lock = step_by_id(RELEASE, 'package', 'lock')['run'].split('\n')
+        self.assertEqual(lock[:3], ['set -o pipefail', 'cargo generate-lockfile',
+                                    'cargo package --no-verify --locked -p event-store-adapter-rs'])
+        self.assertEqual(step_by_id(RELEASE, 'package', 'verify')['run'],
+                         'cargo package --locked -p event-store-adapter-rs')
+        package = job(RELEASE, 'package')
+        for name in ('artifact', 'sha256', 'lock_sha256'):
+            self.assertIn(f'      {name}: ${{{{ steps.lock.outputs.{name} }}}}\n', package)
+        self.assertNotRegex(package, r'steps\.verify\.outputs')
 
     def test_the_token_reaches_only_cargo_publish(self):
         self.assertEqual(RELEASE.count('steps.auth.outputs.token'), 1)
@@ -105,14 +120,14 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
 
     def test_the_artifact_is_uploaded_once_per_attempt(self):
         """再レビュー N2：成果物の名前は試みごと。overwrite を使わない。"""
-        verified = step_by_id(RELEASE, 'package', 'verified')
-        self.assertIn('echo "artifact=verified-crate-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"', verified['run'])
+        verified = step_by_id(RELEASE, 'package', 'lock')
+        self.assertIn('  echo "artifact=verified-crate-${RUN_ATTEMPT}"\n} >> "$GITHUB_OUTPUT"', verified['run'])
         self.assertEqual(verified['env']['RUN_ATTEMPT'], '${{ github.run_attempt }}')
         upload = step_by_id(RELEASE, 'package', 'upload_verified')
-        self.assertEqual(upload['with'], {'name': '${{ steps.verified.outputs.artifact }}',
+        self.assertEqual(upload['with'], {'name': '${{ steps.lock.outputs.artifact }}',
                                           'path': '${{ runner.temp }}/verified-crate', 'retention-days': '7',
                                           'if-no-files-found': 'error'})
-        self.assertIn('      artifact: ${{ steps.verified.outputs.artifact }}\n', job(RELEASE, 'package'))
+        self.assertIn('      artifact: ${{ steps.lock.outputs.artifact }}\n', job(RELEASE, 'package'))
         self.assertNotIn('overwrite', RELEASE)
 
     def test_the_artifact_is_downloaded_by_name_outside_the_workspace(self):
@@ -129,7 +144,9 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         lines = [line.strip() for line in check.split('\n') if line.strip()]
         self.assertEqual(lines[0], 'python3 "${GITHUB_WORKSPACE}"/.github/crates-io.py copy-lock --from '
                                    '"${RUNNER_TEMP}/verified-crate" \\')
-        self.assertEqual(lines[1], '--to "${GITHUB_WORKSPACE}/Cargo.lock"')
+        self.assertEqual(lines[1], '--to "${GITHUB_WORKSPACE}/Cargo.lock" --sha256 "$VERIFIED_LOCK_SHA256"')
+        self.assertEqual(step_by_id(RELEASE, 'publish', 'crate_check')['env']['VERIFIED_LOCK_SHA256'],
+                         '${{ needs.package.outputs.lock_sha256 }}')
         self.assertEqual(lines[2], 'cargo package --no-verify --locked -p event-store-adapter-rs')
         self.assertIn('check-crate', lines[3])
         # publish ジョブで取り寄せたディレクトリに触れるのは、取り寄せ（path:）と copy-lock だけ
@@ -154,8 +171,9 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
                                          f'{name}/{item["id"] or item["name"]}')
 
     def test_the_canonical_copy_matches(self):
+        # 正本との一致は release_has_gate の条件（uses: の版と注釈だけは違ってよい。#375 の Devin の指摘）
         self.assertTrue(release_has_gate(RELEASE))
-        self.assertEqual(RELEASE, CANONICAL)
+        self.assertTrue(release_has_gate(CANONICAL))
 
 
 class CanonicalProperties(unittest.TestCase):
@@ -172,8 +190,29 @@ class CanonicalProperties(unittest.TestCase):
         self.assertFalse(release_has_gate(changed))
 
     def test_an_action_version_may_change(self):
-        changed = RELEASE.replace('@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1', '@' + 'f' * 40 + ' # v7.0.2')
-        self.assertTrue(release_has_gate(changed))
+        # 今の uses: の行から選ぶ（固定の SHA だと、更新のあとに置き換えが空振りする。#375 の CodeRabbit の指摘）
+        pins = sorted(set(re.findall(r'@[0-9a-f]{40} # v[0-9.]+', RELEASE)))
+        self.assertTrue(pins)
+        for pin in pins:
+            with self.subTest(pin):
+                changed = RELEASE.replace(pin, '@' + 'f' * 40 + ' # v99.0.0')
+                self.assertNotEqual(changed, RELEASE)
+                self.assertTrue(release_has_gate(changed))
+
+
+class ExpressionComparisonTest(unittest.TestCase):
+    def test_mixed_types_compare_as_numbers_like_github_actions(self):
+        """#375 の CodeRabbit の指摘。https://docs.github.com/en/actions/reference/workflows-and-actions/expressions"""
+        cases = [
+            (False, '', True), (False, '0', True), (True, '1', True), (True, 'true', False), (None, '', True),
+            (None, False, True), (1, '1', True), (1, '1.0', True), (0, 'x', False), ('x', 'X', True),
+            ('true', 'false', False), (None, None, True), (True, True, True), (float('nan'), float('nan'), False),
+        ]
+        for left, right, equal in cases:
+            with self.subTest(left=left, right=right):
+                self.assertEqual(compare(left, '==', right), equal)
+                self.assertEqual(compare(left, '!=', right), not equal)
+                self.assertEqual(compare(right, '==', left), equal)
 
 
 class BumpWorkflowShapeTest(unittest.TestCase):
@@ -200,8 +239,11 @@ class BumpWorkflowShapeTest(unittest.TestCase):
         self.assertEqual(re.findall(r'secrets\.([A-Z_]+)', tag), ['PERSONAL_ACCESS_TOKEN'])
 
     def test_tag_pushing_is_on_only_with_the_gated_release_workflow(self):
-        self.assertIn("\nenv:\n  PUSH_RELEASE_TAG: 'true'\n", BUMP)
-        self.assertTrue(release_has_gate(RELEASE))
+        # 'false'（公開を止める pull request）はいつでもよい。'true' は関門があるときだけ（#375 の CodeRabbit の指摘）
+        value = re.findall(r"\nenv:\n  PUSH_RELEASE_TAG: '([^']*)'\n", BUMP)
+        self.assertIn(value, (['true'], ['false']))
+        if value == ['true']:
+            self.assertTrue(release_has_gate(RELEASE))
 
     def test_the_pat_is_used_only_to_push_and_to_open_the_pull_request(self):
         users = [item['id'] for name in job_names(BUMP) for item in job_steps(BUMP, name)
@@ -222,7 +264,13 @@ class CiShapeTest(unittest.TestCase):
         self.assertIn('actionlint', control)
 
     def test_ci_success_waits_for_the_release_model(self):
-        self.assertIn('bash .github/quint/run-quint.sh ci', job(CI, 'release-model'))
+        model = job(CI, 'release-model')
+        self.assertIn('bash .github/quint/run-quint.sh ci', model)
+        # #375：quint が評価器を認証なしで取り寄せないよう、認証つきで先に置き、QUINT_HOME で指す
+        fetch = model.index('bash .github/quint/fetch-evaluator.sh "${RUNNER_TEMP}/quint-home"')
+        self.assertLess(fetch, model.index('bash .github/quint/run-quint.sh ci'))
+        self.assertIn('GH_TOKEN: ${{ github.token }}', model[:fetch])
+        self.assertIn('QUINT_HOME: ${{ runner.temp }}/quint-home', model[fetch:])
         needs = re.search(r'\n    needs: \[([^\]]*)\]', job(CI, 'ci-success')).group(1)
         self.assertIn('release-model', needs)
         self.assertIn('RELEASE_MODEL_RESULT', job(CI, 'ci-success'))

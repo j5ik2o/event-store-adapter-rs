@@ -170,6 +170,14 @@ def merged_from(pull, candidate, branch):
     )
 
 
+def only_the_version_line(pull):
+    """pull request の全体（GET pulls/<番号> の changed_files・additions・deletions）が、1つのファイルの1行の置き換えか。
+    rebase のマージでは、最後のコミットも親が1つで merge_commit_sha に一致し、前のコミットの変更は候補のコミットの
+    差分に現れない（#375 の CodeRabbit の指摘）。全体が1行の置き換えなら、候補のコミット（版の行だけを替える）が
+    pull request の変更のすべて。"""
+    return pull.get('changed_files') == 1 and pull.get('additions') == 1 and pull.get('deletions') == 1
+
+
 def approved_release(candidate, before, after):
     version = parse(after)
     if version is None:
@@ -190,10 +198,15 @@ def approved_release(candidate, before, after):
         raise GateError(
             f'no pull request is associated with {candidate.sha} yet; '
             'if it is the merge of a version pull request, re-run the job')
-    if len([pull for pull in candidate.pulls if merged_from(pull, candidate, branch)]) != 1:
+    merged = [pull for pull in candidate.pulls if merged_from(pull, candidate, branch)]
+    if len(merged) != 1:
         raise GateError(
             f'{candidate.sha} is not the squash merge of a pull request from {candidate.repository}:{branch} into main; '
             'restore the version with a pull request')
+    if not only_the_version_line(merged[0]):
+        raise GateError(
+            f'the pull request #{merged[0].get("number")} must change only the version line of {VERSION_FILE} '
+            'as a whole; restore the version with a pull request')
     tag = f'v{after}'
     newest = latest_tag([name for name in candidate.tags if name != tag])
     if newest and version <= parse(newest[1:]):

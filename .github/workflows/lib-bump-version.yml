@@ -64,6 +64,10 @@ jobs:
             echo "::error::lib/Cargo.toml has the pre-release version $CURRENT_VERSION; only level=major may bump it (requested: $REQUESTED_LEVEL)"
             exit 1
           fi
+          # 版が pre-release なら、次の版はその核（X.Y.Z）にする。基点は最新のタグ（正式の版だけ）ではなく今の版（#375 の CodeRabbit の指摘）
+          if [[ "$CURRENT_VERSION" == *-* ]]; then
+            echo "base=v${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Validate the requested version
         id: requested_version
         if: inputs.version != ''
@@ -120,13 +124,14 @@ jobs:
         env:
           REQUESTED_VERSION: ${{ steps.requested_version.outputs.value }}
           PREV_TAG: ${{ steps.defines.outputs.prev_tag }}
+          PRERELEASE_BASE: ${{ steps.prerelease.outputs.base }}
           SEMVER_LEVEL: ${{ steps.semver_level.outputs.value }}
         run: |
           set -o pipefail
           if [[ -n "$REQUESTED_VERSION" ]]; then
             NEXT_VERSION="$REQUESTED_VERSION"
           else
-            NEXT_VERSION=$(echo "$PREV_TAG" | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py "$SEMVER_LEVEL")
+            NEXT_VERSION=$(echo "${PRERELEASE_BASE:-$PREV_TAG}" | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py "$SEMVER_LEVEL")
           fi
           # 今の lib/Cargo.toml の版より大きいこと（マージ済みでまだタグの無い版上げがあると、最新のタグより大きくても下げる PR になる）
           python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check-next "$NEXT_VERSION"

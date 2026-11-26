@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # 関門 (release-gate.py check) にかける事実を、指定のディレクトリに書く。
 # event-store-adapter-scala の .github/release-gate-inputs.sh（48e4256）を写し、版のファイルを lib/Cargo.toml に替え、
-# 公開先に必要な版の照会を除いたもの（設計の追記 design-r6.md §6）。
+# 公開先に必要な版の照会を除き、関連する pull request を1つずつ読み直すようにしたもの（設計の追記 design-r6.md §6・§17）。
 # 使い方: release-gate-inputs.sh <コミット> <出力先>
 # 環境変数: GH_TOKEN、GITHUB_REPOSITORY、PULLS_RETRY_SECONDS（既定 10。PR の照会を再試行する間隔）
 # 親（またはコミット）に lib/Cargo.toml が無いときは、parent-version（または version）を書かない。関門はそれを「無い」と読む。
@@ -51,3 +51,13 @@ if [[ "$read_ok" != true ]]; then
   echo "::error::could not read the pull requests of ${sha}; re-run the job"
   exit 1
 fi
+# 一覧の項目には changed_files・additions・deletions が無い。関門が pull request の全体を確かめられるよう、1つずつ読み直す
+numbers="$(python3 -c 'import json, sys; print(" ".join(str(p["number"]) for p in json.load(open(sys.argv[1]))))' \
+  "${out}/pulls.json")"
+details=()
+for number in $numbers; do
+  gh api "repos/${GITHUB_REPOSITORY}/pulls/${number}" > "${out}/pull-${number}.json"
+  details+=("${out}/pull-${number}.json")
+done
+python3 -c 'import json, sys; json.dump([json.load(open(p)) for p in sys.argv[2:]], open(sys.argv[1], "w"))' \
+  "${out}/pulls.json" ${details[@]+"${details[@]}"}

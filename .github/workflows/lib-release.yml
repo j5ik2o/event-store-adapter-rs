@@ -3,7 +3,8 @@ name: lib-release
 # 正本と一字一句同じでない（uses: の版だけは違ってよい）と、形のテストはタグの push（lib-bump-version.yml）を許さない。
 # ファイル名（lib-release.yml）と name を変えない。crates.io の trusted publishing がこのファイルに結び付いている。
 # 設計：設計の追記 design-r6.md §3（v2）。ビルドをするジョブ（package）と、OIDC の token を持つジョブ（publish）を分ける。
-# publish ジョブはビルドをしない（第三者のビルドコードが token に届かない）。package ジョブの成果物は信用せず、Cargo.lock だけを使う。
+# publish ジョブはビルドをしない（第三者のビルドコードが token に届かない）。package ジョブの成果物は信用せず、
+# 検証のビルドの前に記録した SHA-256 と同じ Cargo.lock だけを使い、作り直した .crate も同じ前の記録と照らし合わせる。
 # action はすべて SHA で固定する。Rust はランナーの rustup を直に使う。
 on:
   push:
@@ -21,8 +22,9 @@ jobs:
       pull-requests: read
     outputs:
       action: ${{ steps.precheck.outputs.action }}
-      artifact: ${{ steps.verified.outputs.artifact }}
-      sha256: ${{ steps.verified.outputs.sha256 }}
+      artifact: ${{ steps.lock.outputs.artifact }}
+      sha256: ${{ steps.lock.outputs.sha256 }}
+      lock_sha256: ${{ steps.lock.outputs.lock_sha256 }}
       cargo: ${{ steps.rust.outputs.cargo }}
     steps:
       - name: Check out the tagged commit
@@ -81,33 +83,43 @@ jobs:
         run: |
           RELEASE_SHA=$(git rev-parse "${RELEASE_TAG}^{commit}")
           python3 "${GITHUB_WORKSPACE}"/.github/crates-io.py precheck --version "${RELEASE_TAG#v}" --sha "$RELEASE_SHA"
-      # 検証のビルドはこのジョブだけで動く（依存のビルドスクリプトと手続きマクロ）。このジョブに秘密の値と OIDC は無い
-      - name: Package and verify the crate
-        id: package
-        if: steps.precheck.outputs.action == 'publish'
-        run: |
-          cargo package -p event-store-adapter-rs
-      - name: Record the verified crate
-        id: verified
+      # 依存の解決（Cargo.lock）と、上げる .crate の SHA-256 を、第三者のビルドコードが動く前に決めて手順の出力に残す。
+      # cargo generate-lockfile と cargo package --no-verify は依存を解決するだけで、依存のコードを動かさない。
+      # cargo package は Cargo.lock を .crate の中にだけ作るので、ワークスペースの Cargo.lock は generate-lockfile で作る
+      - name: Lock and package the crate
+        id: lock
         if: steps.precheck.outputs.action == 'publish'
         env:
           RELEASE_TAG: ${{ github.ref_name }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
         run: |
           set -o pipefail
+          cargo generate-lockfile
+          cargo package --no-verify --locked -p event-store-adapter-rs
           CRATE="target/package/event-store-adapter-rs-${RELEASE_TAG#v}.crate"
           mkdir "${RUNNER_TEMP}/verified-crate"
           cp "$CRATE" Cargo.lock "${RUNNER_TEMP}/verified-crate/"
           SHA256=$(sha256sum "$CRATE" | cut -d ' ' -f 1)
-          echo "verified ${CRATE}: ${SHA256}"
-          echo "sha256=${SHA256}" >> "$GITHUB_OUTPUT"
-          echo "artifact=verified-crate-${RUN_ATTEMPT}" >> "$GITHUB_OUTPUT"
+          LOCK_SHA256=$(sha256sum Cargo.lock | cut -d ' ' -f 1)
+          echo "packaged ${CRATE}: ${SHA256}; Cargo.lock: ${LOCK_SHA256}"
+          {
+            echo "sha256=${SHA256}"
+            echo "lock_sha256=${LOCK_SHA256}"
+            echo "artifact=verified-crate-${RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
+      # 検証のビルドはこの手順だけで動く（依存のビルドスクリプトと手続きマクロ）。このジョブに秘密の値と OIDC は無い。
+      # ここで動くコードは成果物を書き換えうるが、publish ジョブは前の手順の出力（SHA-256）と照らし合わせる
+      - name: Verify the crate
+        id: verify
+        if: steps.precheck.outputs.action == 'publish'
+        run: |
+          cargo package --locked -p event-store-adapter-rs
       - name: Upload the verified crate
         id: upload_verified
         if: steps.precheck.outputs.action == 'publish'
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
-          name: ${{ steps.verified.outputs.artifact }}
+          name: ${{ steps.lock.outputs.artifact }}
           path: ${{ runner.temp }}/verified-crate
           retention-days: 7
           if-no-files-found: error
@@ -136,7 +148,41 @@ jobs:
         uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
         with:
           python-version: '3.15'
-      # 関門をもう一度（package ジョブのあとに増えたタグと、待っているあいだの変化を読む）。入力は新しいディレクトリに集める
+      - name: Set up Rust
+        id: rust
+        env:
+          PACKAGE_CARGO: ${{ needs.package.outputs.cargo }}
+        run: |
+          rustup toolchain install stable --profile minimal --no-self-update
+          rustup default stable
+          CARGO=$(cargo --version)
+          if [[ "$CARGO" != "$PACKAGE_CARGO" ]]; then
+            echo "::error::cargo is '${CARGO}' here but was '${PACKAGE_CARGO}' in the package job; re-run all jobs"
+            exit 1
+          fi
+      # package ジョブの成果物は信用しない入力。ワークスペースの外の新しいディレクトリへ、名前で取り寄せる（無ければ失敗する）
+      - name: Download the verified crate
+        id: download_verified
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: ${{ needs.package.outputs.artifact }}
+          path: ${{ runner.temp }}/verified-crate
+      # 成果物から使うのは、ビルドの前に記録した SHA-256 と同じ、通常のファイルの Cargo.lock だけ。
+      # --no-verify で作り直し（ビルドしない）、ビルドの前に記録した .crate の SHA-256 と照合する
+      - name: Check the crate against the verified one
+        id: crate_check
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+          VERIFIED_SHA256: ${{ needs.package.outputs.sha256 }}
+          VERIFIED_LOCK_SHA256: ${{ needs.package.outputs.lock_sha256 }}
+        run: |
+          python3 "${GITHUB_WORKSPACE}"/.github/crates-io.py copy-lock --from "${RUNNER_TEMP}/verified-crate" \
+            --to "${GITHUB_WORKSPACE}/Cargo.lock" --sha256 "$VERIFIED_LOCK_SHA256"
+          cargo package --no-verify --locked -p event-store-adapter-rs
+          python3 "${GITHUB_WORKSPACE}"/.github/crates-io.py check-crate \
+            --crate "target/package/event-store-adapter-rs-${RELEASE_TAG#v}.crate" --sha256 "$VERIFIED_SHA256"
+      # 関門と事前の確認は、認証の直前にもう一度（package ジョブのあとに増えたタグと、crates.io の変化を読む）。
+      # 入力は新しいディレクトリに集める
       - name: Check the release gate again before publishing
         id: release_gate_again
         env:
@@ -152,7 +198,7 @@ jobs:
             --parent-version "${GATE}/parent-version" --version-file "${GATE}/version" \
             --changed-files "${GATE}/changed-files" --pulls "${GATE}/pulls.json" \
             --remote-tags "${GATE}/remote-tags"
-      # published（前の試みが上げたあとに落ちた）なら、あとの手順を飛ばして成功で終わる
+      # published（前の試みが上げたあとに落ちた）なら、認証と公開を飛ばして成功で終わる
       - name: Check crates.io again before publishing
         id: precheck_again
         env:
@@ -160,40 +206,6 @@ jobs:
         run: |
           RELEASE_SHA=$(git rev-parse "${RELEASE_TAG}^{commit}")
           python3 "${GITHUB_WORKSPACE}"/.github/crates-io.py precheck --version "${RELEASE_TAG#v}" --sha "$RELEASE_SHA"
-      - name: Set up Rust
-        id: rust
-        if: steps.precheck_again.outputs.action == 'publish'
-        env:
-          PACKAGE_CARGO: ${{ needs.package.outputs.cargo }}
-        run: |
-          rustup toolchain install stable --profile minimal --no-self-update
-          rustup default stable
-          CARGO=$(cargo --version)
-          if [[ "$CARGO" != "$PACKAGE_CARGO" ]]; then
-            echo "::error::cargo is '${CARGO}' here but was '${PACKAGE_CARGO}' in the package job; re-run all jobs"
-            exit 1
-          fi
-      # package ジョブの成果物は信用しない入力。ワークスペースの外の新しいディレクトリへ、名前で取り寄せる（無ければ失敗する）
-      - name: Download the verified crate
-        id: download_verified
-        if: steps.precheck_again.outputs.action == 'publish'
-        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
-        with:
-          name: ${{ needs.package.outputs.artifact }}
-          path: ${{ runner.temp }}/verified-crate
-      # 成果物から使うのは、通常のファイルの Cargo.lock だけ。--no-verify で作り直し（ビルドしない）、SHA-256 を照合する
-      - name: Check the crate against the verified one
-        id: crate_check
-        if: steps.precheck_again.outputs.action == 'publish'
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-          VERIFIED_SHA256: ${{ needs.package.outputs.sha256 }}
-        run: |
-          python3 "${GITHUB_WORKSPACE}"/.github/crates-io.py copy-lock --from "${RUNNER_TEMP}/verified-crate" \
-            --to "${GITHUB_WORKSPACE}/Cargo.lock"
-          cargo package --no-verify --locked -p event-store-adapter-rs
-          python3 "${GITHUB_WORKSPACE}"/.github/crates-io.py check-crate \
-            --crate "target/package/event-store-adapter-rs-${RELEASE_TAG#v}.crate" --sha256 "$VERIFIED_SHA256"
       # 認証のあとは cargo publish の1手順だけ（token の期限。設計 §3）
       - name: Authenticate with crates.io
         id: auth
@@ -281,17 +293,22 @@ jobs:
           if [[ -z "$PREV_TAG" ]]; then
             PREV_TAG=$(git describe --tags --abbrev=0 --match 'v[0-9]*' --exclude '*-*' "${RELEASE_TAG}^")
           fi
-          # 古い版のリリースをあとから作るとき、それを Latest にしない（最大の正式版のタグのときだけ --latest）
-          LATEST_TAG=$(git tag -l 'v*' | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)
-          LATEST=--latest=false
-          if [[ "$LATEST_TAG" == "$RELEASE_TAG" ]]; then
-            LATEST=--latest
-          fi
-          echo "release notes from ${PREV_TAG}; ${LATEST}"
+          echo "release notes from ${PREV_TAG}"
           NOTES="${RUNNER_TEMP}/release-notes.md"
           python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-header.py \
             "$SERVER_URL" "$GITHUB_REPOSITORY" "$PREV_TAG" "$RELEASE_TAG" > "$NOTES"
           LOG=$(git log "${PREV_TAG}..${RELEASE_TAG}" --no-merges --format='%H%x1f%s%x1f%b%x1e')
           printf '%s' "$LOG" | python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py "$SERVER_URL" "$GITHUB_REPOSITORY" >> "$NOTES"
+          # 古い版のリリースをあとから作るとき、それを Latest にしない（最大の正式版のタグのときだけ --latest）。
+          # 作る直前に、checkout のときのタグではなくリモートのタグで決める（#375 の CodeRabbit の指摘）。
+          # このあとに新しいタグが入っても、その版の実行が自分のリリースを --latest で作る
+          REMOTE_TAGS=$(git ls-remote --tags origin)
+          LATEST_TAG=$(printf '%s\n' "$REMOTE_TAGS" | cut -f 2 | sed -e 's#^refs/tags/##' -e 's#\^{}$##' \
+            | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)
+          LATEST=--latest=false
+          if [[ "$LATEST_TAG" == "$RELEASE_TAG" ]]; then
+            LATEST=--latest
+          fi
+          echo "the latest release tag on the remote is ${LATEST_TAG}; ${LATEST}"
           gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
             --title "Release ${RELEASE_TAG}" --notes-file "$NOTES" "$LATEST"

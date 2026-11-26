@@ -5,6 +5,7 @@
 """
 import json
 import os
+import re
 import shutil
 import sys
 import tempfile
@@ -16,8 +17,18 @@ from release_test_support import BUMP, FAKE_PAT, REPOSITORY, VERSION_FILE, Histo
 from workflow_runner import Runner, default_environment
 
 
+def bump_workflow(push_tag):
+    """lib-bump-version.yml の PUSH_RELEASE_TAG を push_tag（'true' か 'false'）にしたもの。
+    実物の値は公開を止める pull request で 'false' になりうるので、試験は値を明示する（#375 の CodeRabbit の指摘）。"""
+    workflow, count = re.subn(r"\nenv:\n  PUSH_RELEASE_TAG: '(?:true|false)'\n",
+                              f"\nenv:\n  PUSH_RELEASE_TAG: '{push_tag}'\n", BUMP)
+    assert count == 1
+    return workflow
+
+
 class BumpFixture:
-    def __init__(self):
+    def __init__(self, push_tag='true'):
+        self.workflow = bump_workflow(push_tag)
         self.base = Path(tempfile.mkdtemp())
         self.history = History(self.base)
         self.bin = fake_bin(self.base / 'bin')
@@ -46,7 +57,7 @@ class BumpFixture:
         context = {'token': 'fake-github-token', 'server_url': 'https://github.com', 'sha': sha,
                    'repository': REPOSITORY, 'ref': 'refs/heads/main', 'event_name': 'workflow_dispatch'}
         inputs = {'level': 'auto', 'version': '', 'rehearsal': False, **(inputs or {})}
-        runner = Runner(BUMP, workspace, temp, context, environment,
+        runner = Runner(self.workflow, workspace, temp, context, environment,
                         secrets={'PERSONAL_ACCESS_TOKEN': FAKE_PAT}, inputs=inputs)
         return runner.run(name)
 
@@ -157,6 +168,18 @@ class BumpVersionTest(unittest.TestCase):
         self.assertTrue(result.succeeded, [s.stderr for s in result.steps])
         self.assert_version_branch('10.3.0')
 
+    def test_a_major_bump_of_a_pre_release_finalizes_it(self):
+        """#375 の CodeRabbit の指摘：基点は最新の正式のタグではなく、今の pre-release の版。"""
+        cases = {'6.1.0-rc.1': '6.1.0', '5.2.1-rc.1': '5.2.1'}
+        for current, version in cases.items():
+            with self.subTest(current):
+                fixture = BumpFixture()
+                self.addCleanup(fixture.close)
+                fixture.history.commit('chore: pre', version=current)
+                result = fixture.run_job('bump-version', {'level': 'major'})
+                self.assertTrue(result.succeeded, [s.stderr for s in result.steps])
+                self.assertIn(f'refs/heads/release/v{version}', fixture.remote_branches())
+
     def test_a_non_major_bump_of_a_pre_release_is_refused(self):
         self.fixture.history.commit('chore: pre', version='6.0.0-rc.1')
         result = self.fixture.run_job('bump-version', {'level': 'minor'})
@@ -177,6 +200,17 @@ class TagReleaseTest(unittest.TestCase):
         again = self.fixture.run_job('tag-release')
         self.assertTrue(again.succeeded)
         self.assertEqual(again.outcome('release_tag'), 'skipped')
+
+    def test_with_tag_pushing_off_the_gate_runs_but_no_tag_is_pushed(self):
+        fixture = BumpFixture(push_tag='false')
+        self.addCleanup(fixture.close)
+        sha = fixture.history.commit('version up to v5.2.1 (#9)', version='5.2.1')
+        fixture.pulls.write_text(json.dumps([pull(sha)]))
+        result = fixture.run_job('tag-release')
+        self.assertTrue(result.succeeded, [s.stderr for s in result.steps])
+        self.assertEqual(result.outcome('tag_summary'), 'success')
+        self.assertEqual(result.outcome('release_tag'), 'skipped')
+        self.assertEqual(git(fixture.history.origin, 'tag', '-l', 'v5.2.1'), '')
 
     def test_other_changes_of_lib_cargo_toml_are_not_tagged(self):
         cases = {

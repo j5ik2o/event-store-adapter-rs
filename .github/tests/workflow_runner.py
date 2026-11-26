@@ -181,12 +181,17 @@ def truthy(value):
 
 
 def number(value):
+    """GitHub Actions の式の数値への変換（null は 0、true は 1、false は 0、空の文字列は 0、数でない文字列は NaN）。"""
+    if value is None:
+        return 0
     if isinstance(value, bool):
         return int(value)
-    if isinstance(value, int):
+    if isinstance(value, (int, float)):
         return value
+    if value.strip() == '':
+        return 0
     try:
-        return int(value) if value != '' else 0
+        return float(value)
     except ValueError:
         return float('nan')
 
@@ -195,9 +200,10 @@ def compare(left, operator, right):
     if operator in ('==', '!='):
         if isinstance(left, str) and isinstance(right, str):
             equal = left.casefold() == right.casefold()
-        elif isinstance(left, bool) or isinstance(right, bool):
-            equal = str(left).lower() == str(right).lower()
+        elif type(left) is type(right) and not isinstance(left, (int, float)):
+            equal = left == right
         else:
+            # 型が違えば、両辺を数に変えて比べる（NaN はどれとも等しくない。#375 の CodeRabbit の指摘）
             equal = number(left) == number(right)
         return equal == (operator == '==')
     left, right = number(left), number(right)

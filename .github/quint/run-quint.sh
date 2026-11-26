@@ -2,7 +2,7 @@
 # release_path.qnt の検査を流す。
 # 使い方:
 #   bash .github/quint/run-quint.sh ci          CI 用：typecheck、quint test の全件（決まった手順。rsPathsTest を含む）、
-#                                               違反なしを期待する rs の3つと、違反を期待する5つ（rs の4つと cancelledLeftAlone）の
+#                                               違反なしを期待する rs の5つと、違反を期待する5つ（rs の4つと cancelledLeftAlone）の
 #                                               quint run（500 サンプル）。ほかの言語のインスタンスの乱数の試行は full だけ
 #   bash .github/quint/run-quint.sh full [N]    全 instance を N サンプル（既定 3000）で流す。モデルを変えた PR で手元で流し、結果を PR に書く
 # 環境変数 QUINT：quint のコマンド（既定 quint）。CI は npx で版を固定して使う。
@@ -14,7 +14,7 @@ read -r -a Q <<< "${QUINT:-quint}"
 mode="${1:-ci}"
 SEED=7
 STEPS=30
-POSITIVE_ALL=(java javaReleasesOnly kotlin kotlinNoManual kotlinReleasesOnly scala scalaNoManual scalaReleasesOnly rs rsNoManual rsReleasesOnly go javaR2aOnly scalaBeforeR5 javaR2b javaR2bReleasesOnly)
+POSITIVE_ALL=(java javaReleasesOnly kotlin kotlinNoManual kotlinReleasesOnly scala scalaNoManual scalaReleasesOnly rs rsNoManual rsReleasesOnly rsNoLatestTagCheck rsVisibleLatest go javaR2aOnly scalaBeforeR5 javaR2b javaR2bReleasesOnly)
 # 前提を外すと破れることを示す instance と、破れる不変条件
 NEGATIVE_ALL=(kotlinNoRequired:legacyBeforeNewer scalaNoRequired:legacyBeforeNewer goManualTags:publishedOnlyFromReleasePR
   jsBefore1161:neverTimesOutAfterPublished wholeRerun:noDuplicatePublish noDeploymentCheck:noDuplicatePublish
@@ -22,9 +22,9 @@ NEGATIVE_ALL=(kotlinNoRequired:legacyBeforeNewer scalaNoRequired:legacyBeforeNew
   stepRecordDropped:noDuplicatePublish unknownIgnored:noDuplicatePublish noneSkipsQuery:noDuplicatePublish
   noneSkipsQuery:publishedMonotonic noLatestTagCheck:publishedMonotonic
   cancelledLeftAlone:stopsAreRecoverable cancelledLeftAlone:untaggedReleaseRecoverable
-  rsNoPrecheck:noDuplicatePublish rsNoLatestTagCheck:publishedMonotonic rsShortConfirm:neverTimesOutAfterPublished rsReleaseNotGated:releaseOnlyAfterConfirmed)
-POSITIVE_CI=(rs rsNoManual rsReleasesOnly)
-NEGATIVE_CI=(rsNoPrecheck:noDuplicatePublish rsNoLatestTagCheck:publishedMonotonic rsShortConfirm:neverTimesOutAfterPublished
+  rsNoPrecheck:noDuplicatePublish rsNoLatestCheck:publishedMonotonic rsShortConfirm:neverTimesOutAfterPublished rsReleaseNotGated:releaseOnlyAfterConfirmed)
+POSITIVE_CI=(rs rsNoManual rsReleasesOnly rsNoLatestTagCheck rsVisibleLatest)
+NEGATIVE_CI=(rsNoPrecheck:noDuplicatePublish rsNoLatestCheck:publishedMonotonic rsShortConfirm:neverTimesOutAfterPublished
   rsReleaseNotGated:releaseOnlyAfterConfirmed cancelledLeftAlone:stopsAreRecoverable)
 TESTS=(rsPathsTest javaPathsTest kotlinPathsTest scalaPathsTest javaR2aOnlyTest javaR2bPathsTest confirmBoundaryTest tagRecoveryTest)
 

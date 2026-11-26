@@ -114,6 +114,65 @@ class HttpTest(StubTest):
         self.assertEqual(seen, [2.5])
 
 
+class SlowBodyTest(unittest.TestCase):
+    """#375 の Devin と CodeRabbit の指摘：urlopen の timeout は通信の1回ごと。本文を少しずつ読み、締め切りで打ち切る。"""
+
+    def trickle(self, clock, pieces, step, status=200):
+        """1回の read ごとに clock を step 進め、pieces を1つずつ返す（尽きたら b''）。読んだ回数は reads に入る。"""
+        reads = []
+
+        class Slow:
+            def __init__(self):
+                self.status = status
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return False
+
+            def read(self, amount=-1):
+                reads.append(amount)
+                clock[0] += step
+                return pieces.pop(0) if pieces else b''
+        return Slow(), reads
+
+    def test_a_body_that_finishes_after_the_deadline_is_a_failed_query(self):
+        clock = [0.0]
+        slow, _ = self.trickle(clock, [b'{"vers": ', b'"5.2.1"}'], 6.0)
+        deadline = crates.Deadline(10, lambda: clock[0])
+        with mock.patch.object(crates.urllib.request, 'urlopen', lambda request, timeout: slow):
+            self.assertEqual(crates.http('http://127.0.0.1:9/x', deadline), crates.Response(None))
+        clock[0] = 0.0
+        slow, reads = self.trickle(clock, [b'{"vers": ', b'"5.2.1"}'], 1.0)
+        deadline = crates.Deadline(100, lambda: clock[0])
+        with mock.patch.object(crates.urllib.request, 'urlopen', lambda request, timeout: slow):
+            self.assertEqual(crates.http('http://127.0.0.1:9/x', deadline),
+                             crates.Response(200, b'{"vers": "5.2.1"}'))
+        self.assertTrue(all(amount == crates.BODY_CHUNK for amount in reads))
+
+    def test_a_body_that_never_ends_is_cut_at_the_deadline(self):
+        clock = [0.0]
+        slow, reads = self.trickle(clock, [b'x'] * 1000, 1.0)
+        deadline = crates.Deadline(10, lambda: clock[0])
+        with mock.patch.object(crates.urllib.request, 'urlopen', lambda request, timeout: slow):
+            self.assertEqual(crates.http('http://127.0.0.1:9/x', deadline), crates.Response(None))
+        self.assertEqual(len(reads), 10)
+
+    def test_the_body_of_an_error_response_is_cut_at_the_deadline_too(self):
+        clock = [0.0]
+        slow, reads = self.trickle(clock, [b'x'] * 1000, 1.0, status=404)
+
+        def raising(request, timeout):
+            error = crates.urllib.error.HTTPError('http://127.0.0.1:9/x', 404, 'Not Found', {}, None)
+            error.read = slow.read
+            raise error
+        deadline = crates.Deadline(10, lambda: clock[0])
+        with mock.patch.object(crates.urllib.request, 'urlopen', raising):
+            self.assertEqual(crates.http('http://127.0.0.1:9/x', deadline), crates.Response(None))
+        self.assertEqual(len(reads), 10)
+
+
 class ConfirmTest(StubTest):
     def test_the_index_serves_the_version(self):
         self.stub.add('5.2.1', checksum='c' * 64)
@@ -176,7 +235,8 @@ class CrateFilesTest(unittest.TestCase):
         (source / '.cargo' / 'config.toml').write_text('[registry]\n')
         workspace = self.directory / 'workspace'
         workspace.mkdir()
-        self.assertEqual(self.run_main('copy-lock', '--from', str(source), '--to', str(workspace / 'Cargo.lock')), 0)
+        self.assertEqual(self.run_main('copy-lock', '--from', str(source), '--to', str(workspace / 'Cargo.lock'),
+                                       '--sha256', hashlib.sha256(b'# lock\n').hexdigest()), 0)
         self.assertEqual((workspace / 'Cargo.lock').read_text(), '# lock\n')
         self.assertEqual(sorted(p.name for p in workspace.iterdir()), ['Cargo.lock'])
 
@@ -203,15 +263,24 @@ class CrateFilesTest(unittest.TestCase):
         for label, source in cases.items():
             with self.subTest(label):
                 target = self.directory / f'out-{label}'
-                self.assertEqual(self.run_main('copy-lock', '--from', str(source), '--to', str(target)), 1)
+                self.assertEqual(self.run_main('copy-lock', '--from', str(source), '--to', str(target),
+                                               '--sha256', hashlib.sha256(b'# lock\n').hexdigest()), 1)
                 self.assertFalse(target.exists())
         target = self.directory / 'link-target'
         os.symlink(secret, target)
         good = self.directory / 'good'
         good.mkdir()
         (good / 'Cargo.lock').write_text('# lock\n')
-        self.assertEqual(self.run_main('copy-lock', '--from', str(good), '--to', str(target)), 1)
+        self.assertEqual(self.run_main('copy-lock', '--from', str(good), '--to', str(target), '--sha256', hashlib.sha256(b'# lock\n').hexdigest()), 1)
         self.assertEqual(secret.read_text(), 'x')
+
+    def test_copy_lock_refuses_a_cargo_lock_that_differs_from_the_recorded_one(self):
+        source = self.directory / 'artifact'
+        source.mkdir()
+        (source / 'Cargo.lock').write_text('# another lock\n')
+        target = self.directory / 'Cargo.lock'
+        self.assertEqual(self.run_main('copy-lock', '--from', str(source), '--to', str(target), '--sha256', hashlib.sha256(b'# lock\n').hexdigest()), 1)
+        self.assertFalse(target.exists())
 
 
 if __name__ == '__main__':

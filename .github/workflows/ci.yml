@@ -66,10 +66,16 @@ jobs:
       - uses: actions/setup-node@v7
         with:
           node-version: '24.22.3'
+      # quint は評価器を認証なしの GitHub の API で取り寄せ、ランナーの共有の上限で落ちうる。認証つきで先に置く
+      - name: Fetch the Quint evaluator
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash .github/quint/fetch-evaluator.sh "${RUNNER_TEMP}/quint-home"
       - name: Check the Quint model of the release path
         timeout-minutes: 8
         env:
           QUINT: npx --yes @informalsystems/quint@0.32.0
+          QUINT_HOME: ${{ runner.temp }}/quint-home
         run: bash .github/quint/run-quint.sh ci
   lint:
     timeout-minutes: 5

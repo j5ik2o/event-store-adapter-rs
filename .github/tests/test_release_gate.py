@@ -6,7 +6,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from release_test_support import GITHUB, REAL_CARGO_TOML, REPOSITORY, VERSION_FILE, cargo_toml, load_gate, pull
+from release_test_support import (GITHUB, ON_DISK_CARGO_TOML, REAL_CARGO_TOML, REPOSITORY, VERSION_FILE, cargo_toml,
+                                  fixture_manifest, load_gate, pull)
 
 gate = load_gate()
 SHA = 'a' * 40
@@ -21,6 +22,22 @@ def candidate(parent=None, current=None, changed=(VERSION_FILE,), pulls=None, ta
 
 
 class LocateVersionTest(unittest.TestCase):
+    def test_the_lib_cargo_toml_on_disk_is_accepted(self):
+        """作業ツリーの版がいくつでも（版上げの pull request の CI でも）通る。"""
+        located = gate.locate_version(ON_DISK_CARGO_TOML)
+        self.assertEqual(ON_DISK_CARGO_TOML[located.start:located.end], located.version)
+        self.assertEqual(fixture_manifest(ON_DISK_CARGO_TOML, located.version), ON_DISK_CARGO_TOML)
+
+    def test_the_fixture_does_not_depend_on_the_version_on_disk(self):
+        """#375 の CodeRabbit の指摘：版上げのあとも、試験の親と子は求めた版になる。"""
+        current = gate.locate_version(ON_DISK_CARGO_TOML).version
+        for on_disk in [v for v in ('5.2.1', '6.0.0', '6.1.0-rc.1', '99.0.0') if v != current]:
+            bumped = ON_DISK_CARGO_TOML.replace(f'version = "{current}"', f'version = "{on_disk}"', 1)
+            self.assertNotEqual(bumped, ON_DISK_CARGO_TOML)
+            self.assertEqual(fixture_manifest(bumped), REAL_CARGO_TOML)
+            self.assertEqual(gate.locate_version(fixture_manifest(bumped, '7.0.0')).version, '7.0.0')
+            self.assertNotEqual(fixture_manifest(bumped, '5.2.0'), fixture_manifest(bumped, '5.2.1'))
+
     def test_the_real_lib_cargo_toml_is_accepted(self):
         located = gate.locate_version(REAL_CARGO_TOML)
         self.assertEqual(located.version, '5.2.0')
@@ -112,6 +129,11 @@ class CheckCandidateTest(unittest.TestCase):
             'two-digit newer tag': candidate(tags={'v10.0.0': 'c' * 40}),
             'tag on another commit': candidate(tags={'v5.2.1': 'c' * 40}),
             'rust-version change': candidate(current=cargo_toml('5.2.1').replace('1.94.1', '1.95.0')),
+            # #375 の CodeRabbit の指摘：rebase のマージでは、最後のコミットだけを見ても前のコミットの変更が分からない
+            'rebase with a source change': candidate(pulls=[pull(SHA, size=(2, 2, 1))]),
+            'rebase with a manifest change': candidate(pulls=[pull(SHA, size=(1, 2, 2))]),
+            'only the list item': candidate(pulls=[{k: v for k, v in pull(SHA).items()
+                                                    if k not in ('changed_files', 'additions', 'deletions')}]),
         }
         for label, value in cases.items():
             with self.subTest(label):

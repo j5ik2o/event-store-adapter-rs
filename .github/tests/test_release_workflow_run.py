@@ -34,6 +34,7 @@ class ReleaseFixture:
         self.artifacts = {}
         self.count = 0
         self.tag_sha = None
+        self.after_checkout = None   # checkout のあとに作業の clone を変える（checkout のあとにリモートに入ったタグなど）
 
     def close(self):
         self.stub.close()
@@ -51,6 +52,8 @@ class ReleaseFixture:
         workspace = self.base / f'job-{self.count}-{name}'
         git(self.base, 'clone', '-q', str(self.history.origin), str(workspace))
         git(workspace, 'checkout', '-q', '--detach', tag)
+        if self.after_checkout:
+            self.after_checkout(workspace)
         temp = self.base / f'temp-{self.count}'
         temp.mkdir()
         home = self.base / f'home-{self.count}'
@@ -132,7 +135,10 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         with_oidc = [call['args'] for call in calls if call['oidc']]
         self.assertEqual(with_oidc, [['--version'], ['package', '--no-verify', '--locked', '-p', 'event-store-adapter-rs'],
                                      ['publish', '--no-verify', '--locked', '-p', 'event-store-adapter-rs']])
-        self.assertIn(['package', '-p', 'event-store-adapter-rs'], [call['args'] for call in calls if not call['oidc']])
+        without_oidc = [call['args'] for call in calls if not call['oidc']]
+        self.assertEqual(without_oidc[without_oidc.index(['generate-lockfile']):][:3], [
+            ['generate-lockfile'], ['package', '--no-verify', '--locked', '-p', 'event-store-adapter-rs'],
+            ['package', '--locked', '-p', 'event-store-adapter-rs']])
 
     def test_a_version_already_published_from_the_tagged_commit_is_not_published_again(self):
         sha = self.fixture.release_commit()
@@ -184,16 +190,39 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
                 fixture = ReleaseFixture()
                 self.addCleanup(fixture.close)
                 fixture.release_commit()
-                results = fixture.release()
-                self.assertTrue(results['publish'].auth_used)
-                fixture.stub.published.clear()
-                del fixture.stub.versions['5.2.1']
+                # package だけを流し、未公開のまま成果物を変える（#375 の CodeRabbit の指摘：公開してから巻き戻さない）
+                package = fixture.run_job('package', {})
+                self.assertTrue(package.succeeded, [s.stderr for s in package.steps])
+                self.assertEqual(package.outputs['action'], 'publish')
                 [stored] = fixture.artifacts.values()
                 tamper(stored)
-                rerun = fixture.release(start='publish', attempt=2, needs={'package': results['_needs']['package']})
+                rerun = fixture.release(start='publish',
+                                        needs={'package': {'result': 'success', 'outputs': package.outputs}})
                 self.assertEqual(rerun['publish'].outcome('crate_check'), 'failure', label)
+                self.assertEqual(rerun['publish'].outcome('auth'), 'skipped', label)
                 self.assertFalse(rerun['publish'].auth_used)
                 self.assertEqual(fixture.stub.published, [])
+
+    def test_a_build_script_that_rewrites_the_artifact_is_caught_before_the_authentication(self):
+        """#375 の Devin の指摘：検証のビルドで動くコードは、成果物の Cargo.lock と .crate を書き換えうる。
+        publish ジョブは、その前の手順が記録した SHA-256 と照らし合わせるので、認証の前に止まる。"""
+        for written in ('Cargo.lock', 'event-store-adapter-rs-5.2.1.crate'):
+            with self.subTest(written):
+                fixture = ReleaseFixture()
+                self.addCleanup(fixture.close)
+                fixture.release_commit()
+                temp = fixture.base / f'temp-{fixture.count + 1}'
+                results = fixture.release(step_env={'package': {'verify': {
+                    'FAKE_BUILD_SCRIPT_WRITES': str(temp / 'verified-crate' / written)}}})
+                self.assertTrue(results['package'].succeeded, [s.stderr for s in results['package'].steps])
+                if written == 'Cargo.lock':
+                    self.assertEqual(results['publish'].outcome('crate_check'), 'failure')
+                    self.assertFalse(results['publish'].auth_used)
+                    self.assertEqual(fixture.stub.published, [])
+                else:
+                    # 成果物の .crate は使わない。上がるのは作り直した、ビルドの前の記録と同じ .crate
+                    [published] = fixture.stub.published
+                    self.assertEqual(published['checksum'], results['package'].outputs['sha256'])
 
     def test_only_cargo_lock_is_taken_from_the_artifact(self):
         self.fixture.release_commit()
@@ -239,6 +268,7 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         self.fixture.history.tag('v5.2.2')
         rerun = self.fixture.release(start='publish', needs={'package': {'result': 'success', 'outputs': package.outputs}})
         self.assertEqual(rerun['publish'].outcome('release_gate_again'), 'failure')
+        self.assertEqual(rerun['publish'].outcome('crate_check'), 'success')
         self.assertFalse(rerun['publish'].auth_used)
         self.assertEqual(self.fixture.stub.published, [])
 
@@ -250,7 +280,8 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         self.assertEqual(len(self.fixture.stub.published), 1)
         rerun = self.fixture.release(start='publish', attempt=2, needs={'package': first['_needs']['package']})
         self.assertTrue(rerun['publish'].succeeded)
-        self.assertEqual(rerun['publish'].outcome('rust'), 'skipped')
+        self.assertEqual(rerun['publish'].outcome('precheck_again'), 'success')
+        self.assertEqual(rerun['publish'].outcome('auth'), 'skipped')
         self.assertFalse(rerun['publish'].auth_used)
         self.assertEqual(rerun['publish'].outputs['uploaded'], '')
         self.assertTrue(rerun['confirm'].succeeded)
@@ -276,6 +307,18 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         [create] = self.fixture.gh_calls('release', 'create')
         self.assertIn('--latest=false', create)
         self.assertIn('release notes from v5.2.0', results['github-release'].step('github_release').stdout)
+
+    def test_latest_is_decided_by_the_remote_tags_right_before_the_release(self):
+        """#375 の CodeRabbit の指摘：checkout のあとに新しいタグが入ったら、古い版を Latest にしない。"""
+        sha = self.fixture.release_commit()
+        self.fixture.history.commit('feat: later')
+        self.fixture.history.tag('v5.3.0')
+        self.fixture.stub.add('5.2.1', sha=sha)
+        self.fixture.after_checkout = lambda workspace: git(workspace, 'tag', '-d', 'v5.3.0')
+        results = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}})
+        self.assertTrue(results['github-release'].succeeded, [s.stderr for s in results['github-release'].steps])
+        [create] = self.fixture.gh_calls('release', 'create')
+        self.assertIn('--latest=false', create)
 
     def test_an_existing_release_is_left_alone_and_a_failed_listing_stops(self):
         self.fixture.release_commit()

@@ -6,6 +6,7 @@ The model was written for the release path design of the event-store-adapter rep
 
 - `RELEASE_AFTER_CONFIRM`: the GitHub release is created only after the check after publishing (the sparse index serves the version) is `Confirmed`. The other instances keep `false` (the Maven Central shape: the release follows `PUBLISHED`), so their behaviour does not change.
 - I17 `releaseOnlyAfterConfirmed`: in `safety` under `RELEASE_AFTER_CONFIRM`. The instance `rsReleaseNotGated` drops the constant and breaks it.
+- `PRECHECK_ACCEPTED_LATEST`: the precheck takes the greatest version from every accepted version (the crates.io API `versions?sort=semver`), not only from the versions the publish target serves (`visibleLatest`, which lags). The other instances keep `false`.
 
 The rs instances have the shape of `lib-release.yml`:
 
@@ -16,7 +17,7 @@ The rs instances have the shape of `lib-release.yml`:
 
 How the jobs map to the model: the `package` and `publish` jobs together are one `publishJob` action. Its decision (`publishGate`) is the gate and the precheck of the `publish` job, right before the authentication; the gate and the precheck of the `package` job filter earlier (a failure there is `publishFailed`, and its recovery is `rerunPublishJob`). The concurrency group of the `publish` job is `cancelPendingPublish`. The success of the `publish` job is `jobOk`, which the model sets at the first check after publishing (the Maven Central shape, where the wait is inside the job); since the release needs `Confirmed` (I17), the difference does not affect safety. Outside the model: the version position in `lib/Cargo.toml` (P4r, P5), the checksum of the verified crate (I19), the OIDC scope (I20) and `trustpub_data` (I21), which the tests in `.github/tests/` check.
 
-`rs`, `rsNoManual` and `rsReleasesOnly` are expected to have no violation. `rsNoPrecheck` (the precheck reads only the delayed sparse index), `rsNoLatestTagCheck`, `rsShortConfirm` (a wait shorter than the index delay, as in js#1161) and `rsReleaseNotGated` are expected to violate an invariant. `rsPathsTest` runs the fixed rs paths: the release waits for the index, an index timeout is recovered by re-running only the check, and a publish job that fails after crates.io accepted the crate does not publish twice.
+`rs`, `rsNoManual`, `rsReleasesOnly`, `rsNoLatestTagCheck` and `rsVisibleLatest` are expected to have no violation. `rsNoPrecheck` (the precheck reads only the delayed sparse index), `rsNoLatestCheck`, `rsShortConfirm` (a wait shorter than the index delay, as in js#1161) and `rsReleaseNotGated` are expected to violate an invariant. The three latest-version instances show that either check keeps I2 (`publishedMonotonic`): the greatest accepted version alone (`rsNoLatestTagCheck`), or the latest-tag check alone with the lagging greatest version (`rsVisibleLatest`); without both, I2 breaks (`rsNoLatestCheck`). For rs the latest-tag check is a second guard. `rsPathsTest` runs the fixed rs paths: the release waits for the index, an index timeout is recovered by re-running only the check, and a publish job that fails after crates.io accepted the crate does not publish twice.
 
 Outside the model: a tag made by hand on a commit before R6 (`v5.2.0` at `35b83b6` or earlier). Such a commit runs its old `lib-release.yml` (tags `vX.Y.Z` and `vX.Y.Z-*`, no gate). CONTRIBUTING forbids such tags; tag rulesets would close it structurally.
 
@@ -25,10 +26,12 @@ The instances of the other languages (java, kotlin, scala, go) and the migration
 ## Running
 
 ```sh
-bash .github/quint/run-quint.sh ci          # what CI runs: typecheck, every quint test, 3 rs and 5 negative instances with 500 samples
+bash .github/quint/run-quint.sh ci          # what CI runs: typecheck, every quint test, 5 rs and 5 negative instances with 500 samples
 bash .github/quint/run-quint.sh full 3000   # every instance; run it locally when the model changes and put the result in the pull request
 ```
 
 The script uses `quint` from `PATH`, or the command in `QUINT` (CI uses `npx --yes @informalsystems/quint@0.32.0`).
+
+quint fetches its Rust evaluator (`evaluator/v0.6.0`) from the GitHub API without authentication when `$QUINT_HOME/rust-evaluator-v0.6.0/quint_evaluator` is missing (`QUINT_HOME` defaults to `~/.quint`). That API allows 60 requests an hour per IP, which shared runners often have used up. CI therefore runs `fetch-evaluator.sh` first: it downloads the evaluator with `gh` and the job's token, checks its SHA-256, and puts it in `$QUINT_HOME`.
 
 When `release-gate.py` or `crates-io.py` changes what it decides, change the model first, then the code.

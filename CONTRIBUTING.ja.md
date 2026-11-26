@@ -51,7 +51,7 @@
 ```sh
 rustup install nightly
 rustup toolchain install nightly-2026-09-27 --profile minimal
-pip install semver
+pip install -r .github/tests/requirements.txt
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 ```
 
@@ -87,7 +87,8 @@ cargo test -p event-store-adapter-conformance-rs -p event-store-adapter-migratio
 cargo test -p event-store-adapter-api-surface-rs
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo run -p event-store-adapter-conformance-rs --release -- --backend memory --data conformance --report conformance-report-memory.json --require-all
-python3 -m unittest discover -s .github -p 'test_*.py' -v
+python3 -m unittest discover -s .github/tests -p 'test_*.py' -v
+bash .github/quint/run-quint.sh ci
 actionlint -shellcheck=''
 cargo deny check advisories licenses
 ```
@@ -121,9 +122,9 @@ cargo test --workspace --all-features
 - pull request には、概要、動機、試験結果、影響範囲を書き、関連する issue を `Closes #123` の形でリンクし、レビュアーが再現できる `Steps to verify` を明記します。
 - 版上げ: `lib-bump-version` の workflow を手動で起動します（`workflow_dispatch`）。`main` へは push しません。`lib/Cargo.toml` の版だけを変える1つのコミット `version up to vX.Y.Z` を持つ枝 `release/vX.Y.Z` を作り、そこから PR を開き、その PR の `Check unresolved comments` を起動します。入力 `level` は `auto`・`patch`・`minor`・`major` のどれかです。`auto` では、最新のリリースのタグ `vX.Y.Z` 以降の Conventional Commits から上のとおりに決めます。該当するコミットが無ければ、何も出しません。`level` を明示すると、該当するコミットが無くても上げます。入力 `version` を指定しないときに、`lib/Cargo.toml` の版が pre-release なら、`major` だけを受け付けます。任意の入力 `version`（`X.Y.Z`）を指定すると、`level` とこの制限を使わずにその版へ上げます。その版は、既存の `v*` タグの最大より大きく、同じ名前のタグがないものに限ります。どの場合も、次の版は `lib/Cargo.toml` の版より大きくなければなりません（マージ済みでまだタグの無い版上げの PR があるかもしれないため）。入力 `rehearsal` は、題に `(rehearsal, do not merge)` を付けた draft の PR を開きます。確かめたら閉じて、枝を消します。
 - リリース: 出してよいときに、版上げの PR を squash でマージします。`main` への `lib/Cargo.toml` の push で `Tag the merged version` のジョブが動き、リリースの関門（`.github/release-gate.py`）を通ったときだけタグ `vX.Y.Z` を push します。関門が通すのは、マージのコミットが、このリポジトリの `release/vX.Y.Z` からの PR の squash で、`lib/Cargo.toml` の版だけを変え（ファイルのほかのバイトはコメントも含めて同じ）、版がどのリリースのタグよりも大きいときだけです。タグが `lib-release` の workflow を動かします（crates.io の trusted publishing がファイル名と名前に結び付いているので、どちらも変えません）。動かすのはタグ `vX.Y.Z` だけで、pre-release のタグは公開しません。
-  1. `package`（秘密の値も OIDC も無い）：もう一度の関門、4つの版（関門、TOML、`cargo metadata`、タグ）の一致、crates.io の事前の確認（`.github/crates-io.py precheck`）、検証のビルドつきの `cargo package`。`.crate`、`Cargo.lock`、`cargo --version`、`.crate` の SHA-256 を成果物 `verified-crate-<試み>` に残します。
-  2. `publish`（`id-token: write` を持つ唯一のジョブ。1本ずつ）：関門と事前の確認をもう一度。成果物からは通常のファイルの `Cargo.lock` だけを取り、`--no-verify --locked` で作り直し（ビルドしない）、SHA-256 が検証したものと同じことを確かめます。そのあと `rust-lang/crates-io-auth-action` で認証し、`cargo publish --no-verify --locked` を実行します。このジョブでは何もビルドせず、action はすべてコミットの SHA で固定しています。
-  3. `confirm`：sparse index（`index.crates.io`）がその版を返すまで、最大 30 分待ちます。この実行で上げたときは、index と crates.io の API の checksum が、検証した SHA-256 と同じでなければなりません。
+  1. `package`（秘密の値も OIDC も無い）：もう一度の関門、4つの版（関門、TOML、`cargo metadata`、タグ）の一致、crates.io の事前の確認（`.github/crates-io.py precheck`）。続いて、依存を解決するだけで依存のコードを動かさない `cargo generate-lockfile` と `cargo package --no-verify --locked` を流し、何かをビルドする前に `Cargo.lock` と `.crate` の SHA-256 を記録します。そのあと `cargo package --locked` が検証のビルドをします（依存のビルドスクリプトと手続きマクロはここで動きます）。`.crate` と `Cargo.lock` を成果物 `verified-crate-<試み>` に残します。
+  2. `publish`（`id-token: write` を持つ唯一のジョブ。1本ずつ）：成果物からは、ビルドの前に記録した SHA-256 と同じ、通常のファイルの `Cargo.lock` だけを取り、`--no-verify --locked` で作り直し（ビルドしない）、SHA-256 がビルドの前に記録したものと同じことを確かめます。そのあと、認証の直前に関門と事前の確認をもう一度流し、`rust-lang/crates-io-auth-action` で認証し、`cargo publish --no-verify --locked` を実行します。このジョブでは何もビルドせず、action はすべてコミットの SHA で固定しています。
+  3. `confirm`：sparse index（`index.crates.io`）がその版を返すまで、最大 30 分待ちます。この実行で上げたときは、index と crates.io の API の checksum が、検証した SHA-256 と同じでなければなりません。版がすでに crates.io にあったとき（`published` の経路）は照らし合わせません。事前の確認が、trusted publishing のデータ（このリポジトリとタグのコミット）でその公開を確かめており、あとで新しく解決した `Cargo.lock` で作り直した crate は、バイト単位で違いうるからです。
   4. `github-release`：GitHub のリリースを作ります。ノートの基点は、前にあるリリースのタグのうち GitHub のリリースがあるものです。latest にするのは、最大のリリースのタグのときだけです。
 - 事前の確認は crates.io の API を読み、照会の失敗を「無い」と読みません。その版がすでに crates.io にあるときは、このリポジトリのタグのコミットから trusted publishing で出たと crates.io が記録しているとき（`trustpub_data`）だけ、公開せずに続けます。そうでなければ止まります。
 - リリースが止まったとき:
@@ -137,7 +138,7 @@ cargo test --workspace --all-features
   | `publish` が `cargo publish` の前に失敗した（関門、事前の確認、成果物、`.crate` の照合、cargo の版、認証） | 失敗したジョブを再実行する。成果物を読めない、または cargo の版が違うときは、すべてのジョブを再実行する |
   | `publish` が、`cargo publish` が受け付けられたあとで失敗した | 失敗したジョブを再実行する。事前の確認が、このコミットから出た版と読み、二度目は出さない |
   | `confirm` が時間切れになった | `confirm`（と、そのあとの `github-release`）だけを再実行する。もう一度は公開しない |
-  | `confirm` が、検証した crate と違う checksum を見つけた | リリースを作らない。人が判断する（版の取り下げなど） |
+  | `confirm` が、検証した crate と違う checksum を見つけた | リリースを作らない。全部のジョブの再実行も、タグの push のやり直しもしない（その実行は `published` の経路を通り、checksum を照らし合わせずにリリースを作る）。失敗したジョブだけの再実行なら、もう一度照らし合わせる。人が判断する（版の取り下げなど） |
   | `github-release` が失敗した | `github-release` だけを再実行する |
   | 待っていたタグのジョブか公開のジョブが、同じ concurrency の group のあとのジョブに取り消された | 取り消された run を再実行する。最新のタグでなくなった版は公開しない（飛ぶ） |
 
