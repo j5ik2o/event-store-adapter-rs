@@ -250,6 +250,34 @@ class TrickleTest(unittest.TestCase):
         self.assertEqual(crates.http(server.url, crates.Deadline(10)), crates.Response(200, b'x' * 20))
 
 
+class WatchdogTest(unittest.TestCase):
+    def test_a_socket_that_cannot_be_shut_down_fails_the_query(self):
+        """締め切りに socket を閉じられなかったら、握りつぶさずにその照会を時間切れにする。"""
+        class Broken:
+            def fileno(self):
+                return 3
+
+            def shutdown(self, how):
+                raise OSError(107, 'Transport endpoint is not connected')
+        watchdog = crates.Watchdog(Broken(), 60)
+        watchdog.cancel()
+        watchdog.fire()
+        with self.assertRaises(TimeoutError):
+            watchdog.raise_failure()
+
+    def test_a_closed_socket_is_left_alone(self):
+        class Closed:
+            def fileno(self):
+                return -1
+
+            def shutdown(self, how):
+                raise AssertionError('a closed socket must not be shut down')
+        watchdog = crates.Watchdog(Closed(), 60)
+        watchdog.cancel()
+        watchdog.fire()
+        watchdog.raise_failure()
+
+
 class ConfirmTest(StubTest):
     def test_the_index_serves_the_version(self):
         self.stub.add('5.2.1', checksum='c' * 64)

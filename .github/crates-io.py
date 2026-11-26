@@ -205,11 +205,7 @@ def read_body(response, deadline, timeout):
       閉じたあとの受信は失敗し、照会の失敗になる。"""
     sock = response_socket(response)
     read = getattr(response, 'read1', None) or response.read
-    watchdog = None
-    if sock is not None:
-        watchdog = threading.Timer(max(deadline.remaining(), 0), shutdown, (sock,))
-        watchdog.daemon = True
-        watchdog.start()
+    watchdog = Watchdog(sock, deadline.remaining()) if sock is not None else None
     try:
         chunks = []
         while True:
@@ -228,13 +224,34 @@ def read_body(response, deadline, timeout):
     finally:
         if watchdog is not None:
             watchdog.cancel()
+            watchdog.raise_failure()
 
 
-def shutdown(sock):
-    try:
-        sock.shutdown(socket.SHUT_RDWR)
-    except OSError:
-        pass
+class Watchdog:
+    """締め切りに socket を閉じ、受信を止める timer。閉じられなかったときは、その照会を時間切れとして失敗にする
+    （raise_failure）。読み終えて閉じた socket には何もしない。"""
+
+    def __init__(self, sock, seconds):
+        self.sock = sock
+        self.failure = None
+        self.timer = threading.Timer(max(seconds, 0), self.fire)
+        self.timer.daemon = True
+        self.timer.start()
+
+    def fire(self):
+        if self.sock.fileno() < 0:
+            return
+        try:
+            self.sock.shutdown(socket.SHUT_RDWR)
+        except OSError as error:
+            self.failure = error
+
+    def cancel(self):
+        self.timer.cancel()
+
+    def raise_failure(self):
+        if self.failure is not None:
+            raise TimeoutError(f'could not shut the socket down at the deadline: {self.failure}') from self.failure
 
 
 def http(url, deadline, timeout=60, headers=None):
