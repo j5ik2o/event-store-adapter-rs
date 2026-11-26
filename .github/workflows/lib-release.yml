@@ -309,12 +309,15 @@ jobs:
         id: latest_release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
         run: |
           set -o pipefail
-          # リリースを作ったあとに一覧を読み直し、最大の正式版（vX.Y.Z）のリリースを Latest にする。どの版の実行が
-          # どの順で動いても、最後に動いた実行が最大の版を Latest に戻す（何度動いても同じ結果。#375 の CodeRabbit の指摘）
+          # リリースを作ったあとに一覧を読み直し、最大の正式版（vX.Y.Z）のリリースを Latest にする。版の違う実行が
+          # 同時にこの手順を動かない限り、最大の版が Latest になる（何度動いても同じ結果。#375 の CodeRabbit の指摘）。
+          # 作った直後のリリースが一覧にまだ出ないことがあるので、前の手順で作った（またはあった）RELEASE_TAG を足して選ぶ
           RELEASED=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[] | select(.draft | not) | .tag_name')
-          LATEST_TAG=$(printf '%s\n' "$RELEASED" | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)
+          LATEST_TAG=$(printf '%s\n%s\n' "$RELEASED" "$RELEASE_TAG" \
+            | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)
           if [[ -z "$LATEST_TAG" ]]; then
             echo "::error::no GitHub release of a version vX.Y.Z exists"
             exit 1

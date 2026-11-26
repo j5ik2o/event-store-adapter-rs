@@ -350,9 +350,10 @@ elif args[:1] == ['api'] and any(a.endswith('/releases') for a in args):
         sys.exit('HTTP 502')
     print(open(os.environ['FAKE_RELEASES']).read(), end='')
 elif args[:2] == ['release', 'create']:
-    # 作ったリリースは、そのあとの一覧に出る
-    with open(os.environ['FAKE_RELEASES'], 'a') as releases:
-        releases.write(args[2] + '\n')
+    # 作ったリリースは、そのあとの一覧に出る（FAKE_RELEASES_LAG があれば、まだ出ない）
+    if not os.environ.get('FAKE_RELEASES_LAG'):
+        with open(os.environ['FAKE_RELEASES'], 'a') as releases:
+            releases.write(args[2] + '\n')
 elif args[:2] == ['release', 'edit']:
     pass
 elif args[:2] == ['pr', 'create']:

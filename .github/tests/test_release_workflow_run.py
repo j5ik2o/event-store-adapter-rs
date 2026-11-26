@@ -328,8 +328,19 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         self.assertIn('--latest=false', create)
         self.assertEqual(self.latest_edits(), ['v5.3.0'])
 
+    def test_a_release_not_listed_yet_is_still_marked_latest(self):
+        """作った直後のリリースが一覧にまだ出なくても、RELEASE_TAG を足して最大の版を選ぶ（java#870 の設計レビュー）。"""
+        self.fixture.release_commit()
+        lagging = {'FAKE_RELEASES_LAG': '1'}
+        results = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}},
+                                       step_env={'github-release': {'github_release': lagging,
+                                                                    'latest_release': lagging}})
+        self.assertTrue(results['github-release'].succeeded, [s.stderr for s in results['github-release'].steps])
+        self.assertEqual(self.fixture.releases.read_text(), 'v5.2.0\n')
+        self.assertEqual(self.latest_edits(), ['v5.2.1'])
+
     def test_runs_in_any_order_end_with_the_greatest_release_latest(self):
-        """古い版の実行があとから動いても、最後に最大の版が Latest に戻る。"""
+        """古い版の実行があとから動いても（同時でなければ）、最後に最大の版が Latest に戻る。"""
         for order in (('v5.3.0', 'v5.2.1'), ('v5.2.1', 'v5.3.0')):
             with self.subTest(order=order):
                 fixture = ReleaseFixture()

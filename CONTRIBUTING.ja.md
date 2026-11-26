@@ -125,7 +125,7 @@ cargo test --workspace --all-features
   1. `package`（秘密の値も OIDC も無い）：もう一度の関門、4つの版（関門、TOML、`cargo metadata`、タグ）の一致、crates.io の事前の確認（`.github/crates-io.py precheck`）。続いて、依存を解決するだけで依存のコードを動かさない `cargo generate-lockfile` と `cargo package --no-verify --locked` を流し、何かをビルドする前に `Cargo.lock` と `.crate` の SHA-256 を記録します。そのあと `cargo package --locked` が検証のビルドをします（依存のビルドスクリプトと手続きマクロはここで動きます）。`.crate` と `Cargo.lock` を成果物 `verified-crate-<試み>` に残します。
   2. `publish`（`id-token: write` を持つ唯一のジョブ。1本ずつ）：成果物からは、ビルドの前に記録した SHA-256 と同じ、通常のファイルの `Cargo.lock` だけを取り、`--no-verify --locked` で作り直し（ビルドしない）、SHA-256 がビルドの前に記録したものと同じことを確かめます。そのあと、認証の直前に関門と事前の確認をもう一度流し、`rust-lang/crates-io-auth-action` で認証し、`cargo publish --no-verify --locked` を実行します。このジョブでは何もビルドせず、action はすべてコミットの SHA で固定しています。
   3. `confirm`：sparse index（`index.crates.io`）がその版を返すまで、最大 30 分待ちます。この実行で上げたときは、index と crates.io の API の checksum が、検証した SHA-256 と同じでなければなりません。版がすでに crates.io にあったとき（`published` の経路）は照らし合わせません。事前の確認が、trusted publishing のデータ（このリポジトリとタグのコミット）でその公開を確かめており、あとで新しく解決した `Cargo.lock` で作り直した crate は、バイト単位で違いうるからです。
-  4. `github-release`：GitHub のリリースを、latest にせずに作ります。ノートの基点は、前にあるリリースのタグのうち GitHub のリリースがあるものです。そのあとリリースの一覧を読み直し、最大の `vX.Y.Z` のリリースを latest にします（`gh release edit --latest`）。版の違う実行が何度・どの順で動いても同じ結果になるので、あとから動いた古い版が latest のまま残ることはありません。このジョブに concurrency の group は付けません。group の中で待っているジョブは後のジョブに置き換えられ（置き換えない `queue: max` は actionlint 1.7.12 が受け付けません）、置き換えられた版のリリースが作られないからです。残る窓は1つです：2つの版の実行が同時に最後の手順に来ると、古い版が新しいリリースのできる前に一覧を読み、新しい版のあとに自分を latest にすることがあります。どれかの `github-release` のジョブを再実行するか、Latest を手で直します。
+  4. `github-release`：GitHub のリリースを、latest にせずに作ります。ノートの基点は、前にあるリリースのタグのうち GitHub のリリースがあるものです。そのあとリリースの一覧を読み直し、最大の `vX.Y.Z` のリリースを latest にします（`gh release edit --latest`）。作った直後のリリースが一覧にまだ出ないことがあるので、一覧に自分のタグを足して選びます。2つの版の実行が同時にこの手順を動かない限り、何度動いても最大のリリースが latest になります。このジョブに concurrency の group は付けません。group の中で待っているジョブは後のジョブに置き換えられ（置き換えない `queue: max` は actionlint 1.7.12 が受け付けません）、置き換えられた版のリリースが作られないからです。同時に動いた場合は、古い版が新しいリリースのできる前に一覧を読み、新しい版のあとに自分を latest にすることがあります。どれかの `github-release` のジョブを再実行するか、Latest を手で直します。
 - 事前の確認は crates.io の API を読み、照会の失敗を「無い」と読みません。その版がすでに crates.io にあるときは、このリポジトリのタグのコミットから trusted publishing で出たと crates.io が記録しているとき（`trustpub_data`）だけ、公開せずに続けます。そうでなければ止まります。
 - リリースが止まったとき:
 
@@ -139,7 +139,7 @@ cargo test --workspace --all-features
   | `publish` が、`cargo publish` が受け付けられたあとで失敗した | 失敗したジョブを再実行する。事前の確認が、このコミットから出た版と読み、二度目は出さない |
   | `confirm` が時間切れになった | `confirm`（と、そのあとの `github-release`）だけを再実行する。もう一度は公開しない |
   | `confirm` が、検証した crate と違う checksum を見つけた | リリースを作らない。全部のジョブの再実行も、タグの push のやり直しもしない（その実行は `published` の経路を通り、checksum を照らし合わせずにリリースを作る）。失敗したジョブだけの再実行なら、もう一度照らし合わせる。人が判断する（版の取り下げなど） |
-  | `github-release` が失敗した | `github-release` だけを再実行する |
+  | `github-release` が失敗した | `github-release` だけを再実行する。代わりに手でリリースを作るときは、大きい版から Latest を奪わないよう、`gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" --notes-file <ノート> --latest=false` で作り、続けて `gh release edit <最大の vX.Y.Z のリリース> --latest` を流す |
   | 待っていたタグのジョブか公開のジョブが、同じ concurrency の group のあとのジョブに取り消された | 取り消された run を再実行する。最新のタグでなくなった版は公開しない（飛ぶ） |
   | latest の GitHub のリリースが、最大の版でない | どれかの `github-release` のジョブを再実行する（最後の手順が最大のリリースを latest にする）か、Latest を手で直す |
 
