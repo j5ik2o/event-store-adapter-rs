@@ -82,8 +82,9 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         ids = [item['id'] for item in job_steps(RELEASE, 'publish')]
         self.assertEqual(ids, [None, None, 'rust', 'download_verified', 'crate_check', 'release_gate_again',
                                'precheck_again', 'auth', 'publish'])
-        for step_id in ids[:7]:
-            self.assertIsNone(job_steps(RELEASE, 'publish')[ids.index(step_id)]['if'], step_id)
+        # 位置ごとに確かめる（ID の無い手順が2つあるので、ids.index(None) は先頭しか見ない。#375 の CodeRabbit の指摘）
+        for position, item in enumerate(job_steps(RELEASE, 'publish')[:7]):
+            self.assertIsNone(item['if'], f'{position}: {item["id"] or item["name"]}')
         for step_id in ('auth', 'publish'):
             self.assertEqual(step_by_id(RELEASE, 'publish', step_id)['if'],
                              "steps.precheck_again.outputs.action == 'publish'", step_id)
@@ -152,16 +153,20 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         # publish ジョブで取り寄せたディレクトリに触れるのは、取り寄せ（path:）と copy-lock だけ
         self.assertEqual(PUBLISH.count('/verified-crate'), 2)
 
-    def test_the_github_release_job_is_serialized_across_versions(self):
-        """#375 の CodeRabbit の指摘：Latest を決めてから作るまでに、ほかの版のリリースが作られない。"""
-        self.assertIn('\n    concurrency:\n      group: github-release\n      cancel-in-progress: false\n',
-                      job(RELEASE, 'github-release'))
-        self.assertEqual(RELEASE.count('group: github-release'), 1)
-        run = next(item for item in job_steps(RELEASE, 'github-release') if item['id'] == 'github_release')['run']
-        # リリースの一覧の読み直しとリモートのタグは、Latest を決める直前（ノートを書いたあと）
-        self.assertLess(run.index('printf'), run.rindex('gh api --paginate'))
-        self.assertLess(run.rindex('gh api --paginate'), run.index('git ls-remote --tags origin'))
-        self.assertLess(run.index('git ls-remote --tags origin'), run.index('gh release create'))
+    def test_the_github_release_job_is_not_replaced_and_fixes_latest_afterwards(self):
+        """#375 の CodeRabbit の指摘：concurrency の待っているジョブは置き換えられる（queue: max は actionlint 1.7.12 が
+        受け付けない）。concurrency を付けず、作るときは Latest にせず、作ったあとに最大の版を Latest にする。"""
+        release = job(RELEASE, 'github-release')
+        self.assertNotIn('concurrency:', release)
+        self.assertNotRegex(RELEASE, r'(?m)^ +queue:')
+        ids = [item['id'] for item in job_steps(RELEASE, 'github-release')]
+        self.assertEqual(ids, [None, None, 'github_release', 'latest_release'])
+        create = step_by_id(RELEASE, 'github-release', 'github_release')['run']
+        self.assertTrue(create.endswith('--notes-file "$NOTES" --latest=false'), create[-80:])
+        latest = step_by_id(RELEASE, 'github-release', 'latest_release')
+        self.assertIsNone(latest['if'])
+        self.assertIn('gh api --paginate', latest['run'])
+        self.assertIn('gh release edit "$LATEST_TAG" --repo "$GITHUB_REPOSITORY" --latest\n', latest['run'] + '\n')
 
     def test_the_publish_job_is_serialized(self):
         self.assertIn('\n    concurrency:\n      group: release-publish\n      cancel-in-progress: false\n', PUBLISH)
@@ -218,6 +223,10 @@ class ExpressionComparisonTest(unittest.TestCase):
             (False, '', True), (False, '0', True), (True, '1', True), (True, 'true', False), (None, '', True),
             (None, False, True), (1, '1', True), (1, '1.0', True), (0, 'x', False), ('x', 'X', True),
             ('true', 'false', False), (None, None, True), (True, True, True), (float('nan'), float('nan'), False),
+            # 文字列は JavaScript の Number() の規則（#375 の CodeRabbit の指摘）
+            (True, '0_1', False), (True, '0x1', True), (16, '0x10', True), (8, '0o10', True), (2, '0b10', True),
+            (1, ' 1 ', True), (1000, '1e3', True), (0, '-0', True), (True, '1.', True), (0, '.0', True),
+            (1, '+1', True), (1, '1x', False), (0, 'nan', False), (0, '0x', False),
         ]
         for left, right, equal in cases:
             with self.subTest(left=left, right=right):

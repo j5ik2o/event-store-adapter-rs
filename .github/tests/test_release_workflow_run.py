@@ -4,6 +4,7 @@
 OIDC と token が publish ジョブだけに届き、そこで cargo のビルドが動かないこと（I20）、package ジョブの成果物からは
 通常のファイルの Cargo.lock だけを使うこと（再レビュー N1）。
 """
+import hashlib
 import json
 import os
 import shutil
@@ -34,7 +35,6 @@ class ReleaseFixture:
         self.artifacts = {}
         self.count = 0
         self.tag_sha = None
-        self.after_checkout = None   # checkout のあとに作業の clone を変える（checkout のあとにリモートに入ったタグなど）
 
     def close(self):
         self.stub.close()
@@ -53,8 +53,6 @@ class ReleaseFixture:
         workspace = self.base / f'job-{self.count}-{name}'
         git(self.base, 'clone', '-q', str(self.history.origin), str(workspace))
         git(workspace, 'checkout', '-q', '--detach', tag)
-        if self.after_checkout:
-            self.after_checkout(workspace)
         temp = self.base / f'temp-{self.count}'
         temp.mkdir()
         home = self.base / f'home-{self.count}'
@@ -127,7 +125,8 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         self.assertTrue(results['github-release'].succeeded)
         [create] = self.fixture.gh_calls('release', 'create')
         self.assertEqual(create[2], 'v5.2.1')
-        self.assertIn('--latest', create)
+        self.assertIn('--latest=false', create)
+        self.assertEqual(self.latest_edits(), ['v5.2.1'])
         # OIDC と token は publish ジョブの cargo publish だけ。publish ジョブの cargo はビルドしない（I20）
         calls = self.fixture.cargo_calls()
         with_token = [call['args'] for call in calls if call['token']]
@@ -216,6 +215,10 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
                 results = fixture.release(step_env={'package': {'verify': {
                     'FAKE_BUILD_SCRIPT_WRITES': str(temp / 'verified-crate' / written)}}})
                 self.assertTrue(results['package'].succeeded, [s.stderr for s in results['package'].steps])
+                # 先に、成果物が本当に書き換わったことを確かめる（書き換えが起きなければ、この試験は空振り。#375 の CodeRabbit の指摘）
+                [stored] = fixture.artifacts.values()
+                recorded = results['package'].outputs['lock_sha256' if written == 'Cargo.lock' else 'sha256']
+                self.assertNotEqual(hashlib.sha256((stored / written).read_bytes()).hexdigest(), recorded)
                 if written == 'Cargo.lock':
                     self.assertEqual(results['publish'].outcome('crate_check'), 'failure')
                     self.assertFalse(results['publish'].auth_used)
@@ -309,29 +312,39 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         self.assertIn('--latest=false', create)
         self.assertIn('release notes from v5.2.0', results['github-release'].step('github_release').stdout)
 
-    def test_latest_is_decided_by_the_remote_tags_right_before_the_release(self):
-        """#375 の CodeRabbit の指摘：checkout のあとに新しいタグが入ったら、古い版を Latest にしない。"""
+    def latest_edits(self):
+        return [args[2] for args in self.fixture.gh_calls('release', 'edit') if '--latest' in args]
+
+    def test_an_older_release_created_later_leaves_the_greatest_latest(self):
+        """#375 の CodeRabbit の指摘（concurrency の置き換えを避ける (a)）：作ったあとに一覧を読み直し、最大の版を Latest にする。"""
         sha = self.fixture.release_commit()
         self.fixture.history.commit('feat: later')
         self.fixture.history.tag('v5.3.0')
+        self.fixture.releases.write_text('v5.2.0\nv5.3.0\n')
         self.fixture.stub.add('5.2.1', sha=sha)
-        self.fixture.after_checkout = lambda workspace: git(workspace, 'tag', '-d', 'v5.3.0')
         results = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}})
         self.assertTrue(results['github-release'].succeeded, [s.stderr for s in results['github-release'].steps])
         [create] = self.fixture.gh_calls('release', 'create')
         self.assertIn('--latest=false', create)
+        self.assertEqual(self.latest_edits(), ['v5.3.0'])
 
-    def test_the_release_list_is_read_again_right_before_the_release(self):
-        """#375 の CodeRabbit の指摘：Latest を決める直前に一覧を読み直す。あいだに作られていれば何もしない。"""
-        self.fixture.release_commit()
-        later = self.fixture.base / 'releases-later.txt'
-        later.write_text('v5.2.0\nv5.2.1\n')
-        results = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}},
-                                       step_env={'github-release': {'github_release': {
-                                           'FAKE_RELEASES_LATER': str(later)}}})
-        self.assertTrue(results['github-release'].succeeded, [s.stderr for s in results['github-release'].steps])
-        self.assertIn('already exists', results['github-release'].step('github_release').stdout)
-        self.assertFalse(self.fixture.gh_calls('release', 'create'))
+    def test_runs_in_any_order_end_with_the_greatest_release_latest(self):
+        """古い版の実行があとから動いても、最後に最大の版が Latest に戻る。"""
+        for order in (('v5.3.0', 'v5.2.1'), ('v5.2.1', 'v5.3.0')):
+            with self.subTest(order=order):
+                fixture = ReleaseFixture()
+                self.addCleanup(fixture.close)
+                self.fixture = fixture
+                fixture.release_commit()
+                fixture.release_commit(version='5.3.0')
+                for tag in order:
+                    results = fixture.release(tag=tag, start='github-release',
+                                              needs={'confirm': {'result': 'success', 'outputs': {}}})
+                    self.assertTrue(results['github-release'].succeeded,
+                                    [s.stderr for s in results['github-release'].steps])
+                self.assertEqual(sorted(args[2] for args in fixture.gh_calls('release', 'create')),
+                                 ['v5.2.1', 'v5.3.0'])
+                self.assertEqual(self.latest_edits()[-1], 'v5.3.0')
 
     def test_an_existing_release_is_left_alone_and_a_failed_listing_stops(self):
         self.fixture.release_commit()
@@ -339,10 +352,16 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         results = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}})
         self.assertTrue(results['github-release'].succeeded)
         self.assertFalse(self.fixture.gh_calls('release', 'create'))
+        # 再実行でも Latest は直す（何度動いても同じ結果）
+        self.assertEqual(self.latest_edits(), ['v5.2.1'])
         failing = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}},
                                        step_env={'github-release': {'github_release': {'FAKE_RELEASES_FAIL': '1'}}})
         self.assertEqual(failing['github-release'].outcome('github_release'), 'failure')
         self.assertFalse(self.fixture.gh_calls('release', 'create'))
+        failing = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}},
+                                       step_env={'github-release': {'latest_release': {'FAKE_RELEASES_FAIL': '1'}}})
+        self.assertEqual(failing['github-release'].outcome('latest_release'), 'failure')
+        self.assertEqual(self.latest_edits(), ['v5.2.1'])
 
 
 if __name__ == '__main__':

@@ -222,12 +222,17 @@ class TagReleaseTest(unittest.TestCase):
         base = history.commit('version up to v5.2.1', version='5.2.1')
         lowered = history.commit('chore: lower', version='5.2.0', files={'lib/src/lib.rs': 'pub fn f() { g() }\n'})
         last = history.commit('version up to v5.2.1', version='5.2.1')
-        # rebase の前の pull request のコミット（同じ木で、SHA が違う）
+        # rebase の前の pull request のコミット。同じ木で、コミットの日時を変えて SHA を違える
+        # （日時まで同じだと rebase のあとのコミットと同じ SHA になり、head が main に載ってしまう。#375 の CodeRabbit の指摘）
+        before_rebase = {'GIT_COMMITTER_DATE': '2026-11-26T00:00:00Z', 'GIT_AUTHOR_DATE': '2026-11-26T00:00:00Z'}
         first = git(history.work, 'commit-tree', git(history.work, 'rev-parse', f'{lowered}^{{tree}}'), '-p', base,
-                    '-m', 'chore: lower')
+                    '-m', 'chore: lower', env=before_rebase)
         head = git(history.work, 'commit-tree', git(history.work, 'rev-parse', f'{last}^{{tree}}'), '-p', first,
-                   '-m', 'version up to v5.2.1')
+                   '-m', 'version up to v5.2.1', env=before_rebase)
         git(history.work, 'push', '-q', 'origin', f'{head}:refs/pull/1/head')
+        self.assertNotEqual(first, lowered)
+        self.assertNotEqual(head, last)
+        self.assertEqual(git(history.origin, 'merge-base', last, head), base)
         self.assertEqual(git(history.origin, 'diff', '--name-only', base, head), 'lib/src/lib.rs')
         self.fixture.pulls.write_text(json.dumps([pull(last, head_sha=head, whole_diff=None)]))
         result = self.fixture.run_job('tag-release')

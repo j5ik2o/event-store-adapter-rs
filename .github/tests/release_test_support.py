@@ -256,7 +256,7 @@ class History:
                 git(self.work, 'commit', '-q', '--allow-empty', '-m', 'a pull request commit')
             head = self.head()
             git(self.work, 'checkout', '-q', current)
-        git(self.work, 'push', '-q', 'origin', f'{head}:refs/pull/{number}/head')
+        git(self.work, 'push', '-q', 'origin', f'+{head}:refs/pull/{number}/head')
         return head
 
     def tag(self, name, sha=None):
@@ -335,7 +335,7 @@ with open(os.environ['FAKE_LOG'], 'a') as log:
 
 FAKE_GH = r'''#!/usr/bin/env python3
 """偽の gh。commits/<sha>/pulls は FAKE_PULLS のファイル、pulls/<番号> はその中の同じ番号の最初の項目、
-releases は FAKE_RELEASES のファイル（1行に1つのタグ。FAKE_RELEASES_LATER があれば2回目から）。"""
+releases は FAKE_RELEASES のファイル（1行に1つのタグ。release create はそこにタグを足す）。"""
 import json, os, re, sys
 args = sys.argv[1:]
 with open(os.environ['FAKE_LOG'], 'a') as log:
@@ -348,13 +348,12 @@ elif args[:1] == ['api'] and re.search(r'/pulls/[0-9]+$', args[-1]):
 elif args[:1] == ['api'] and any(a.endswith('/releases') for a in args):
     if os.environ.get('FAKE_RELEASES_FAIL'):
         sys.exit('HTTP 502')
-    # FAKE_RELEASES_LATER があれば、2回目からの一覧はそのファイル（あいだにほかでリリースが作られた）
-    counter = os.environ['FAKE_LOG'] + '.releases'
-    calls = int(open(counter).read()) if os.path.exists(counter) else 0
-    open(counter, 'w').write(str(calls + 1))
-    later = os.environ.get('FAKE_RELEASES_LATER')
-    print(open(later if later and calls else os.environ['FAKE_RELEASES']).read(), end='')
+    print(open(os.environ['FAKE_RELEASES']).read(), end='')
 elif args[:2] == ['release', 'create']:
+    # 作ったリリースは、そのあとの一覧に出る
+    with open(os.environ['FAKE_RELEASES'], 'a') as releases:
+        releases.write(args[2] + '\n')
+elif args[:2] == ['release', 'edit']:
     pass
 elif args[:2] == ['pr', 'create']:
     print('https://github.com/o/r/pull/7')

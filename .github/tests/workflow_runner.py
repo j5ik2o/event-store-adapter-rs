@@ -180,20 +180,30 @@ def truthy(value):
     return value not in ('', 0, False, None)
 
 
+DECIMAL = re.compile(r'[+-]?(?:Infinity|(?:[0-9]+\.?[0-9]*|\.[0-9]+)(?:[eE][+-]?[0-9]+)?)')
+RADIX = {'0x': (re.compile(r'0[xX][0-9a-fA-F]+'), 16), '0o': (re.compile(r'0[oO][0-7]+'), 8),
+         '0b': (re.compile(r'0[bB][01]+'), 2)}
+
+
 def number(value):
-    """GitHub Actions の式の数値への変換（null は 0、true は 1、false は 0、空の文字列は 0、数でない文字列は NaN）。"""
+    """GitHub Actions の式の数値への変換（null は 0、true は 1、false は 0、空の文字列は 0、数でない文字列は NaN）。
+    文字列は JavaScript の Number() と同じ規則で読む：前後の空白を除き、10 進（指数と Infinity を含む）と、
+    0x・0o・0b の整数だけ。Python の float() と違い、'0_1' は NaN、'0x1' は 1（#375 の CodeRabbit の指摘）。"""
     if value is None:
         return 0
     if isinstance(value, bool):
         return int(value)
     if isinstance(value, (int, float)):
         return value
-    if value.strip() == '':
+    text = value.strip()
+    if text == '':
         return 0
-    try:
-        return float(value)
-    except ValueError:
-        return float('nan')
+    pattern, base = RADIX.get(text[:2].lower(), (None, None))
+    if pattern is not None and pattern.fullmatch(text):
+        return int(text[2:], base)
+    if DECIMAL.fullmatch(text):
+        return float(text.replace('Infinity', 'inf'))
+    return float('nan')
 
 
 def compare(left, operator, right):
