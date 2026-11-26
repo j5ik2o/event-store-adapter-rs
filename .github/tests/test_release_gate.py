@@ -130,10 +130,18 @@ class CheckCandidateTest(unittest.TestCase):
             'tag on another commit': candidate(tags={'v5.2.1': 'c' * 40}),
             'rust-version change': candidate(current=cargo_toml('5.2.1').replace('1.94.1', '1.95.0')),
             # #375 の CodeRabbit の指摘：rebase のマージでは、最後のコミットだけを見ても前のコミットの変更が分からない
-            'rebase with a source change': candidate(pulls=[pull(SHA, size=(2, 2, 1))]),
-            'rebase with a manifest change': candidate(pulls=[pull(SHA, size=(1, 2, 2))]),
-            'only the list item': candidate(pulls=[{k: v for k, v in pull(SHA).items()
-                                                    if k not in ('changed_files', 'additions', 'deletions')}]),
+            'whole diff with a source change': candidate(pulls=[pull(SHA, whole_diff={
+                'files': [VERSION_FILE, 'lib/src/lib.rs'], 'before': cargo_toml('5.2.0'), 'after': cargo_toml('5.2.1')})]),
+            'whole diff of another file only': candidate(pulls=[pull(SHA, whole_diff={
+                'files': ['lib/src/lib.rs'], 'before': cargo_toml('5.2.1'), 'after': cargo_toml('5.2.1')})]),
+            'whole diff with a manifest change': candidate(pulls=[pull(SHA, whole_diff={
+                'files': [VERSION_FILE], 'before': cargo_toml('5.2.0'),
+                'after': cargo_toml('5.2.1').replace('edition = "2021"', 'edition = "2024"')})]),
+            'whole diff to another version': candidate(pulls=[pull(SHA, whole_diff={
+                'files': [VERSION_FILE], 'before': cargo_toml('5.2.0'), 'after': cargo_toml('5.2.2')})]),
+            'whole diff without the version change': candidate(pulls=[pull(SHA, whole_diff={
+                'files': [VERSION_FILE], 'before': cargo_toml('5.2.1'), 'after': cargo_toml('5.2.1')})]),
+            'whole diff not read': candidate(pulls=[pull(SHA, whole_diff=None)]),
         }
         for label, value in cases.items():
             with self.subTest(label):

@@ -42,7 +42,8 @@ class ReleaseFixture:
 
     def release_commit(self, version='5.2.1', files=None):
         sha = self.history.commit(f'version up to v{version}', version=version, files=files)
-        self.pulls.write_text(json.dumps([pull(sha, ref=f'release/v{version}')]))
+        self.pulls.write_text(json.dumps([pull(sha, ref=f'release/v{version}', head_sha=self.history.pull_head(sha),
+                                               whole_diff=None)]))
         self.history.tag(f'v{version}')
         self.tag_sha = sha
         return sha
@@ -319,6 +320,18 @@ class ReleaseWorkflowRunTest(unittest.TestCase):
         self.assertTrue(results['github-release'].succeeded, [s.stderr for s in results['github-release'].steps])
         [create] = self.fixture.gh_calls('release', 'create')
         self.assertIn('--latest=false', create)
+
+    def test_the_release_list_is_read_again_right_before_the_release(self):
+        """#375 の CodeRabbit の指摘：Latest を決める直前に一覧を読み直す。あいだに作られていれば何もしない。"""
+        self.fixture.release_commit()
+        later = self.fixture.base / 'releases-later.txt'
+        later.write_text('v5.2.0\nv5.2.1\n')
+        results = self.fixture.release(start='github-release', needs={'confirm': {'result': 'success', 'outputs': {}}},
+                                       step_env={'github-release': {'github_release': {
+                                           'FAKE_RELEASES_LATER': str(later)}}})
+        self.assertTrue(results['github-release'].succeeded, [s.stderr for s in results['github-release'].steps])
+        self.assertIn('already exists', results['github-release'].step('github_release').stdout)
+        self.assertFalse(self.fixture.gh_calls('release', 'create'))
 
     def test_an_existing_release_is_left_alone_and_a_failed_listing_stops(self):
         self.fixture.release_commit()

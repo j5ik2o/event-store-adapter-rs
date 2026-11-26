@@ -28,9 +28,11 @@ import http.client as http_client  # 関数 http と名前がぶつからない�
 import json
 import os
 import re
+import socket
 import stat
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -184,23 +186,61 @@ class Deadline:
         return max(0.0, self.end - self.clock())
 
 
-def read_body(stream, deadline):
-    """本文を少しずつ読み、締め切りを過ぎたら TimeoutError。
-    urlopen の timeout は通信の1回ごとにかかるので、本文が少しずつ届くと、まとめて読む read() は締め切りを超えうる
-    （#375 の Devin と CodeRabbit の指摘）。超えるのは、最後の1回の通信の timeout までに限られる。"""
-    chunks = []
-    while chunk := stream.read(BODY_CHUNK):
-        chunks.append(chunk)
+def response_socket(response):
+    """応答の socket。CPython の http.client では、HTTPResponse.fp は socket.makefile('rb') の BufferedReader で、
+    その raw（SocketIO）が socket を持つ。HTTPError は fp に HTTPResponse を持つ。取れなければ None。"""
+    fp = getattr(response, 'fp', None)
+    raw = getattr(fp, 'raw', None)
+    sock = getattr(raw, '_sock', None)
+    return sock if isinstance(sock, socket.socket) else None
+
+
+def read_body(response, deadline, timeout):
+    """本文を読み、締め切りで打ち切る（過ぎたら TimeoutError）。
+
+    urlopen の timeout は通信の1回ごとにかかり、read(n) は n バイトそろうまで何度も受信するので、本文が少しずつ届くと
+    締め切りを超えて待つ（#375 の Devin と CodeRabbit の指摘）。そこで、
+    - 受信の前ごとに socket の timeout を締め切りの残りにし、read1（受信は1回）で読み、読むたびに締め切りを確かめる。
+    - chunked の長さの行のように1回の read1 の中で何度も受信する場合に備え、締め切りに socket を閉じる（shutdown）。
+      閉じたあとの受信は失敗し、照会の失敗になる。"""
+    sock = response_socket(response)
+    read = getattr(response, 'read1', None) or response.read
+    watchdog = None
+    if sock is not None:
+        watchdog = threading.Timer(max(deadline.remaining(), 0), shutdown, (sock,))
+        watchdog.daemon = True
+        watchdog.start()
+    try:
+        chunks = []
+        while True:
+            left = deadline.remaining()
+            if left <= 0:
+                raise TimeoutError('the deadline passed while reading the body')
+            if sock is not None and sock.fileno() >= 0:   # 本文を読み終えると http.client が socket を閉じる
+                sock.settimeout(min(timeout, left))
+            chunk = read(BODY_CHUNK)
+            if not chunk:
+                break
+            chunks.append(chunk)
         if deadline.remaining() <= 0:
             raise TimeoutError('the deadline passed while reading the body')
-    if deadline.remaining() <= 0:
-        raise TimeoutError('the deadline passed while reading the body')
-    return b''.join(chunks)
+        return b''.join(chunks)
+    finally:
+        if watchdog is not None:
+            watchdog.cancel()
+
+
+def shutdown(sock):
+    try:
+        sock.shutdown(socket.SHUT_RDWR)
+    except OSError:
+        pass
 
 
 def http(url, deadline, timeout=60, headers=None):
     """GET して Response を返す。接続の失敗、時間切れ、本文の途中の切断（IncompleteRead）は code=None。
-    締め切りの残りで照会を打ち切り、残りが無ければ照会しない。締め切りのあとに読み終えた応答は使わない。"""
+    締め切りの残りで照会を打ち切り、残りが無ければ照会しない。締め切りのあとに読み終えた応答は使わない。
+    接続と見出し（headers）の受信は、1回の通信ごとに締め切りの残りまで（本文は read_body が締め切りで切る）。"""
     left = deadline.remaining()
     if left <= 0:
         return Response(None)
@@ -208,11 +248,11 @@ def http(url, deadline, timeout=60, headers=None):
     try:
         try:
             with urllib.request.urlopen(request, timeout=min(timeout, left)) as response:
-                return Response(response.status, read_body(response, deadline))
+                return Response(response.status, read_body(response, deadline, timeout))
         except urllib.error.HTTPError as error:
             with error:
-                return Response(error.code, read_body(error, deadline))
-    except (urllib.error.URLError, http_client.HTTPException, TimeoutError, OSError):
+                return Response(error.code, read_body(getattr(error, 'fp', None) or error, deadline, timeout))
+    except (urllib.error.URLError, http_client.HTTPException, TimeoutError, OSError, ValueError):
         return Response(None)
 
 

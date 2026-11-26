@@ -79,14 +79,22 @@ def outputs(path):
     return dict(line.split('=', 1) for line in path.read_text().splitlines() if line)
 
 
-def pull(sha, ref='release/v5.2.1', repo=REPOSITORY, merged=True, base='main', number=1, size=(1, 1, 1)):
-    """GET pulls/<番号> の応答の形。size は pull request の全体の (changed_files, additions, deletions)。"""
-    changed_files, additions, deletions = size
-    return {
+def pull(sha, ref='release/v5.2.1', repo=REPOSITORY, merged=True, base='main', number=1, head_sha=None,
+         whole_diff='default'):
+    """GET pulls/<番号> の応答の形に、release-gate-inputs.sh が git で足す whole_diff（全体の差分）を加えたもの。
+    whole_diff の既定は、5.2.0 から ref の版（release/vX.Y.Z）へ版だけを替える差分。None なら付けない。"""
+    if whole_diff == 'default':
+        after = ref.removeprefix('release/v') if ref.startswith('release/v') else '5.2.1'
+        whole_diff = {'files': [VERSION_FILE], 'before': cargo_toml(FIXTURE_VERSION), 'after': cargo_toml(after)}
+    value = {
         'number': number, 'merged_at': '2026-11-27T00:00:00Z' if merged else None,
-        'merge_commit_sha': sha, 'base': {'ref': base}, 'head': {'ref': ref, 'repo': {'full_name': repo}},
-        'changed_files': changed_files, 'additions': additions, 'deletions': deletions,
+        'merge_commit_sha': sha, 'base': {'ref': base},
+        'head': {'ref': ref, 'sha': head_sha or 'f' * 40, 'repo': {'full_name': repo}},
+        'changed_files': 1, 'additions': 1, 'deletions': 1,
     }
+    if whole_diff is not None:
+        value['whole_diff'] = whole_diff
+    return value
 
 
 def cargo_toml(version=FIXTURE_VERSION, extra=''):
@@ -229,6 +237,28 @@ class History:
         git(self.work, 'push', '-q', 'origin', 'main')
         return self.head()
 
+    def pull_head(self, merged, number=1, commits=None):
+        """merged（main に入った squash のコミット）の pull request の head を作り、refs/pull/<番号>/head に push する。
+        既定は、merged の親から merged と同じ木を持つ1つのコミット（squash の前の版上げのブランチ）。
+        commits を渡すと、merged の親から {ファイル: 中身} を順に積んだコミットを head にする。head の SHA を返す。"""
+        parent = git(self.work, 'rev-parse', f'{merged}^')
+        if commits is None:
+            tree = git(self.work, 'rev-parse', f'{merged}^{{tree}}')
+            head = git(self.work, 'commit-tree', tree, '-p', parent, '-m', 'the version branch')
+        else:
+            current = git(self.work, 'rev-parse', '--abbrev-ref', 'HEAD')
+            git(self.work, 'checkout', '-q', '--detach', parent)
+            for files in commits:
+                for name, text in files.items():
+                    (self.work / name).parent.mkdir(parents=True, exist_ok=True)
+                    (self.work / name).write_text(text)
+                git(self.work, 'add', '-A')
+                git(self.work, 'commit', '-q', '--allow-empty', '-m', 'a pull request commit')
+            head = self.head()
+            git(self.work, 'checkout', '-q', current)
+        git(self.work, 'push', '-q', 'origin', f'{head}:refs/pull/{number}/head')
+        return head
+
     def tag(self, name, sha=None):
         git(self.work, 'tag', '-a', name, sha or self.head(), '-m', name)
         git(self.work, 'push', '-q', 'origin', f'refs/tags/{name}')
@@ -305,7 +335,7 @@ with open(os.environ['FAKE_LOG'], 'a') as log:
 
 FAKE_GH = r'''#!/usr/bin/env python3
 """偽の gh。commits/<sha>/pulls は FAKE_PULLS のファイル、pulls/<番号> はその中の同じ番号の最初の項目、
-releases は FAKE_RELEASES のファイル（1行に1つのタグ）。"""
+releases は FAKE_RELEASES のファイル（1行に1つのタグ。FAKE_RELEASES_LATER があれば2回目から）。"""
 import json, os, re, sys
 args = sys.argv[1:]
 with open(os.environ['FAKE_LOG'], 'a') as log:
@@ -318,7 +348,12 @@ elif args[:1] == ['api'] and re.search(r'/pulls/[0-9]+$', args[-1]):
 elif args[:1] == ['api'] and any(a.endswith('/releases') for a in args):
     if os.environ.get('FAKE_RELEASES_FAIL'):
         sys.exit('HTTP 502')
-    print(open(os.environ['FAKE_RELEASES']).read(), end='')
+    # FAKE_RELEASES_LATER があれば、2回目からの一覧はそのファイル（あいだにほかでリリースが作られた）
+    counter = os.environ['FAKE_LOG'] + '.releases'
+    calls = int(open(counter).read()) if os.path.exists(counter) else 0
+    open(counter, 'w').write(str(calls + 1))
+    later = os.environ.get('FAKE_RELEASES_LATER')
+    print(open(later if later and calls else os.environ['FAKE_RELEASES']).read(), end='')
 elif args[:2] == ['release', 'create']:
     pass
 elif args[:2] == ['pr', 'create']:

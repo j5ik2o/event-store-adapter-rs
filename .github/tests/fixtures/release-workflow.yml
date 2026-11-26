@@ -255,6 +255,11 @@ jobs:
     needs: confirm
     if: always() && needs.confirm.result == 'success'
     runs-on: ubuntu-latest
+    # GitHub のリリースを作るのは、版をまたいでこのジョブだけ・1本ずつ。Latest を決めてから作るまでのあいだに、
+    # ほかの版のリリースが作られない（#375 の CodeRabbit の指摘）。待っているジョブは、同じグループの後のジョブに置き換えられる
+    concurrency:
+      group: github-release
+      cancel-in-progress: false
     permissions:
       contents: write
     steps:
@@ -301,7 +306,13 @@ jobs:
           printf '%s' "$LOG" | python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py "$SERVER_URL" "$GITHUB_REPOSITORY" >> "$NOTES"
           # 古い版のリリースをあとから作るとき、それを Latest にしない（最大の正式版のタグのときだけ --latest）。
           # 作る直前に、checkout のときのタグではなくリモートのタグで決める（#375 の CodeRabbit の指摘）。
-          # このあとに新しいタグが入っても、その版の実行が自分のリリースを --latest で作る
+          # リリースを作るジョブは1本ずつなので、ここから作るまでにほかの版のリリースは作られない。このあとに新しいタグが
+          # 入っても、その版の github-release はこのジョブのあとに動き、自分のリリースを --latest で作る
+          RELEASED=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[].tag_name')
+          if grep -qxF "$RELEASE_TAG" <<< "$RELEASED"; then
+            echo "the GitHub release ${RELEASE_TAG} already exists"
+            exit 0
+          fi
           REMOTE_TAGS=$(git ls-remote --tags origin)
           LATEST_TAG=$(printf '%s\n' "$REMOTE_TAGS" | cut -f 2 | sed -e 's#^refs/tags/##' -e 's#\^{}$##' \
             | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)

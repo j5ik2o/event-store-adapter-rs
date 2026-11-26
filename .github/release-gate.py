@@ -170,12 +170,24 @@ def merged_from(pull, candidate, branch):
     )
 
 
-def only_the_version_line(pull):
-    """pull request の全体（GET pulls/<番号> の changed_files・additions・deletions）が、1つのファイルの1行の置き換えか。
+def whole_pull_is_the_version(pull, after):
+    """pull request の全体の差分（release-gate-inputs.sh が git で求めた、マージの基点から head まで）が、
+    lib/Cargo.toml の [package] の版を after に替えることだけか。
+
     rebase のマージでは、最後のコミットも親が1つで merge_commit_sha に一致し、前のコミットの変更は候補のコミットの
-    差分に現れない（#375 の CodeRabbit の指摘）。全体が1行の置き換えなら、候補のコミット（版の行だけを替える）が
-    pull request の変更のすべて。"""
-    return pull.get('changed_files') == 1 and pull.get('additions') == 1 and pull.get('deletions') == 1
+    差分に現れない。変更の件数だけでは、途中で版を下げてほかのファイルを変え、最後に戻す pull request を見分けられない
+    （#375 の CodeRabbit の指摘）。全体の差分そのものを、候補のコミットと同じ規則（P5）で確かめる。"""
+    diff = pull.get('whole_diff')
+    if not isinstance(diff, dict) or diff.get('files') != [VERSION_FILE]:
+        return False
+    before_text, after_text = diff.get('before'), diff.get('after')
+    if not isinstance(before_text, str) or not isinstance(after_text, str):
+        return False
+    try:
+        return (locate_version(after_text).version == after and locate_version(before_text).version != after
+                and set_version(before_text, after) == after_text)
+    except GateError:
+        return False
 
 
 def approved_release(candidate, before, after):
@@ -203,10 +215,10 @@ def approved_release(candidate, before, after):
         raise GateError(
             f'{candidate.sha} is not the squash merge of a pull request from {candidate.repository}:{branch} into main; '
             'restore the version with a pull request')
-    if not only_the_version_line(merged[0]):
+    if not whole_pull_is_the_version(merged[0], after):
         raise GateError(
-            f'the pull request #{merged[0].get("number")} must change only the version line of {VERSION_FILE} '
-            'as a whole; restore the version with a pull request')
+            f'the pull request #{merged[0].get("number")} as a whole must change only the version in {VERSION_FILE} '
+            f'to {after}; restore the version with a pull request')
     tag = f'v{after}'
     newest = latest_tag([name for name in candidate.tags if name != tag])
     if newest and version <= parse(newest[1:]):

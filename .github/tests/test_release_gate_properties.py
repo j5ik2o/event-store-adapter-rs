@@ -137,6 +137,19 @@ class OrderProperties(unittest.TestCase):
             self.assertEqual(semver.Version.parse(latest[1:]), semver.Version.parse(expected[1:]))
 
 
+def whole_ok(diff, after):
+    """pull request の全体の差分が、版の行を after に替えることだけか（関門と別に、tomllib と行の置き換えで書く）。"""
+    if not diff or diff['files'] != [VERSION_FILE] or diff['before'] is None or diff['after'] is None:
+        return False
+    try:
+        old = tomllib.loads(diff['before'])['package']['version']
+        new = tomllib.loads(diff['after'])['package']['version']
+    except Exception:
+        return False
+    return (new == after and old != after
+            and diff['before'].replace(f'version = "{old}"', f'version = "{after}"', 1) == diff['after'])
+
+
 def oracle(candidate, mode, requested):
     """関門と別に書いた、通る条件（P1・P2）。通るならタグ名、何もしないなら None、拒否なら 'refuse'。"""
     try:
@@ -157,7 +170,7 @@ def oracle(candidate, mode, requested):
           and len([p for p in candidate.pulls if p['merged_at'] and p['merge_commit_sha'] == SHA
                    and p['base']['ref'] == 'main' and p['head']['ref'] == f'release/v{after}'
                    and p['head']['repo'] and p['head']['repo']['full_name'] == REPOSITORY]) == 1
-          and all((p.get('changed_files'), p.get('additions'), p.get('deletions')) == (1, 1, 1)
+          and all(whole_ok(p.get('whole_diff'), after)
                   for p in candidate.pulls if p['merge_commit_sha'] == SHA and p['merged_at']
                   and p['head']['ref'] == f'release/v{after}')
           and all(semver.Version.parse(after) > other for other in others))
@@ -177,7 +190,8 @@ def candidates(draw):
     parent = cargo_toml(before)
     current = cargo_toml(target)
     changed = [VERSION_FILE]
-    pulls = [pull(SHA, ref=f'release/v{target}')]
+    whole = {'files': [VERSION_FILE], 'before': parent, 'after': current}
+    pulls = [pull(SHA, ref=f'release/v{target}', whole_diff=whole)]
     tags = {f'v{major - 1}.0.0': 'b' * 40, 'v0.1.0': 'c' * 40}
     on_main, parents = True, 1
     for change in draw(st.lists(st.integers(0, 12), max_size=3)):
@@ -190,7 +204,7 @@ def candidates(draw):
         elif change == 3:
             current = current.replace('edition = "2021"', 'edition = "2024"')
         elif change == 4:
-            pulls = pulls + [pull(SHA, ref=f'release/v{target}')]
+            pulls = pulls + [pull(SHA, ref=f'release/v{target}', whole_diff=whole)]
         elif change == 5:
             pulls = [pull(SHA, ref=f'release/v{target}', repo='someone/r')]
         elif change == 6:
@@ -207,9 +221,13 @@ def candidates(draw):
         elif change == 11:
             pulls = []
         else:
-            # rebase のマージ：最後のコミットは版だけでも、pull request の全体はほかも変える
-            pulls = [pull(SHA, ref=f'release/v{target}',
-                          size=draw(st.sampled_from([(2, 2, 1), (1, 2, 2), (1, 1, 0), (0, 0, 0)])))]
+            # rebase のマージ：最後のコミットは版だけでも、pull request の全体はほかも変える（#375 の CodeRabbit の反例を含む）
+            files = draw(st.sampled_from([[VERSION_FILE], [VERSION_FILE, 'lib/src/lib.rs'], ['lib/src/lib.rs'], []]))
+            whole_before = draw(st.sampled_from([parent, current, cargo_toml(before).replace('# FR8.3', '# FR8.4')]))
+            whole_after = draw(st.sampled_from([current, parent, cargo_toml(f'{major}.{minor}.{patch + 2}'),
+                                                current.replace('edition = "2021"', 'edition = "2024"')]))
+            whole = draw(st.sampled_from([{'files': files, 'before': whole_before, 'after': whole_after}, None]))
+            pulls = [pull(SHA, ref=f'release/v{target}', whole_diff=whole)]
     candidate = gate.Candidate(REPOSITORY, SHA, parent, current, tuple(changed), tuple(pulls), tags, on_main, parents)
     requested = draw(st.sampled_from([f'v{target}', f'v{target}', 'v0.0.1']))
     return candidate, requested

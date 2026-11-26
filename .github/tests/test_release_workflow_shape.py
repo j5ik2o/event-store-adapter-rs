@@ -152,6 +152,17 @@ class ReleaseWorkflowShapeTest(unittest.TestCase):
         # publish ジョブで取り寄せたディレクトリに触れるのは、取り寄せ（path:）と copy-lock だけ
         self.assertEqual(PUBLISH.count('/verified-crate'), 2)
 
+    def test_the_github_release_job_is_serialized_across_versions(self):
+        """#375 の CodeRabbit の指摘：Latest を決めてから作るまでに、ほかの版のリリースが作られない。"""
+        self.assertIn('\n    concurrency:\n      group: github-release\n      cancel-in-progress: false\n',
+                      job(RELEASE, 'github-release'))
+        self.assertEqual(RELEASE.count('group: github-release'), 1)
+        run = next(item for item in job_steps(RELEASE, 'github-release') if item['id'] == 'github_release')['run']
+        # リリースの一覧の読み直しとリモートのタグは、Latest を決める直前（ノートを書いたあと）
+        self.assertLess(run.index('printf'), run.rindex('gh api --paginate'))
+        self.assertLess(run.rindex('gh api --paginate'), run.index('git ls-remote --tags origin'))
+        self.assertLess(run.index('git ls-remote --tags origin'), run.index('gh release create'))
+
     def test_the_publish_job_is_serialized(self):
         self.assertIn('\n    concurrency:\n      group: release-publish\n      cancel-in-progress: false\n', PUBLISH)
         self.assertNotIn('concurrency', job(RELEASE, 'package'))

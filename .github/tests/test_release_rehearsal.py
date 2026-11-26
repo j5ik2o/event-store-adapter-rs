@@ -193,7 +193,8 @@ class TagReleaseTest(unittest.TestCase):
 
     def test_the_squash_of_a_version_pull_request_is_tagged(self):
         sha = self.fixture.history.commit('version up to v5.2.1 (#9)', version='5.2.1')
-        self.fixture.pulls.write_text(json.dumps([pull(sha)]))
+        head = self.fixture.history.pull_head(sha)
+        self.fixture.pulls.write_text(json.dumps([pull(sha, head_sha=head, whole_diff=None)]))
         result = self.fixture.run_job('tag-release')
         self.assertTrue(result.succeeded, [s.stderr for s in result.steps])
         self.assertEqual(git(self.fixture.history.origin, 'rev-parse', 'refs/tags/v5.2.1^{commit}'), sha)
@@ -205,12 +206,35 @@ class TagReleaseTest(unittest.TestCase):
         fixture = BumpFixture(push_tag='false')
         self.addCleanup(fixture.close)
         sha = fixture.history.commit('version up to v5.2.1 (#9)', version='5.2.1')
-        fixture.pulls.write_text(json.dumps([pull(sha)]))
+        head = fixture.history.pull_head(sha)
+        fixture.pulls.write_text(json.dumps([pull(sha, head_sha=head, whole_diff=None)]))
         result = fixture.run_job('tag-release')
         self.assertTrue(result.succeeded, [s.stderr for s in result.steps])
         self.assertEqual(result.outcome('tag_summary'), 'success')
         self.assertEqual(result.outcome('release_tag'), 'skipped')
         self.assertEqual(git(fixture.history.origin, 'tag', '-l', 'v5.2.1'), '')
+
+    def test_a_rebase_that_lowers_the_version_and_changes_another_file_is_not_tagged(self):
+        """#375 の CodeRabbit の反例。main は 5.2.1（タグなし）。pull request は、版を 5.2.0 に下げてほかのファイルの
+        1行を変え、最後に 5.2.1 に戻す。rebase のマージで main に積まれ、最後のコミットは版だけを上げる。
+        全体の件数は (1, 1, 1) だが、全体の差分は lib/src/lib.rs だけなので拒否する。"""
+        history = self.fixture.history
+        base = history.commit('version up to v5.2.1', version='5.2.1')
+        lowered = history.commit('chore: lower', version='5.2.0', files={'lib/src/lib.rs': 'pub fn f() { g() }\n'})
+        last = history.commit('version up to v5.2.1', version='5.2.1')
+        # rebase の前の pull request のコミット（同じ木で、SHA が違う）
+        first = git(history.work, 'commit-tree', git(history.work, 'rev-parse', f'{lowered}^{{tree}}'), '-p', base,
+                    '-m', 'chore: lower')
+        head = git(history.work, 'commit-tree', git(history.work, 'rev-parse', f'{last}^{{tree}}'), '-p', first,
+                   '-m', 'version up to v5.2.1')
+        git(history.work, 'push', '-q', 'origin', f'{head}:refs/pull/1/head')
+        self.assertEqual(git(history.origin, 'diff', '--name-only', base, head), 'lib/src/lib.rs')
+        self.fixture.pulls.write_text(json.dumps([pull(last, head_sha=head, whole_diff=None)]))
+        result = self.fixture.run_job('tag-release')
+        self.assertEqual(result.outcome('release_tag'), 'skipped')
+        self.assertEqual(git(history.origin, 'tag', '-l', 'v5.2.1'), '')
+        self.assertIn('as a whole must change only the version', result.step('tag_summary').stderr
+                      + result.step('tag_summary').stdout + ''.join(s.stderr for s in result.steps))
 
     def test_other_changes_of_lib_cargo_toml_are_not_tagged(self):
         cases = {
@@ -226,7 +250,8 @@ class TagReleaseTest(unittest.TestCase):
                 fixture = BumpFixture()
                 self.addCleanup(fixture.close)
                 sha = fixture.history.commit(message, files={VERSION_FILE: text})
-                fixture.pulls.write_text(json.dumps([pull(sha, ref=ref)]))
+                fixture.pulls.write_text(json.dumps([pull(sha, ref=ref, head_sha=fixture.history.pull_head(sha),
+                                                          whole_diff=None)]))
                 result = fixture.run_job('tag-release')
                 self.assertEqual(result.outcome('release_tag'), 'skipped', label)
                 self.assertEqual(git(fixture.history.origin, 'tag', '-l', 'v5.2.1'), '')

@@ -4,7 +4,10 @@ import os
 import subprocess
 import sys
 import tempfile
+import threading
+import time
 import unittest
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from unittest import mock
 
@@ -122,8 +125,13 @@ class SlowBodyTest(unittest.TestCase):
         reads = []
 
         class Slow:
+            closed = False
+
             def __init__(self):
                 self.status = status
+
+            def close(self):
+                self.closed = True
 
             def __enter__(self):
                 return self
@@ -164,13 +172,82 @@ class SlowBodyTest(unittest.TestCase):
         slow, reads = self.trickle(clock, [b'x'] * 1000, 1.0, status=404)
 
         def raising(request, timeout):
-            error = crates.urllib.error.HTTPError('http://127.0.0.1:9/x', 404, 'Not Found', {}, None)
-            error.read = slow.read
-            raise error
+            raise crates.urllib.error.HTTPError('http://127.0.0.1:9/x', 404, 'Not Found', {}, slow)
         deadline = crates.Deadline(10, lambda: clock[0])
         with mock.patch.object(crates.urllib.request, 'urlopen', raising):
             self.assertEqual(crates.http('http://127.0.0.1:9/x', deadline), crates.Response(None))
         self.assertEqual(len(reads), 10)
+
+
+class TrickleServer:
+    """少しずつ送り続ける本物の HTTP サーバー（127.0.0.1 のスレッド）。mode は
+    'length'（200、Content-Length つきの本文を 1 バイトずつ）、'error'（404 で同じ）、
+    'chunked'（200、chunked の長さの行を 1 文字ずつ。1回の read1 の中で何度も受信させる）。"""
+
+    def __init__(self, mode, every=0.05, total=8.0):
+        stop = self.stop = threading.Event()
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                count = int(total / every)
+                self.send_response(404 if mode == 'error' else 200)
+                if mode == 'chunked':
+                    self.send_header('Transfer-Encoding', 'chunked')
+                else:
+                    self.send_header('Content-Length', str(count))
+                self.end_headers()
+                self.wfile.flush()
+                try:
+                    if mode == 'chunked':
+                        self.wfile.write(b'1;')
+                    for _ in range(count):
+                        if stop.wait(every):
+                            return
+                        self.wfile.write(b'x')
+                        self.wfile.flush()
+                except OSError:
+                    pass
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/x'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.stop.set()
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class TrickleTest(unittest.TestCase):
+    """#375 の CodeRabbit の再指摘：read(65536) は1回の呼び出しの中で何度も受信するので、mock では待ちを再現できない。
+    本物の HTTP サーバーが少しずつ送り続けても、http は締め切り（1 秒）で打ち切る。"""
+
+    def setUp(self):
+        self.no_proxy = mock.patch.dict(os.environ, {'no_proxy': LOOPBACK, 'NO_PROXY': LOOPBACK})
+        self.no_proxy.start()
+        self.addCleanup(self.no_proxy.stop)
+
+    def test_a_trickling_body_is_cut_at_the_deadline(self):
+        for mode in ('length', 'error', 'chunked'):
+            with self.subTest(mode):
+                server = TrickleServer(mode)
+                self.addCleanup(server.close)
+                started = time.monotonic()
+                result = crates.http(server.url, crates.Deadline(1.0))
+                elapsed = time.monotonic() - started
+                self.assertEqual(result, crates.Response(None))
+                self.assertLess(elapsed, 2.5, mode)
+
+    def test_a_body_that_arrives_in_time_is_read(self):
+        server = TrickleServer('length', every=0.01, total=0.2)
+        self.addCleanup(server.close)
+        self.assertEqual(crates.http(server.url, crates.Deadline(10)), crates.Response(200, b'x' * 20))
 
 
 class ConfirmTest(StubTest):
