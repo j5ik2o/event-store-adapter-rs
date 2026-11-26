@@ -6,7 +6,7 @@ import sys
 import tempfile
 import unittest
 
-SCRIPT = Path(__file__).with_name("semver-level.py")
+SCRIPT = Path(__file__).resolve().parents[1] / "semver-level.py"
 spec = importlib.util.spec_from_file_location("semver_level", SCRIPT)
 semver = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(semver)
@@ -74,7 +74,7 @@ class SemverLevelTest(unittest.TestCase):
             git("init", "-q")
             git("-c", "user.name=Test", "-c", "user.email=test@example.com", "commit", "--allow-empty", "-q",
                 "-m", "perf: improve speed", "-m", "Details with\ttabs.\n\nBREAKING-CHANGE: replace API\nMore details.")
-            workflow = SCRIPT.with_name("workflows") / "lib-bump-version.yml"
+            workflow = SCRIPT.parent / "workflows" / "lib-bump-version.yml"
             filters = re.findall(r"--grep='([^']+)'", workflow.read_text())[:2]
             for pattern in filters:
                 for subject, body in (

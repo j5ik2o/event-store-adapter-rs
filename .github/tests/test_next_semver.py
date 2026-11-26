@@ -3,7 +3,7 @@ import subprocess
 import sys
 import unittest
 
-SCRIPT = Path(__file__).with_name("next-semver.py")
+SCRIPT = Path(__file__).resolve().parents[1] / "next-semver.py"
 
 
 def next_semver(tag, level):
@@ -37,6 +37,21 @@ class NextSemverTest(unittest.TestCase):
             with self.subTest(level=level):
                 result = next_semver("v3.0.6", level)
                 self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ""))
+
+    def test_two_digit_majors_keep_all_their_digits(self):
+        """event-store-adapter-scala#934 の指摘：`.*v?(\\d+…)` は v10.2.0 を 0.2.0 と読んだ。"""
+        for tag, level, expected in (("v10.2.0", "minor", "10.3.0\n"), ("v10.2.3", "patch", "10.2.4\n"),
+                                     ("v10.2.3", "major", "11.0.0\n"), ("v123.4.5", "minor", "123.5.0\n")):
+            with self.subTest(tag=tag, level=level):
+                result = next_semver(tag, level)
+                self.assertEqual((result.returncode, result.stdout, result.stderr), (0, expected, ""))
+
+    def test_a_tag_that_is_not_semver_fails(self):
+        for tag in ("v5.2", "release-5.2.0", "v05.2.0"):
+            with self.subTest(tag=tag):
+                result = next_semver(tag, "patch")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertEqual(result.stdout, "")
 
 
 if __name__ == "__main__":

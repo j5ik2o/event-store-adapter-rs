@@ -4,7 +4,7 @@ import subprocess
 import sys
 import unittest
 
-SCRIPT = Path(__file__).with_name("validate-version.py")
+SCRIPT = Path(__file__).resolve().parents[1] / "validate-version.py"
 spec = importlib.util.spec_from_file_location("validate_version", SCRIPT)
 validate = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(validate)
