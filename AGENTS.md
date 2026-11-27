@@ -42,7 +42,7 @@ DynamoDB と Bigtable の保存先、移行、利用例、DynamoDB と Bigtable 
 ## コミットとプルリクエスト指針
 Git 履歴は Conventional Commits の形式（`feat: ...`、`fix: ...`、`chore(deps): ...` など）が主流で、リリースコミットは `version up to vX.Y.Z` です。新機能には `feat:`、バグ修正には `fix:` を用い、範囲の広い変更は `refactor:` または `perf:` を検討してください。プルリクエストでは概要、動機、テスト結果、影響範囲を箇条書きで示し、関連 Issue を `Closes #123` 形式でリンクします。レビュアーが再現できる `Steps to verify` を明記することで、レビュー時間を短縮できます。
 
-版上げとリリースは workflow で行います。`lib-bump-version.yml` は手動起動（`workflow_dispatch`）だけで動きます。`lib/Cargo.toml` の版が pre-release のときは、`major` の指定だけを受け付けます。入力 `version`（任意。`X.Y.Z`）を指定すると、`level` とこの制限を使わずにその版へ上げます。その版は、既存の `v*` タグの最大より大きく、同じ名前のタグがないものに限ります。`lib-release.yml` は、`v*.*.*` 形式と pre-release 形式のタグの push で起動し、タグと `lib/Cargo.toml` の版が一致することを確かめてから公開します。
+版上げとリリースは workflow で行います。`lib-bump-version.yml` の手動起動（`workflow_dispatch`）は、`main` へ直接 push せず、版だけの pull request を開きます。`lib/Cargo.toml` の版が pre-release のときは、`major` の指定だけを受け付けます。入力 `version`（任意。`X.Y.Z`）を指定すると、`level` とこの制限を使わずにその版へ上げます。その版は、既存の `v*` タグの最大より大きく、同じ名前のタグがないものに限ります。その pull request をマージした `main` への `lib/Cargo.toml` の push で、`lib-bump-version.yml` のタグのジョブがタグ `vX.Y.Z` を打ちます。`lib-release.yml` は、`vX.Y.Z` のタグだけで起動し（pre-release のタグでは起動しません）、関門と crates.io の事前の確認を通ってから公開し、sparse index に版が出たのを確かめてから GitHub のリリースを作ります。
 
 ## セキュリティと設定のヒント
 AWS 認証情報は、通常の AWS 設定（`~/.aws/credentials` や環境変数）から読み込まれます（`migration-cli` も同じです）。`.env` やソースコードに平文で保存しないでください。試験は、ダミーの資格情報で DynamoDB Local へ接続します。CI や Renovate が生成するブランチと衝突させないよう、手動アップデート時は先に Issue を立てて計画を共有しましょう。
