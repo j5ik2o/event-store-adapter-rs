@@ -285,9 +285,7 @@ def http(url, deadline, timeout=60, headers=None):
 
     worker = threading.Thread(target=run, daemon=True)
     worker.start()
-    remaining = deadline.remaining()
-    if remaining > 0:
-        worker.join(remaining)
+    worker.join(max(0.0, deadline.remaining()))
     result = outcome[0] if outcome else Response(None)   # 締め切りまでに終わらなければ照会の失敗
     if isinstance(result, BaseException):
         raise result
