@@ -94,7 +94,7 @@ async fn should_persist_event_keep_the_calling_runtime_thread_free_while_waiting
   let fixture = Fixture::new().await;
   fixture.proxy.delay_responses();
 
-  let (result, stall) = measure_caller_stall(fixture.store.persist_event(event(1))).await;
+  let (result, stall) = measure_caller_stall("persist_event", fixture.store.persist_event(event(1))).await;
 
   result.unwrap();
   assert_caller_not_blocked("persist_event", &stall);
@@ -106,6 +106,7 @@ async fn should_persist_event_and_snapshot_keep_the_calling_runtime_thread_free_
   fixture.proxy.delay_responses();
 
   let (result, stall) = measure_caller_stall(
+    "persist_event_and_snapshot",
     fixture
       .store
       .persist_event_and_snapshot(event(1), SnapshotEnvelope::new(1, 1)),
@@ -123,7 +124,11 @@ async fn should_get_events_keep_the_calling_runtime_thread_free_while_waiting_fo
   fixture.store.persist_event(event(2)).await.unwrap();
   fixture.proxy.delay_responses();
 
-  let (result, stall) = measure_caller_stall(fixture.store.get_events_by_id_since_seq_nr(&Id, 1)).await;
+  let (result, stall) = measure_caller_stall(
+    "get_events_by_id_since_seq_nr",
+    fixture.store.get_events_by_id_since_seq_nr(&Id, 1),
+  )
+  .await;
 
   assert_eq!(result.unwrap(), vec![event(1), event(2)]);
   assert_caller_not_blocked("get_events_by_id_since_seq_nr", &stall);
@@ -139,7 +144,11 @@ async fn should_get_latest_snapshot_keep_the_calling_runtime_thread_free_while_w
     .unwrap();
   fixture.proxy.delay_responses();
 
-  let (result, stall) = measure_caller_stall(fixture.store.get_latest_snapshot_by_id(&Id)).await;
+  let (result, stall) = measure_caller_stall(
+    "get_latest_snapshot_by_id",
+    fixture.store.get_latest_snapshot_by_id(&Id),
+  )
+  .await;
 
   let read = result.unwrap().expect("ヘッドがある");
   assert_eq!(

@@ -4,12 +4,16 @@
 //!   別のスレッドのランタイムで動くので、試験のスレッドが塞がれても、中継は止まらない。
 //! - [`measure_caller_stall`] は、current_thread のランタイムで操作を待つ間に、同じスレッドの別のタスクが
 //!   予定より遅れて動いた最長の時間を測る。操作が同期で待てば、その間ほかのタスクは動けず、遅れが大きくなる。
+//!   操作が [`OPERATION_DEADLINE`] までに終わらなければ（同じランタイムを同期で塞いだまま戻らないなど）、
+//!   ランタイムの外のスレッドが操作の名前を出して、試験のプロセスを失敗で終える。
 
 #![allow(dead_code)]
 
 use std::future::Future;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
+use std::io::Write;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -21,6 +25,8 @@ pub const RESPONSE_DELAY: Duration = Duration::from_millis(300);
 pub const STALL_LIMIT: Duration = Duration::from_millis(150);
 /// 別のタスクが眠る間隔。
 const TICK: Duration = Duration::from_millis(10);
+/// 1 つの操作を待つ上限。超えたら、操作が呼び出し元のランタイムを塞いだまま戻らないとみなす。
+pub const OPERATION_DEADLINE: Duration = Duration::from_secs(30);
 
 /// 保存先からの応答を、読み取りごとに遅らせて中継する。遅れは [`SlowProxy::delay_responses`] で切り替える。
 pub struct SlowProxy {
@@ -111,36 +117,61 @@ pub struct CallerStall {
   pub longest_delay: Duration,
 }
 
-/// current_thread のランタイムで `operation` を待ち、その間に同じスレッドの別のタスクが遅れた最長の時間を測る。
+/// current_thread のランタイムで `operation`（名前は `name`）を待ち、その間に同じスレッドの別のタスクが遅れた
+/// 最長の時間を測る。
 ///
-/// 操作が終わったあとも少し待つ。操作の最後の部分が同期で待っても、その遅れを数えるためである。
-pub async fn measure_caller_stall<F: Future>(operation: F) -> (F::Output, CallerStall) {
+/// 別のタスクは、眠りの遅れを記録してから止める合図を見る。操作のあとに合図を送り、そのタスクの終わりを待って
+/// から読むので、操作の最後の部分が同期で待っても、その遅れを数え損なわない（固定の時間の待ちで順序を仮定しない）。
+/// 操作が [`OPERATION_DEADLINE`] までに終わらなければ、ランタイムの外のスレッドが `name` を出してプロセスを終える。
+pub async fn measure_caller_stall<F: Future>(name: &str, operation: F) -> (F::Output, CallerStall) {
   assert_eq!(
     Handle::current().runtime_flavor(),
     RuntimeFlavor::CurrentThread,
     "試験の前提: スレッドが 1 つのランタイムで測る"
   );
-  let longest = Arc::new(Mutex::new(Duration::ZERO));
+  let stop = Arc::new(AtomicBool::new(false));
   let ticker = tokio::spawn({
-    let longest = longest.clone();
+    let stop = stop.clone();
     async move {
+      let mut longest = Duration::ZERO;
       loop {
         let started = Instant::now();
         tokio::time::sleep(TICK).await;
-        let late = started.elapsed().saturating_sub(TICK);
-        let mut longest = longest.lock().unwrap();
-        *longest = (*longest).max(late);
+        longest = longest.max(started.elapsed().saturating_sub(TICK));
+        if stop.load(Ordering::SeqCst) {
+          return longest;
+        }
       }
     }
   });
   tokio::task::yield_now().await;
+  let finished = watch_deadline(name);
   let started = Instant::now();
   let output = operation.await;
   let elapsed = started.elapsed();
-  tokio::time::sleep(TICK * 3).await;
-  ticker.abort();
-  let longest_delay = *longest.lock().unwrap();
+  drop(finished);
+  stop.store(true, Ordering::SeqCst);
+  let longest_delay = ticker.await.expect("遅れを測るタスクは最後まで動く");
   (output, CallerStall { elapsed, longest_delay })
+}
+
+/// ランタイムの外のスレッドで、返した送り手が落とされるのを [`OPERATION_DEADLINE`] まで待つ。間に合わなければ、
+/// `name` を出して試験のプロセスを失敗（終了コード 101）で終える。呼び出し元のランタイムが塞がれていると、
+/// その中の時間切れは動かないためである。
+fn watch_deadline(name: &str) -> mpsc::Sender<()> {
+  let (finished, watched) = mpsc::channel::<()>();
+  let name = name.to_owned();
+  std::thread::spawn(move || {
+    if let Err(RecvTimeoutError::Timeout) = watched.recv_timeout(OPERATION_DEADLINE) {
+      // eprintln! は試験の出力として捕まえられ、終えると捨てられるので、標準エラーへじかに書く
+      let _ = writeln!(
+        std::io::stderr(),
+        "{name} が {OPERATION_DEADLINE:?} 以内に戻らない（呼び出し元のランタイムを塞いだままの疑い）"
+      );
+      std::process::exit(101);
+    }
+  });
+  finished
 }
 
 /// 遅らせた応答を待つ間も、別のタスクが [`STALL_LIMIT`] を超えて遅れないことを確かめる。
