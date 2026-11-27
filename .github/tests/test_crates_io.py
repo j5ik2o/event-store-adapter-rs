@@ -250,6 +250,125 @@ class TrickleTest(unittest.TestCase):
         self.assertEqual(crates.http(server.url, crates.Deadline(10)), crates.Response(200, b'x' * 20))
 
 
+class CutServer:
+    """本文の途中で接続を閉じる本物の HTTP サーバー（127.0.0.1 のスレッド）。mode は
+    'length'（Content-Length より短く送って閉じる）、'chunked'（終わりの 0 の塊を送らずに閉じる）。
+    送る部分は、それだけで読める JSON にする（切れたことに気づかないと、誤った判定になりうる形）。"""
+
+    SENT = b'{"version": {}}'
+
+    def __init__(self, mode, status=200):
+        sent = self.SENT
+
+        class Handler(BaseHTTPRequestHandler):
+            protocol_version = 'HTTP/1.1'
+
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                self.send_response(status)
+                if mode == 'chunked':
+                    self.send_header('Transfer-Encoding', 'chunked')
+                    self.end_headers()
+                    self.wfile.write(b'%x\r\n%s\r\n' % (len(sent), sent))
+                else:
+                    self.send_header('Content-Length', str(len(sent) + 10))
+                    self.end_headers()
+                    self.wfile.write(sent)
+                self.wfile.flush()
+                self.close_connection = True
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/x'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class CutBodyTest(unittest.TestCase):
+    """#380（java の event-store-adapter-java#871 の Devin の指摘と同じ穴）：read1 は、Content-Length に足りないまま
+    閉じた本文でも例外を投げずに b'' を返す。受け取った部分を Response(200, 切れた本文) にせず、照会の失敗にする。
+    rs の http は締め切りを必ず持つ（precheck 600 秒・confirm 1800 秒が既定）ので、短い締め切りと、待ちに効かない
+    長い締め切りの両方で確かめる。"""
+
+    def setUp(self):
+        self.no_proxy = mock.patch.dict(os.environ, {'no_proxy': LOOPBACK, 'NO_PROXY': LOOPBACK})
+        self.no_proxy.start()
+        self.addCleanup(self.no_proxy.stop)
+
+    def test_a_body_shorter_than_its_content_length_is_a_failed_query(self):
+        for status in (200, 404):
+            for seconds in (5.0, 3600.0):
+                with self.subTest(status=status, deadline=seconds):
+                    server = CutServer('length', status)
+                    self.addCleanup(server.close)
+                    self.assertEqual(crates.http(server.url, crates.Deadline(seconds)), crates.Response(None))
+
+    def test_a_chunked_body_without_its_last_chunk_is_a_failed_query(self):
+        for status in (200, 404):
+            for seconds in (5.0, 3600.0):
+                with self.subTest(status=status, deadline=seconds):
+                    server = CutServer('chunked', status)
+                    self.addCleanup(server.close)
+                    self.assertEqual(crates.http(server.url, crates.Deadline(seconds)), crates.Response(None))
+
+
+class SlowHeaderServer:
+    """見出し（status line と headers）を 1 バイトずつ送り続ける本物の HTTP サーバー。1回の受信ごとの timeout は
+    毎回満たされるので、urlopen は見出しを読み終えるまで戻らない。"""
+
+    def __init__(self, every=0.05, total=8.0):
+        stop = self.stop = threading.Event()
+        head = b'HTTP/1.1 200 OK\r\n' + b''.join(b'X-Slow-%d: x\r\n' % index for index in range(int(total / every)))
+
+        class Handler(BaseHTTPRequestHandler):
+            def log_message(self, *args):
+                pass
+
+            def do_GET(self):
+                try:
+                    for byte in head:
+                        if stop.wait(every):
+                            return
+                        self.wfile.write(bytes([byte]))
+                        self.wfile.flush()
+                except OSError:
+                    pass
+
+        self.server = ThreadingHTTPServer(('127.0.0.1', 0), Handler)
+        self.server.daemon_threads = True
+        self.url = f'http://127.0.0.1:{self.server.server_address[1]}/x'
+        threading.Thread(target=self.server.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.stop.set()
+        self.server.shutdown()
+        self.server.server_close()
+
+
+class SlowHeaderTest(unittest.TestCase):
+    """java の event-store-adapter-java#871 の CodeRabbit の指摘と同じ穴：urlopen の timeout は1回の受信ごとなので、
+    見出しが少しずつ届くと締め切りを超えて待つ。http は締め切り（1 秒）までしか待たない。"""
+
+    def setUp(self):
+        self.no_proxy = mock.patch.dict(os.environ, {'no_proxy': LOOPBACK, 'NO_PROXY': LOOPBACK})
+        self.no_proxy.start()
+        self.addCleanup(self.no_proxy.stop)
+
+    def test_trickling_headers_are_cut_at_the_deadline(self):
+        server = SlowHeaderServer()
+        self.addCleanup(server.close)
+        started = time.monotonic()
+        result = crates.http(server.url, crates.Deadline(1.0))
+        elapsed = time.monotonic() - started
+        self.assertEqual(result, crates.Response(None))
+        self.assertLess(elapsed, 2.5)
+
+
 class WatchdogTest(unittest.TestCase):
     def test_a_socket_that_cannot_be_shut_down_fails_the_query(self):
         """締め切りに socket を閉じられなかったら、握りつぶさずにその照会を時間切れにする。"""
