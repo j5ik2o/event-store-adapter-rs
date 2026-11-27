@@ -257,7 +257,7 @@ jobs:
     runs-on: ubuntu-latest
     # concurrency は付けない。待っているジョブが同じグループの後のジョブに置き換えられ、公開した版のリリースが
     # 作られないことがある（#375 の CodeRabbit の指摘）。置き換えない `queue: max` は actionlint 1.7.12 が受け付けない。
-    # Latest は、作ったあとの手順が一覧を読み直して直す（何度動いても同じ結果）
+    # Latest は、作ったあとの手順が一覧を読み直して直す（一覧に最大の版が反映されている限り、何度動いても同じ結果。ずれたときは一覧への反映の後に最大の版を Latest にし直す）
     permissions:
       contents: write
     steps:
@@ -313,7 +313,8 @@ jobs:
         run: |
           set -o pipefail
           # リリースを作ったあとに一覧を読み直し、最大の正式版（vX.Y.Z）のリリースを Latest にする。版の違う実行が
-          # 同時にこの手順を動かない限り、最大の版が Latest になる（何度動いても同じ結果。#375 の CodeRabbit の指摘）。
+          # 同時にこの手順を動かず、一覧に最大の版が反映されている限り、最大の版が Latest になる（何度動いても同じ結果。#375 の CodeRabbit の指摘）。
+          # ずれたときは、一覧への反映の後に、最大の版を Latest にし直す（latest_release の手順の再実行か gh release edit --latest）。
           # 作った直後のリリースが一覧にまだ出ないことがあるので、前の手順で作った（またはあった）RELEASE_TAG を足して選ぶ
           RELEASED=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases" --jq '.[] | select(.draft | not) | .tag_name')
           LATEST_TAG=$(printf '%s\n%s\n' "$RELEASED" "$RELEASE_TAG" \
