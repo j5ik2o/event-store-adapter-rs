@@ -42,14 +42,14 @@ Some files in this repository are pinned copies or data from the hub. CI compare
 - Formatting: use nightly rustfmt. The settings are in `rustfmt.toml` (`tab_spaces = 2`, `max_width = 120`). Install nightly if you do not have it.
 - API surface check: `cargo test -p event-store-adapter-api-surface-rs` and `cargo test --workspace` need the nightly of a fixed date, because the check builds rustdoc JSON with it.
 - Docker: the tests of the DynamoDB, Spanner, and Bigtable storages, the migration, the example, and the conformance runs for DynamoDB, Spanner, and Bigtable start containers with dockertest, so Docker must be running. They use DynamoDB Local 3.3.1, the Spanner emulator 1.5.58 (`gcr.io/cloud-spanner-emulator/emulator`), and the Bigtable emulator (google-cloud-cli 587.0.0-emulators), all pinned by digest. The tests connect to DynamoDB Local with a dummy region and dummy credentials, and to the two emulators without credentials. The Spanner tests create a new database for each test, and the conformance run for Spanner drops each scene's database after the scene. The Memory and SQLite tests do not need Docker. The test utilities pull each digest-pinned image by its full digest on first use and tag a local alias, so the first run needs network access to the registry.
-- Python 3: `tools/user-docs/check.py` and `tools/conformance/manifest.py` use only the standard library. The tests in `.github/test_*.py` need the `semver` package. CI uses Python 3.15. `tools/user-docs/check.py` requires Python 3.10 or later.
+- Python 3: `tools/user-docs/check.py` and `tools/conformance/manifest.py` use only the standard library. The tests in `.github/tests/` need the packages in `.github/tests/requirements.txt` (`semver` and `hypothesis`), `git`, and `bash`; the scripts that the release workflows run use only the standard library. CI uses Python 3.15. `tools/user-docs/check.py` requires Python 3.10 or later.
 - actionlint: CI installs it with `go install` (Go 1.27) and runs it on the workflow files.
 - cargo-deny: it audits the dependencies with the settings in `deny.toml`.
 
 ```sh
 rustup install nightly
 rustup toolchain install nightly-2026-09-27 --profile minimal
-pip install semver
+pip install -r .github/tests/requirements.txt
 go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
 ```
 
@@ -60,7 +60,8 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on a daily schedule, a
 | Job | What it checks | Docker |
 |:--|:--|:--|
 | `lint` | The conformance data, the SHA-256 values of the pinned files, `tools/user-docs/check.py`, and nightly rustfmt | No |
-| `release-control` | The tests of the release scripts in `.github/` and actionlint | No |
+| `release-control` | The tests of the release scripts and workflows in `.github/tests/` (unit tests, Hypothesis properties, and local runs of the two release workflows) and actionlint | No |
+| `release-model` | The Quint model of the release path (`.github/quint/run-quint.sh ci`) | No |
 | `test-lib` | All tests of the library with all features | Yes |
 | `test-conformance-migration` | The tests of the conformance runner and the migration CLI with all features | Yes |
 | `api-surface` | The shape of the public API, with the pinned nightly | No |
@@ -68,7 +69,7 @@ CI (`.github/workflows/ci.yml`) runs on pushes to `main`, on a daily schedule, a
 | `clippy` | Clippy with warnings denied for the same eight feature sets | No |
 | `conformance` | The conformance test data for each storage: `memory`, `dynamodb`, `sqlite`, `spanner`, and `bigtable` | `dynamodb`, `spanner`, and `bigtable` only |
 | `audit` | `cargo deny check advisories licenses` | No |
-| `CI Success` | Collects `lint`, `test-lib`, `test-conformance-migration`, `api-surface`, `feature-matrix`, `clippy`, `release-control`, and `conformance`. It does not include `audit` | No |
+| `CI Success` | Collects `lint`, `test-lib`, `test-conformance-migration`, `api-surface`, `feature-matrix`, `clippy`, `release-control`, `release-model`, `conformance`, and `aislop`. It does not include `audit` | No |
 
 Representative local commands based on CI are listed below. The complete commands and all feature combinations are in [the CI workflow](.github/workflows/ci.yml); the feature-matrix and clippy configurations are also described below. `cargo +nightly fmt --all -- --check` is the form that `AGENTS.md` gives for the `cargo fmt -- --check` that the `lint` job runs with the nightly toolchain. The `audit` job runs `cargo deny check advisories licenses` through the cargo-deny action.
 
@@ -84,7 +85,8 @@ cargo test -p event-store-adapter-conformance-rs -p event-store-adapter-migratio
 cargo test -p event-store-adapter-api-surface-rs
 cargo clippy --workspace --all-targets --all-features -- -D warnings
 cargo run -p event-store-adapter-conformance-rs --release -- --backend memory --data conformance --report conformance-report-memory.json --require-all
-python3 -m unittest discover -s .github -p 'test_*.py' -v
+python3 -m unittest discover -s .github/tests -p 'test_*.py' -v
+bash .github/quint/run-quint.sh ci
 actionlint -shellcheck=''
 cargo deny check advisories licenses
 ```
@@ -116,7 +118,29 @@ cargo test --workspace --all-features
 - Write the commit messages and the pull request titles in the Conventional Commits form. The types are `build`, `ci`, `feat`, `fix`, `docs`, `style`, `refactor`, `perf`, `test`, `revert`, and `chore`, and `BREAKING CHANGE` is also recognized. A `!` right after the type, or `BREAKING CHANGE:` or `BREAKING-CHANGE:` in the body, means a major bump. `feat` and `revert` mean a minor bump. The other types mean a patch bump.
 - Pull requests are merged by squash only, so the title of a pull request becomes one line of the release notes.
 - In a pull request, describe the summary, the motivation, the test results, and the scope of the impact, link the related issue as `Closes #123`, and add `Steps to verify` that a reviewer can reproduce.
-- Version bump: the `lib-bump-version` workflow runs only when started by hand (`workflow_dispatch`). The input `level` is one of `auto`, `patch`, `minor`, and `major`. When the input `version` is not given and the version in `lib/Cargo.toml` is a pre-release, only `major` is accepted. The optional input `version` (`X.Y.Z`) bumps to that version without using `level` or this restriction; the version must be greater than the greatest existing `v*` tag, and no tag of the same name may exist. The workflow runs `cargo set-version`, commits `version up to vX.Y.Z`, pushes the tag, and creates a GitHub Release with generated release notes.
-- Release: the `lib-release` workflow starts when a tag of the form `vX.Y.Z` or `vX.Y.Z-*` is pushed. It checks that the tag matches the version in `lib/Cargo.toml`, authenticates with `rust-lang/crates-io-auth-action`, and runs `cargo publish -p event-store-adapter-rs`.
+- Version bump: start the `lib-bump-version` workflow by hand (`workflow_dispatch`). It never pushes to `main`. It creates the branch `release/vX.Y.Z` with one commit `version up to vX.Y.Z` that changes only the version in `lib/Cargo.toml`, opens a pull request from it, and starts `Check unresolved comments` for that pull request. The input `level` is one of `auto`, `patch`, `minor`, and `major`. With `auto`, the level comes from the Conventional Commits since the latest release tag `vX.Y.Z`, as above; when no such commit exists, nothing is released. An explicit `level` bumps even without such commits. When the input `version` is not given and the version in `lib/Cargo.toml` is a pre-release, only `major` is accepted. The optional input `version` (`X.Y.Z`) bumps to that version without using `level` or this restriction; the version must be greater than the greatest existing `v*` tag, and no tag of the same name may exist. In every case the next version must be greater than the version in `lib/Cargo.toml` (a version pull request may be merged and not yet tagged). The input `rehearsal` opens a draft pull request titled `(rehearsal, do not merge)`; close it and delete its branch.
+- Release: merge the version pull request by squash when the release should go out. The push of `lib/Cargo.toml` to `main` starts the job `Tag the merged version`, which runs the release gate (`.github/release-gate.py`) and pushes the tag `vX.Y.Z` only when the merged commit is the squash of a pull request from `release/vX.Y.Z` of this repository, changes only the version in `lib/Cargo.toml` (every other byte of the file stays the same, comments included), and raises the version above every release tag. The pull request as a whole (from its merge base to its head) must also change only that version to the same value, so a rebase merge cannot carry other changes in earlier commits. The tag starts the `lib-release` workflow (the file name and the name stay, because the crates.io trusted publishing is bound to them). Only tags `vX.Y.Z` start it; pre-release tags are not published.
+  1. `package` (no secrets, no OIDC): the release gate again, the four versions (the gate, TOML, `cargo metadata`, the tag) must agree, and the precheck on crates.io (`.github/crates-io.py precheck`). Then `cargo generate-lockfile` and `cargo package --no-verify --locked`, which resolve the dependencies without running their code, and the step records the SHA-256 of `Cargo.lock` and of the `.crate` before anything is built. Then `cargo package --locked` runs the verification build (the build scripts and procedural macros of the dependencies run here). The `.crate` and `Cargo.lock` go to the artifact `verified-crate-<attempt>`.
+  2. `publish` (the only job with `id-token: write`, one at a time): it takes from the artifact only a regular `Cargo.lock` whose SHA-256 equals the one recorded before the build, packages the crate again with `--no-verify --locked` (no build), and checks that its SHA-256 equals the one recorded before the build. Then the release gate and the precheck run again, right before it authenticates with `rust-lang/crates-io-auth-action` and runs `cargo publish --no-verify --locked`. Nothing is built in this job, and every action is pinned by its commit SHA.
+  3. `confirm`: waits up to 30 minutes until the sparse index (`index.crates.io`) serves the version. When this run uploaded the crate, the checksums of the index and of the crates.io API must equal the verified SHA-256. When the version was already on crates.io (the `published` path), nothing is compared: the precheck identified the upload by its trusted publishing data (this repository and the tag commit), and a crate packaged again later with a newly resolved `Cargo.lock` can differ byte for byte.
+  4. `github-release`: creates the GitHub release (not marked latest), with notes from the previous release tag that has a GitHub release. Then it reads the list of releases again and marks the greatest release `vX.Y.Z` latest (`gh release edit --latest`). It adds its own tag to that list, because a release just created may not be listed yet. Unless the runs of two versions reach this step at the same time, the greatest release ends up latest, however often the job runs. The job has no concurrency group: a waiting job in a group is replaced by a later one (the replacing `queue: max` is not accepted by actionlint 1.7.12), and the replaced version would get no release. When they do, the older one may read the list before the newer release exists and mark itself latest after the newer run did. Re-running any `github-release` job, or setting Latest by hand, corrects it.
+- The precheck reads the crates.io API and does not read a failed query as "not there". When the version is already on crates.io, it continues without publishing only when crates.io records that trusted publishing from this repository at the tagged commit published it (`trustpub_data`); otherwise it stops.
+- When a release stops:
+
+  | What happened | What to do |
+  |:--|:--|
+  | `Tag the merged version` failed because no pull request is associated with the commit yet | Re-run the failed job |
+  | The release gate refused the merged commit (the tag job or `package`) | Nothing is tagged or published. Restore the version with a pull request, then start `lib-bump-version` again |
+  | A query of crates.io or GitHub failed | Re-run the failed jobs |
+  | The precheck stopped: the version is yanked, it was published by hand or from another commit, or crates.io has a greater version | A person decides. Do not publish by hand |
+  | `publish` failed before `cargo publish` (the gate, the precheck, the artifact, the `.crate` check, the cargo version, the authentication) | Re-run the failed jobs. If the artifact cannot be read or the cargo version differs, re-run all jobs |
+  | `publish` failed after `cargo publish` was accepted | Re-run the failed jobs. The precheck reads the version as published from this commit and does not publish again |
+  | `confirm` timed out | Re-run only `confirm` (and then `github-release`). Do not publish again |
+  | `confirm` found a checksum that differs from the verified crate | Do not create the release, and do not re-run all jobs or push the tag again: that run takes the `published` path, which does not compare checksums, and creates the release. Re-running only the failed jobs compares again. A person decides (for example, yank the version) |
+  | `github-release` failed | Re-run only `github-release`. To create the release by hand instead, do not take Latest from a greater version: run `gh release create vX.Y.Z --verify-tag --title "Release vX.Y.Z" --notes-file <notes> --latest=false`, then `gh release edit <the greatest release vX.Y.Z> --latest` |
+  | A waiting tag job or publish job was cancelled by a later one in the same concurrency group | Re-run the cancelled run. A version that is no longer the latest tag is not published (it is skipped) |
+  | The GitHub release marked latest is not the greatest version | Re-run any `github-release` job (its last step marks the greatest release latest), or set Latest by hand |
+
+- Do not push tags by hand, and do not create tags on commits before this release path (`v5.2.0` at `35b83b6` or earlier): such a commit still runs its old `lib-release.yml`, which has no release gate. Do not publish to crates.io from a local machine. Change the version only through the pull request of `lib-bump-version`.
 - Dependency updates: Renovate opens pull requests whose titles start with `chore(deps):`. It merges minor, patch, pin, and digest updates and updates of devDependencies automatically. It does not update `takt` and `rustdoc-types`.
 - When CI fails on `main`, the `main-ci-failure` workflow opens an issue with the label `ci-failure-on-main`, or adds a comment to the open one. A later successful run closes the issue.

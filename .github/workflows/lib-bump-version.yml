@@ -1,5 +1,13 @@
 name: lib-bump-version
+# 版上げは main へ直接 push しない（GH006）。枝 release/vX.Y.Z に lib/Cargo.toml の版だけのコミットを作り、PR を開く。
+# PR を squash でマージすると、tag-release のジョブが関門を通ったときだけタグを打ち、タグが lib-release.yml を動かす。
+# 設計：設計の追記 design-r6.md（event-store-adapter-scala の bump-version.yml 48e4256 を写し、版上げの規則は rs のまま）。
 on:
+  push:
+    branches:
+      - main
+    paths:
+      - lib/Cargo.toml
   workflow_dispatch:
     inputs:
       level:
@@ -17,35 +25,49 @@ on:
         type: string
         required: false
         default: ''
+      rehearsal:
+        description: 'Open a draft pull request titled "rehearsal, do not merge" (close it without merging)'
+        type: boolean
+        required: true
+        default: false
+# タグのジョブがタグを push するかどうか。'true' を許すのは、lib-release.yml が正本（.github/tests/fixtures/release-workflow.yml）と
+# 同じで、関門を持つときだけ（.github/tests/test_release_workflow_shape.py が確かめる）。
+# 公開を止めるときは 'false' にする PR をマージする。'false' の間、タグのジョブは打つはずのタグを job summary に書いて終わる。
+env:
+  PUSH_RELEASE_TAG: 'true'
 jobs:
   bump-version:
+    name: Open the version pull request
+    if: github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
-    env:
-      PACKAGE_ID: event-store-adapter-rs
+    permissions:
+      contents: read
+      actions: write
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-          persist-credentials: true
-          token: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
-      - uses: baptiste0928/cargo-install@8195d4f734a149db85385bb4102b42efcd373759 # v3
-        with:
-          crate: cargo-edit
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: '3.15'
+      - run: pip install semver
       - name: Refuse a non-major bump while the version is a pre-release
+        id: prerelease
         if: inputs.version == ''
         env:
           REQUESTED_LEVEL: ${{ inputs.level }}
         run: |
-          CURRENT_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("lib/Cargo.toml", "rb"))["package"]["version"])')
+          CURRENT_VERSION=$(python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py read-version)
           echo "CURRENT_VERSION=$CURRENT_VERSION"
           if [[ "$CURRENT_VERSION" == *-* && "$REQUESTED_LEVEL" != "major" ]]; then
             echo "::error::lib/Cargo.toml has the pre-release version $CURRENT_VERSION; only level=major may bump it (requested: $REQUESTED_LEVEL)"
             exit 1
           fi
-      - run: pip install semver
+          # 版が pre-release なら、次の版はその核（X.Y.Z）にする。基点は最新のタグ（正式の版だけ）ではなく今の版（#375 の CodeRabbit の指摘）
+          if [[ "$CURRENT_VERSION" == *-* ]]; then
+            echo "base=v${CURRENT_VERSION}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Validate the requested version
         id: requested_version
         if: inputs.version != ''
@@ -58,83 +80,225 @@ jobs:
           echo "value=$VERSION" >> "$GITHUB_OUTPUT"
       - id: defines
         run: |
-          LATEST_TAG=$(git describe --abbrev=0 --tags)
+          set -o pipefail
+          LATEST_TAG=$(git tag -l 'v*' | python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py latest-tag)
+          if [[ -z "$LATEST_TAG" ]]; then
+            echo "::error::no release tag vX.Y.Z exists"
+            exit 1
+          fi
           echo "LATEST_TAG=$LATEST_TAG"
-          echo "package_id=$PACKAGE_ID" >> $GITHUB_OUTPUT
-          echo "prev_tag=$LATEST_TAG" >> $GITHUB_OUTPUT
+          echo "prev_tag=$LATEST_TAG" >> "$GITHUB_OUTPUT"
+      # 件数と level は rs の今の規則（設計 §5）：Conventional Commits の型のコミットを数える。明示の level なら件数が 0 でも上げる
       - name: Calculate changes from the latest tag to HEAD
         id: changes
+        env:
+          PREV_TAG: ${{ steps.defines.outputs.prev_tag }}
         run: |
-          COUNT=$(git log ${{ steps.defines.outputs.prev_tag }}..HEAD --pretty=format:"%s" \
-            --no-merges -P --grep='^(BREAKING CHANGE|BREAKING-CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?!?:' \
-            | awk 'END{print NR}')
+          set -o pipefail
+          # git log の失敗をパイプの中で失わないよう、先に変数へ受ける（set -e で止まる）
+          LOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s" \
+            --no-merges -P --grep='^(BREAKING CHANGE|BREAKING-CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?!?:')
+          COUNT=$(printf '%s' "$LOG" | awk 'END{print NR}')
           echo "COUNT=$COUNT"
-          echo "count=$COUNT" >> $GITHUB_OUTPUT
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
       - name: Calculate semver level
         id: semver_level
+        if: inputs.version == '' && (steps.changes.outputs.count > 0 || inputs.level != 'auto')
         env:
           REQUESTED_LEVEL: ${{ inputs.level }}
+          PREV_TAG: ${{ steps.defines.outputs.prev_tag }}
         run: |
+          set -o pipefail
           if [[ "$REQUESTED_LEVEL" != "auto" ]]; then
             echo "value=$REQUESTED_LEVEL" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          SEMVER_LEVEL=$(git log ${{ steps.defines.outputs.prev_tag }}..HEAD --pretty=format:"%s%x1f%b%x1e" \
-            --no-merges -P --grep='^(BREAKING CHANGE|BREAKING-CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?!?:' \
-            | python3 "${GITHUB_WORKSPACE}"/.github/semver-level.py)
+          LOG=$(git log "${PREV_TAG}..HEAD" --pretty=format:"%s%x1f%b%x1e" \
+            --no-merges -P --grep='^(BREAKING CHANGE|BREAKING-CHANGE|build|ci|feat|fix|docs|style|refactor|perf|test|revert|chore)(\(.*\))?!?:')
+          SEMVER_LEVEL=$(printf '%s' "$LOG" | python3 "${GITHUB_WORKSPACE}"/.github/semver-level.py)
           echo "SEMVER_LEVEL=$SEMVER_LEVEL"
-          echo "value=$SEMVER_LEVEL" >> $GITHUB_OUTPUT
-        if: inputs.version == '' && (steps.changes.outputs.count > 0 || inputs.level != 'auto')
+          echo "value=$SEMVER_LEVEL" >> "$GITHUB_OUTPUT"
       - name: Get the next version
         id: versions
+        if: inputs.version != '' || steps.semver_level.outputs.value != ''
         env:
           REQUESTED_VERSION: ${{ steps.requested_version.outputs.value }}
+          PREV_TAG: ${{ steps.defines.outputs.prev_tag }}
+          PRERELEASE_BASE: ${{ steps.prerelease.outputs.base }}
+          SEMVER_LEVEL: ${{ steps.semver_level.outputs.value }}
         run: |
+          set -o pipefail
           if [[ -n "$REQUESTED_VERSION" ]]; then
             NEXT_VERSION="$REQUESTED_VERSION"
           else
-            NEXT_VERSION=$(echo ${{ steps.defines.outputs.prev_tag }} | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py ${{ steps.semver_level.outputs.value }})
+            NEXT_VERSION=$(echo "${PRERELEASE_BASE:-$PREV_TAG}" | python3 "${GITHUB_WORKSPACE}"/.github/next-semver.py "$SEMVER_LEVEL")
           fi
+          # 今の lib/Cargo.toml の版より大きいこと（マージ済みでまだタグの無い版上げがあると、最新のタグより大きくても下げる PR になる）
+          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check-next "$NEXT_VERSION"
           echo "NEXT_VERSION=$NEXT_VERSION"
-          echo "next_version=$NEXT_VERSION" >> $GITHUB_OUTPUT
-          echo "next_tag=v$NEXT_VERSION" >> $GITHUB_OUTPUT
-        if: inputs.version != '' || steps.semver_level.outputs.value != ''
-      - name: bump version
+          echo "next_version=$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+          echo "next_tag=v$NEXT_VERSION" >> "$GITHUB_OUTPUT"
+      - name: Report that nothing is released
+        if: steps.versions.outputs.next_version == ''
         run: |
-          cargo set-version -p ${{ steps.defines.outputs.package_id }} ${{ steps.versions.outputs.next_version }}
-        if: inputs.version != '' || steps.semver_level.outputs.value != ''
-      - name: git commit & push
-        id: git_commit_push
+          echo "::notice::no commit since the latest tag matches the Conventional Commits types and level is auto; nothing to release (set level or version to bump anyway)"
+      - name: Check that the version branch is free
+        id: version_branch
+        if: steps.versions.outputs.next_version != ''
+        env:
+          NEXT_TAG: ${{ steps.versions.outputs.next_tag }}
         run: |
+          BRANCH="release/${NEXT_TAG}"
+          if git ls-remote --exit-code --heads origin "refs/heads/${BRANCH}" > /dev/null; then
+            echo "::error::branch ${BRANCH} already exists; merge or close its pull request and delete the branch first"
+            exit 1
+          fi
+          echo "branch=${BRANCH}" >> "$GITHUB_OUTPUT"
+      - name: Write the pull request body
+        id: pr_body
+        if: steps.versions.outputs.next_version != ''
+        env:
+          PREV_TAG: ${{ steps.defines.outputs.prev_tag }}
+          NEXT_VERSION: ${{ steps.versions.outputs.next_version }}
+          NEXT_TAG: ${{ steps.versions.outputs.next_tag }}
+          REHEARSAL: ${{ inputs.rehearsal }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -o pipefail
+          BODY="${RUNNER_TEMP}/version-pr-body.md"
+          LOG=$(git log "${PREV_TAG}..HEAD" --no-merges --format='%H%x1f%s%x1f%b%x1e')
+          {
+            if [[ "$REHEARSAL" == true ]]; then
+              echo "**Rehearsal. Do not merge.** Check this pull request, then close it without merging and delete the branch \`release/${NEXT_TAG}\`."
+              echo
+            fi
+            echo "Bump the version in \`lib/Cargo.toml\` to \`${NEXT_VERSION}\`. This pull request changes nothing else."
+            echo
+            echo "Merging it into \`main\` starts the release: the lib-bump-version workflow checks the merged commit against the release gate and tags it \`${NEXT_TAG}\`, and the tag starts the lib-release workflow, which publishes \`event-store-adapter-rs ${NEXT_VERSION}\` to crates.io."
+            echo "Merge it only when the release should go out. To cancel, close this pull request and delete the branch."
+            echo
+            echo "## Release notes preview"
+            echo
+            echo "Changes since [\`${PREV_TAG}\`](${SERVER_URL}/${GITHUB_REPOSITORY}/compare/${PREV_TAG}...release/${NEXT_TAG})."
+            echo
+            printf '%s' "$LOG" | python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py "$SERVER_URL" "$GITHUB_REPOSITORY"
+          } > "$BODY"
+          echo "path=${BODY}" >> "$GITHUB_OUTPUT"
+      - name: Push the version branch
+        id: version_commit
+        if: steps.versions.outputs.next_version != ''
+        env:
+          NEXT_VERSION: ${{ steps.versions.outputs.next_version }}
+          NEXT_TAG: ${{ steps.versions.outputs.next_tag }}
+          BRANCH: ${{ steps.version_branch.outputs.branch }}
+          PUSH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -o pipefail
+          AUTH=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::${AUTH}"
           git config --global user.email "j5ik2o@gmail.com"
           git config --global user.name "Junichi Kato"
-          git diff
-          git add .
-          git commit -m "version up to ${{ steps.versions.outputs.next_tag }}"
-          git push origin main
-          COMMIT_SHA=$(git rev-parse HEAD)
-          echo "commit_sha=$COMMIT_SHA" >> $GITHUB_OUTPUT
-        if: inputs.version != '' || steps.semver_level.outputs.value != ''
-      - name: tagging and push tag
-        id: tag_version
-        run: |
-          git tag -a "${{ steps.versions.outputs.next_tag }}" ${{ steps.git_commit_push.outputs.commit_sha }} -m "${{ steps.versions.outputs.next_tag }}"
-          git push origin ${{ steps.versions.outputs.next_tag }}
-          python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-header.py \
-            ${{ github.server_url }} \
-            ${{ github.repository }} \
-            ${{ steps.defines.outputs.prev_tag }} \
-            ${{ steps.versions.outputs.next_tag }} \
-            > changelog.txt
-          git log ${{ steps.defines.outputs.prev_tag }}..${{ steps.versions.outputs.next_tag }} --no-merges --format='%H%x1f%s%x1f%b%x1e' \
-            | python3 "${GITHUB_WORKSPACE}"/.github/create-release-note-body.py "${{ github.server_url }}" "${{ github.repository }}" >> changelog.txt
-        if: inputs.version != '' || steps.semver_level.outputs.value != ''
-      - name: Create a GitHub release
-        uses: actions/create-release@v1
+          git switch -c "$BRANCH"
+          python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py set-version "$NEXT_VERSION"
+          git add lib/Cargo.toml
+          git commit -m "version up to ${NEXT_TAG}"
+          GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${SERVER_URL}/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${AUTH}" \
+            git push origin "HEAD:refs/heads/${BRANCH}"
+      - name: Open the version pull request
+        id: version_pr
+        if: steps.versions.outputs.next_version != ''
         env:
-          GITHUB_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          NEXT_TAG: ${{ steps.versions.outputs.next_tag }}
+          BRANCH: ${{ steps.version_branch.outputs.branch }}
+          BODY: ${{ steps.pr_body.outputs.path }}
+          REHEARSAL: ${{ inputs.rehearsal }}
+        run: |
+          TITLE="version up to ${NEXT_TAG}"
+          DRAFT=()
+          if [[ "$REHEARSAL" == true ]]; then
+            TITLE="${TITLE} (rehearsal, do not merge)"
+            DRAFT=(--draft)
+          fi
+          PR_URL=$(gh pr create --repo "$GITHUB_REPOSITORY" --base main --head "$BRANCH" \
+            --title "$TITLE" --body-file "$BODY" "${DRAFT[@]}")
+          echo "$PR_URL"
+          echo "number=${PR_URL##*/}" >> "$GITHUB_OUTPUT"
+      - name: Publish the review-thread status of the pull request
+        if: steps.versions.outputs.next_version != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ steps.version_pr.outputs.number }}
+        run: |
+          gh workflow run review-thread-resolution.yml --repo "$GITHUB_REPOSITORY" --ref main -f pr_number="$PR_NUMBER"
+  tag-release:
+    name: Tag the merged version
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main' && github.repository == 'j5ik2o/event-store-adapter-rs'
+    runs-on: ubuntu-latest
+    concurrency:
+      group: release-tag
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@v7
         with:
-          tag_name: ${{ steps.versions.outputs.next_tag }}
-          release_name: Release ${{ steps.versions.outputs.next_tag }}
-          body_path: changelog.txt
-        if: inputs.version != '' || steps.semver_level.outputs.value != ''
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Check the merged commit against the release gate
+        id: trigger
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          GATE="${RUNNER_TEMP}/release-gate"
+          bash "${GITHUB_WORKSPACE}"/.github/release-gate-inputs.sh "$RELEASE_SHA" "$GATE"
+          TAG=$(python3 "${GITHUB_WORKSPACE}"/.github/release-gate.py check --mode tag \
+            --repository "$GITHUB_REPOSITORY" --sha "$RELEASE_SHA" --on-main "$(cat "${GATE}/on-main")" \
+            --parents "${GATE}/parents" \
+            --parent-version "${GATE}/parent-version" --version-file "${GATE}/version" \
+            --changed-files "${GATE}/changed-files" --pulls "${GATE}/pulls.json" \
+            --remote-tags "${GATE}/remote-tags")
+          echo "tag=${TAG}" >> "$GITHUB_OUTPUT"
+      - name: Report the tag that would be pushed
+        id: tag_summary
+        if: steps.trigger.outputs.tag != '' && env.PUSH_RELEASE_TAG != 'true'
+        env:
+          RELEASE_TAG: ${{ steps.trigger.outputs.tag }}
+          RELEASE_SHA: ${{ github.sha }}
+        run: |
+          {
+            echo "## Release tag not pushed"
+            echo
+            echo "The release gate passed. The tag job would push \`${RELEASE_TAG}\` on \`${RELEASE_SHA}\`."
+            echo "Tag pushing is off (\`PUSH_RELEASE_TAG\` is \`'false'\` in \`lib-bump-version.yml\`), so nothing is published."
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "::notice::release gate passed; ${RELEASE_TAG} on ${RELEASE_SHA} is not pushed (PUSH_RELEASE_TAG is 'false')"
+      - name: Push the release tag
+        id: release_tag
+        if: steps.trigger.outputs.tag != '' && env.PUSH_RELEASE_TAG == 'true'
+        env:
+          RELEASE_TAG: ${{ steps.trigger.outputs.tag }}
+          RELEASE_SHA: ${{ github.sha }}
+          PUSH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+          SERVER_URL: ${{ github.server_url }}
+        run: |
+          set -o pipefail
+          AUTH=$(printf 'x-access-token:%s' "$PUSH_TOKEN" | base64 | tr -d '\n')
+          echo "::add-mask::${AUTH}"
+          git config --global user.email "j5ik2o@gmail.com"
+          git config --global user.name "Junichi Kato"
+          git tag -f -a "$RELEASE_TAG" "$RELEASE_SHA" -m "$RELEASE_TAG"
+          if ! GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0="http.${SERVER_URL}/.extraheader" \
+            GIT_CONFIG_VALUE_0="AUTHORIZATION: basic ${AUTH}" \
+            git push origin "refs/tags/${RELEASE_TAG}"; then
+            REMOTE_SHA=$(git ls-remote origin "refs/tags/${RELEASE_TAG}^{}" | cut -f1)
+            if [[ "$REMOTE_SHA" != "$RELEASE_SHA" ]]; then
+              echo "::error::tag ${RELEASE_TAG} could not be pushed (remote: ${REMOTE_SHA:-none})"
+              exit 1
+            fi
+            echo "tag ${RELEASE_TAG} was pushed by another run on the same commit"
+          fi
